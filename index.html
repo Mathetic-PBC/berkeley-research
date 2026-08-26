@@ -20,7 +20,7 @@
   @keyframes bob { 0%,100% { transform:translateY(0); } 50% { transform:translateY(6px); } }
 
   /* Hero */
-  .hero { height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:28px; padding:0 24px; box-sizing:border-box; position:relative; text-align:center; overflow:hidden; }
+  .hero { height:100vh; height:100svh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:28px; padding:0 24px; box-sizing:border-box; position:relative; text-align:center; overflow:hidden; }
   .hero-art { position:absolute; inset:0; pointer-events:none; }
   .hero-art svg { position:absolute; inset:0; width:100%; height:100%; }
   .hero h1 { font-family:'Newsreader', Georgia, serif; font-weight:500; font-size:clamp(64px, 10vw, 128px); letter-spacing:-0.02em; margin:0; line-height:1; }
@@ -47,6 +47,16 @@
   .person .who { font-family:Helvetica, Arial, sans-serif; font-size:13px; line-height:1.5; }
   .person .who .name { font-weight:700; }
   .person .who .role { color:#6E6A5E; }
+
+  @media (max-width: 640px) {
+    .hero { gap:22px; }
+    .hero .def { font-size:17px; white-space:normal; max-width:30ch; text-wrap:balance; }
+    .hero .def br { display:none; }
+    .letter { padding:40px 30px 40px; }
+    .letter-inner { font-size:17px; line-height:1.65; gap:18px; }
+    .letter-inner h2 { font-size:26px; }
+    .people { gap:20px; }
+  }
 </style>
 </head>
 <body>
@@ -66,7 +76,7 @@
     </svg>
   </div>
   <h1>Mathetic</h1>
-  <p class="def">Mathetic, <span class="pos">adj.</span> — concerned with increasing our capacity<br>to learn, think, create, and discover.</p>
+  <p class="def">Mathetic, <span class="pos">adj.</span> — concerned with increasing our capacity <br>to learn, think, create, and discover.</p>
   <div class="scroll-hint" aria-hidden="true">
     <span>scroll</span>
     <span class="arrow">↓</span>
@@ -157,14 +167,31 @@
     touchY = e.touches[0].clientY;
     if (dy > 0 || p > P0) {
       e.preventDefault();
-      p = Math.min(1, Math.max(P0, p + dy / 900));
+      p = Math.min(1, Math.max(P0, p + dy / 260));
       if (p >= 1) done = true;
       draw(p);
     }
   }
 
+  var raf = null;
+  function onTouchEnd() {
+    touchY = null;
+    if (done || p <= P0 || raf) return;
+    // finger lifted mid-flight: finish the flight on its own
+    var from = p, start = null, dur = 450;
+    function step(t) {
+      if (start == null) start = t;
+      var k = Math.min(1, (t - start) / dur);
+      p = from + (1 - from) * (1 - Math.pow(1 - k, 3));
+      draw(p);
+      if (k < 1) { raf = requestAnimationFrame(step); } else { raf = null; done = true; }
+    }
+    raf = requestAnimationFrame(step);
+  }
+
   function onResize() {
-    scene.setAttribute('preserveAspectRatio', window.innerWidth < window.innerHeight * 1.1 ? 'xMidYMid meet' : 'xMidYMid slice');
+    // portrait: keep the flight in the top strip so it never crosses the title/definition
+    scene.setAttribute('preserveAspectRatio', window.innerWidth < window.innerHeight * 1.1 ? 'xMidYMin meet' : 'xMidYMid slice');
     draw(p);
   }
 
@@ -173,6 +200,8 @@
   window.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('touchstart', onTouchStart, { passive: true });
   window.addEventListener('touchmove', onTouchMove, { passive: false });
+  window.addEventListener('touchend', onTouchEnd, { passive: true });
+  window.addEventListener('touchcancel', onTouchEnd, { passive: true });
 })();
 </script>
 </body>
