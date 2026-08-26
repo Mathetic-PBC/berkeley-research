@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Engelbart invites · Mathetic</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="/engelbart/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <nav class="topbar" aria-label="Primary">
+      <a class="wordmark" href="/">Mathetic</a>
+      <a href="/engelbart">Back to Engelbart</a>
+    </nav>
+
+    <section aria-labelledby="page-title">
+      <p class="eyebrow">Temporary public admin</p>
+      <h1 id="page-title">Create an invite.</h1>
+      <p class="lede">Each code reserves one email for 30 minutes and expires after 14 days if unused.</p>
+    </section>
+
+    <section class="panel">
+      <h2>New invite code</h2>
+      <p class="callout"><strong>This route is intentionally unprotected.</strong> Anyone with the URL can create codes. Credit provisioning remains disabled until this route has authentication.</p>
+      <button id="generate-invite" class="button" type="button">Generate invite</button>
+      <p id="admin-status" class="status" aria-live="polite"></p>
+
+      <div id="invite-result" class="invite-result hidden" aria-live="polite">
+        <span class="meta">Send this code once. The database stores only its SHA-256 digest.</span>
+        <strong id="generated-code" class="invite-code"></strong>
+        <div class="button-row">
+          <button id="copy-code" class="button secondary" type="button">Copy code</button>
+          <a class="button secondary" href="/engelbart">Open signup</a>
+        </div>
+        <span id="invite-expiry" class="meta"></span>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js" integrity="sha384-yiVMs0R/Jyz7OhoXa/DsEMUSBLjEhr/QJta2ONO+zB6I8/GmNg/7AUFrZmAJV7KV" crossorigin="anonymous"></script>
+  <script src="/engelbart/admin/admin.js"></script>
+</body>
+</html>
