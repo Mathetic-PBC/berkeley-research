@@ -6,10 +6,36 @@ Static site with no build step:
 
 - `/` — Berkeley research-chat landing page (`index.html`)
 - `/engelbart` — Supabase login and invite-only signup
-- `/engelbart/admin` — intentionally unprotected invite generation during the pilot
+- `/engelbart/admin` — password/TOTP-protected invite and credit administration
 - `/api/engelbart-config` — browser-safe runtime configuration only
+- `/api/engelbart-credentials` — authenticated per-member LiteLLM provisioning
 
-The Engelbart database migration and activation instructions live in `supabase/`. Paid credit provisioning is deliberately absent while the admin route is public.
+The Engelbart database migrations and activation instructions live in
+`supabase/`. The application uses Vercel functions as the authenticated control
+plane and a separate LiteLLM deployment as the inference/metering data plane.
+One encrypted virtual key is stored per Supabase member; the Anthropic provider
+key never reaches Vercel, Supabase, a browser, or the installer.
+
+## Server configuration
+
+Production and preview deployments require:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `LITELLM_BASE_URL`
+- `LITELLM_MASTER_KEY`
+- `ENGELBART_CREDENTIAL_KEY` — exactly 32 random bytes, base64url encoded
+- `ENGELBART_ADMIN_SESSION_SECRET` — at least 32 random bytes
+
+The bootstrap admin code exists in the migration only as a salted scrypt
+digest. Reset it from `/engelbart/admin` after the first login, then enroll
+TOTP. A password reset and MFA enrollment each increment the session generation
+and revoke every older admin cookie.
+
+Do not deploy this branch partially. Apply the second migration, deploy a
+healthy LiteLLM proxy, and add all server secrets before enabling
+`LITELLM_BASE_URL`; that variable is the browser-visible feature gate.
 
 ## Source of truth
 

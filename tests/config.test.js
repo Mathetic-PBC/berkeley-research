@@ -22,3 +22,11 @@ test("fails closed when public Supabase configuration is incomplete", () => {
   assert.equal(readPublicConfig({ SUPABASE_URL: "https://example.supabase.co" }), null);
   assert.equal(readPublicConfig({ SUPABASE_ANON_KEY: "public-anon-key" }), null);
 });
+
+test("advertises credits only when a proxy endpoint is configured", () => {
+  assert.equal(readPublicConfig({
+    SUPABASE_URL: "https://example.supabase.co",
+    SUPABASE_ANON_KEY: "public-anon-key",
+    LITELLM_BASE_URL: "https://engelbart-litellm.onrender.com",
+  }).creditsEnabled, true);
+});

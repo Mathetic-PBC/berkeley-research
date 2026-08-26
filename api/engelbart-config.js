@@ -7,7 +7,7 @@ function readPublicConfig(env = process.env) {
   const config = {
     supabaseUrl: String(env[PUBLIC_CONFIG_KEYS.url] || "").replace(/\/$/, ""),
     supabaseAnonKey: String(env[PUBLIC_CONFIG_KEYS.anonKey] || ""),
-    creditsEnabled: false,
+    creditsEnabled: Boolean(env.LITELLM_BASE_URL),
   };
 
   if (!config.supabaseUrl || !config.supabaseAnonKey) {

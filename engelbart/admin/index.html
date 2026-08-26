@@ -3,42 +3,157 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Engelbart invites · Mathetic</title>
+  <title>Engelbart admin · Mathetic</title>
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="/engelbart/styles.css">
 </head>
 <body>
-  <main class="shell">
+  <main class="shell admin-shell">
     <nav class="topbar" aria-label="Primary">
       <a class="wordmark" href="/">Mathetic</a>
-      <a href="/engelbart">Back to Engelbart</a>
+      <div class="nav-actions">
+        <a href="/engelbart">Back to Engelbart</a>
+        <button id="admin-logout" class="link-button hidden" type="button">Sign out</button>
+      </div>
     </nav>
 
     <section aria-labelledby="page-title">
-      <p class="eyebrow">Temporary public admin</p>
-      <h1 id="page-title">Create an invite.</h1>
-      <p class="lede">Each code reserves one email for 30 minutes and expires after 14 days if unused.</p>
+      <p class="eyebrow">Engelbart control plane</p>
+      <h1 id="page-title">Admin.</h1>
+      <p class="lede">Invite members, allocate the shared Claude budget, and revoke individual keys.</p>
     </section>
 
-    <section class="panel">
-      <h2>New invite code</h2>
-      <p class="callout"><strong>This route is intentionally unprotected.</strong> Anyone with the URL can create codes. Credit provisioning remains disabled until this route has authentication.</p>
-      <button id="generate-invite" class="button" type="button">Generate invite</button>
-      <p id="admin-status" class="status" aria-live="polite"></p>
+    <section id="admin-loading" class="panel">
+      <p class="status">Checking admin session…</p>
+    </section>
 
-      <div id="invite-result" class="invite-result hidden" aria-live="polite">
-        <span class="meta">Send this code once. The database stores only its SHA-256 digest.</span>
-        <strong id="generated-code" class="invite-code"></strong>
-        <div class="button-row">
-          <button id="copy-code" class="button secondary" type="button">Copy code</button>
-          <a class="button secondary" href="/engelbart">Open signup</a>
+    <section id="admin-login-panel" class="panel hidden" aria-labelledby="login-title">
+      <h2 id="login-title">Enter the admin code</h2>
+      <form id="admin-login-form" class="stack">
+        <div class="field">
+          <label for="admin-password">Admin code</label>
+          <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
         </div>
-        <span id="invite-expiry" class="meta"></span>
-      </div>
+        <div id="admin-totp-field" class="field hidden">
+          <label for="admin-totp">Authenticator code</label>
+          <input id="admin-totp" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
+        </div>
+        <button class="button" type="submit">Continue</button>
+        <p id="admin-login-status" class="status" aria-live="polite"></p>
+      </form>
     </section>
+
+    <div id="admin-dashboard" class="hidden">
+      <section class="panel" aria-labelledby="budget-title">
+        <p class="eyebrow">Global policy</p>
+        <h2 id="budget-title">Claude credit pool</h2>
+        <p id="pool-summary" class="callout"></p>
+        <form id="defaults-form" class="stack">
+          <div class="field-grid">
+            <div class="field">
+              <label for="pool-budget">Provider pool ceiling (USD)</label>
+              <input id="pool-budget" name="poolBudget" type="number" min="0.01" max="1000" step="0.01" required>
+            </div>
+            <div class="field">
+              <label for="default-budget">New-user budget (USD)</label>
+              <input id="default-budget" name="defaultBudget" type="number" min="0.01" max="1000" step="0.01" required>
+            </div>
+            <div class="field">
+              <label for="default-rpm">Requests per minute</label>
+              <input id="default-rpm" name="defaultRpm" type="number" min="1" step="1" placeholder="No explicit limit">
+            </div>
+            <div class="field">
+              <label for="default-tpm">Tokens per minute</label>
+              <input id="default-tpm" name="defaultTpm" type="number" min="1" step="1" placeholder="No explicit limit">
+            </div>
+          </div>
+          <fieldset>
+            <legend>Models available to new users</legend>
+            <div id="default-models" class="check-grid"></div>
+          </fieldset>
+          <button class="button" type="submit">Save global policy</button>
+          <p id="defaults-status" class="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="invite-title">
+        <p class="eyebrow">Onboarding</p>
+        <h2 id="invite-title">Create an invite</h2>
+        <p>Each code reserves one email for 30 minutes and expires after 14 days if unused.</p>
+        <button id="generate-invite" class="button" type="button">Generate invite</button>
+        <p id="invite-status" class="status" aria-live="polite"></p>
+        <div id="invite-result" class="invite-result hidden" aria-live="polite">
+          <span class="meta">Send this code once. The database stores only its digest.</span>
+          <strong id="generated-code" class="invite-code"></strong>
+          <div class="button-row">
+            <button id="copy-code" class="button secondary" type="button">Copy code</button>
+            <a class="button secondary" href="/engelbart">Open signup</a>
+          </div>
+          <span id="invite-expiry" class="meta"></span>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="members-title">
+        <p class="eyebrow">Individual policy</p>
+        <h2 id="members-title">Member keys</h2>
+        <p class="fine-print">Budgets are lifetime ceilings. Updating a member changes the corresponding LiteLLM virtual key.</p>
+        <div id="member-list" class="member-list"></div>
+        <p id="members-status" class="status" aria-live="polite"></p>
+      </section>
+
+      <section class="panel" aria-labelledby="security-title">
+        <p class="eyebrow">Security</p>
+        <h2 id="security-title">Admin access</h2>
+        <form id="password-form" class="stack security-block">
+          <div class="field-grid">
+            <div class="field">
+              <label for="new-admin-password">New admin password</label>
+              <input id="new-admin-password" name="newPassword" type="password" minlength="14" autocomplete="new-password" required>
+            </div>
+            <div class="field">
+              <label for="confirm-admin-password">Confirm password</label>
+              <input id="confirm-admin-password" name="confirmPassword" type="password" minlength="14" autocomplete="new-password" required>
+            </div>
+          </div>
+          <button class="button secondary" type="submit">Reset admin password</button>
+          <p id="password-status" class="status" aria-live="polite"></p>
+        </form>
+
+        <div class="security-block">
+          <h3>Authenticator app</h3>
+          <p id="mfa-description" class="fine-print"></p>
+          <button id="mfa-begin" class="button secondary" type="button">Enable two-factor authentication</button>
+          <div id="mfa-enrollment" class="stack hidden">
+            <p class="fine-print">Add this secret to a TOTP authenticator, then enter its six-digit code.</p>
+            <code id="mfa-secret" class="code"></code>
+            <a id="mfa-uri" class="fine-print" href="#">Open in authenticator app</a>
+            <form id="mfa-verify-form" class="stack">
+              <div class="field">
+                <label for="mfa-verify-code">Authenticator code</label>
+                <input id="mfa-verify-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+              </div>
+              <button class="button" type="submit">Verify and require 2FA</button>
+            </form>
+          </div>
+          <form id="mfa-disable-form" class="stack hidden">
+            <div class="field-grid">
+              <div class="field">
+                <label for="mfa-disable-password">Admin password</label>
+                <input id="mfa-disable-password" name="password" type="password" autocomplete="current-password" required>
+              </div>
+              <div class="field">
+                <label for="mfa-disable-code">Authenticator code</label>
+                <input id="mfa-disable-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+              </div>
+            </div>
+            <button class="button secondary" type="submit">Disable 2FA</button>
+          </form>
+          <p id="mfa-status" class="status" aria-live="polite"></p>
+        </div>
+      </section>
+    </div>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js" integrity="sha384-yiVMs0R/Jyz7OhoXa/DsEMUSBLjEhr/QJta2ONO+zB6I8/GmNg/7AUFrZmAJV7KV" crossorigin="anonymous"></script>
   <script src="/engelbart/admin/admin.js"></script>
 </body>
 </html>
