@@ -5,6 +5,7 @@
   var client = null;
   var config = null;
   var approvedEmail = "";
+  var provisionedUser = "";
 
   var el = {
     loading: document.getElementById("loading-panel"),
@@ -26,6 +27,7 @@
     changeInvite: document.getElementById("change-invite"),
     signupStatus: document.getElementById("signup-status"),
     sessionEmail: document.getElementById("session-email"),
+    creditStatus: document.getElementById("credit-status"),
     signOut: document.getElementById("sign-out"),
   };
 
@@ -53,7 +55,39 @@
     el.loading.classList.add("hidden");
     el.auth.classList.toggle("hidden", signedIn);
     el.download.classList.toggle("hidden", !signedIn);
-    if (signedIn) el.sessionEmail.textContent = session.user.email || "Signed in";
+    if (signedIn) {
+      el.sessionEmail.textContent = session.user.email || "Signed in";
+      provisionCredits(session);
+    }
+  }
+
+  async function provisionCredits(session) {
+    if (!config || !config.creditsEnabled) {
+      setStatus(el.creditStatus, "Claude credits are not connected on this deployment yet.");
+      return;
+    }
+    if (!session || !session.user || provisionedUser === session.user.id) return;
+    provisionedUser = session.user.id;
+    setStatus(el.creditStatus, "Allocating your Claude credit key…");
+    try {
+      var response = await fetch("/api/engelbart-credentials", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: "Bearer " + session.access_token,
+        },
+      });
+      var value = await response.json();
+      if (!response.ok) throw new Error(value.error || "Credit allocation failed");
+      setStatus(
+        el.creditStatus,
+        "$" + Number(value.budgetUsd).toFixed(2) + " of Claude Code credit is ready for bart auth.",
+        "success"
+      );
+    } catch (error) {
+      provisionedUser = "";
+      setStatus(el.creditStatus, error.message || "Claude credit allocation is unavailable.", "error");
+    }
   }
 
   el.loginTab.addEventListener("click", function () { selectMode("login"); });
