@@ -49,6 +49,17 @@
     });
   }
   function money(value) { return "$" + Number(value || 0).toFixed(2); }
+  function updateRecoverySummary(count) {
+    var remaining = Number(count || 0);
+    byId("recovery-summary").textContent = remaining
+      + " unused recovery code" + (remaining === 1 ? " remains." : "s remain.");
+  }
+  function showRecoveryCodes(codes) {
+    var values = Array.isArray(codes) ? codes : [];
+    byId("recovery-codes").textContent = values.join("\n");
+    byId("recovery-result").classList.toggle("hidden", !values.length);
+    updateRecoverySummary(values.length);
+  }
 
   function renderPolicy() {
     var settings = state.settings;
@@ -192,6 +203,8 @@
     byId("admin-logout").classList.remove("hidden");
     byId("mfa-begin").classList.toggle("hidden", enabled);
     byId("mfa-disable-form").classList.toggle("hidden", !enabled);
+    byId("recovery-management").classList.toggle("hidden", !enabled);
+    updateRecoverySummary(session.recoveryCodesRemaining);
     byId("mfa-description").textContent = enabled
       ? "Two-factor authentication is required for every new admin session."
       : "Enable TOTP after resetting the bootstrap password.";
@@ -215,7 +228,11 @@
         byId("admin-totp").focus();
         setStatus("admin-login-status", "Enter the code from your authenticator app.");
       } else {
-        await showDashboard({ mfaEnabled: Boolean(result.value.mfaEnabled) });
+        await showDashboard(result.value);
+        if (result.value.recoveryCodeUsed) {
+          updateRecoverySummary(result.value.recoveryCodesRemaining);
+          setStatus("mfa-status", "Recovery code consumed; replace the remaining codes if exposure is possible.", "success");
+        }
       }
     } catch (error) { setStatus("admin-login-status", error.message, "error"); }
     setBusy(form, false);
@@ -304,16 +321,45 @@
     var form = event.currentTarget;
     setBusy(form, true);
     try {
-      await api("/api/engelbart-admin-mfa", {
+      var result = await api("/api/engelbart-admin-mfa", {
         method: "POST", body: body({ action: "verify", code: new FormData(form).get("code") }),
       });
       byId("mfa-enrollment").classList.add("hidden");
       byId("mfa-begin").classList.add("hidden");
       byId("mfa-disable-form").classList.remove("hidden");
+      byId("recovery-management").classList.remove("hidden");
       byId("mfa-description").textContent = "Two-factor authentication is required for every new admin session.";
-      setStatus("mfa-status", "Two-factor authentication enabled.", "success");
+      showRecoveryCodes(result.value.recoveryCodes);
+      setStatus("mfa-status", "Two-factor authentication enabled. Save the recovery codes.", "success");
     } catch (error) { setStatus("mfa-status", error.message, "error"); }
     setBusy(form, false);
+  });
+  byId("recovery-regenerate-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var form = event.currentTarget;
+    setBusy(form, true);
+    try {
+      var data = new FormData(form);
+      var result = await api("/api/engelbart-admin-mfa", {
+        method: "POST",
+        body: body({
+          action: "regenerateRecoveryCodes",
+          password: data.get("password"),
+          code: data.get("code"),
+        }),
+      });
+      form.reset();
+      showRecoveryCodes(result.value.recoveryCodes);
+      setStatus("mfa-status", "Previous recovery codes revoked. Save the replacements.", "success");
+    } catch (error) { setStatus("mfa-status", error.message, "error"); }
+    setBusy(form, false);
+  });
+  byId("copy-recovery-codes").addEventListener("click", async function () {
+    try {
+      await navigator.clipboard.writeText(byId("recovery-codes").textContent);
+      byId("copy-recovery-codes").textContent = "Copied";
+      window.setTimeout(function () { byId("copy-recovery-codes").textContent = "Copy recovery codes"; }, 1600);
+    } catch (_error) { setStatus("mfa-status", "Copy failed; select the codes manually.", "error"); }
   });
   byId("mfa-disable-form").addEventListener("submit", async function (event) {
     event.preventDefault();
@@ -328,6 +374,8 @@
       form.reset();
       byId("mfa-disable-form").classList.add("hidden");
       byId("mfa-begin").classList.remove("hidden");
+      byId("recovery-management").classList.add("hidden");
+      byId("recovery-result").classList.add("hidden");
       byId("mfa-description").textContent = "Enable TOTP after resetting the bootstrap password.";
       setStatus("mfa-status", "Two-factor authentication disabled.", "success");
     } catch (error) { setStatus("mfa-status", error.message, "error"); }

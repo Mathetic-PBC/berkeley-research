@@ -13,6 +13,7 @@ create table if not exists public.engelbart_admin_config (
   totp_secret_tag text,
   totp_pending_until timestamptz,
   totp_enabled boolean not null default false,
+  recovery_code_hashes text[] not null default '{}'::text[],
   updated_at timestamptz not null default now(),
   constraint engelbart_admin_totp_cipher_triplet check (
     (totp_secret_ciphertext is null and totp_secret_iv is null and totp_secret_tag is null)
@@ -20,6 +21,9 @@ create table if not exists public.engelbart_admin_config (
     (totp_secret_ciphertext is not null and totp_secret_iv is not null and totp_secret_tag is not null)
   )
 );
+
+alter table public.engelbart_admin_config
+  add column if not exists recovery_code_hashes text[] not null default '{}'::text[];
 
 insert into public.engelbart_admin_config (singleton, password_hash)
 values (
@@ -33,8 +37,8 @@ create table if not exists public.engelbart_credit_settings (
   pool_budget_usd numeric(12, 2) not null default 1000 check (pool_budget_usd > 0),
   default_budget_usd numeric(12, 2) not null default 25 check (default_budget_usd > 0),
   default_models text[] not null default array['claude-sonnet-4-6', 'claude-haiku-4-5']::text[],
-  default_rpm_limit integer check (default_rpm_limit is null or default_rpm_limit > 0),
-  default_tpm_limit integer check (default_tpm_limit is null or default_tpm_limit > 0),
+  default_rpm_limit integer default 60 check (default_rpm_limit is null or default_rpm_limit > 0),
+  default_tpm_limit integer default 1000000 check (default_tpm_limit is null or default_tpm_limit > 0),
   updated_at timestamptz not null default now(),
   constraint engelbart_credit_default_within_pool
     check (default_budget_usd <= pool_budget_usd),
@@ -45,6 +49,11 @@ create table if not exists public.engelbart_credit_settings (
 insert into public.engelbart_credit_settings (singleton)
 values (true)
 on conflict (singleton) do nothing;
+
+update public.engelbart_credit_settings
+set default_rpm_limit = coalesce(default_rpm_limit, 60),
+    default_tpm_limit = coalesce(default_tpm_limit, 1000000)
+where singleton = true;
 
 create table if not exists public.engelbart_credit_accounts (
   user_id uuid primary key references auth.users (id) on delete cascade,
@@ -148,6 +157,46 @@ begin
   returning * into v_account;
 
   return jsonb_build_object('account', to_jsonb(v_account), 'claimed', true);
+end;
+$$;
+
+-- Recovery codes are random high-entropy values hashed by the control plane.
+-- Consume one while holding the singleton row lock so concurrent requests can
+-- never redeem the same code twice. Redemption also revokes older sessions.
+create or replace function public.engelbart_consume_admin_recovery_code(
+  p_code_hash text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_config public.engelbart_admin_config%rowtype;
+begin
+  select *
+  into v_config
+  from public.engelbart_admin_config
+  where singleton = true
+  for update;
+
+  if v_config.singleton is null
+     or not (p_code_hash = any(v_config.recovery_code_hashes)) then
+    return jsonb_build_object('consumed', false);
+  end if;
+
+  update public.engelbart_admin_config
+  set recovery_code_hashes = array_remove(recovery_code_hashes, p_code_hash),
+      session_generation = session_generation + 1,
+      updated_at = now()
+  where singleton = true
+  returning * into v_config;
+
+  return jsonb_build_object(
+    'consumed', true,
+    'session_generation', v_config.session_generation,
+    'remaining', cardinality(v_config.recovery_code_hashes)
+  );
 end;
 $$;
 
@@ -280,6 +329,10 @@ revoke all on function public.engelbart_update_account_policy(
 grant execute on function public.engelbart_update_account_policy(
   uuid, numeric, text[], integer, integer
 )
+  to service_role;
+revoke all on function public.engelbart_consume_admin_recovery_code(text)
+  from public, anon, authenticated;
+grant execute on function public.engelbart_consume_admin_recovery_code(text)
   to service_role;
 
 -- Invite creation now crosses the authenticated Vercel control plane. The

@@ -6,12 +6,14 @@ const {
   decryptSecret,
   encryptSecret,
   hashPassword,
+  hashRecoveryCode,
+  newRecoveryCodes,
   newTotpSecret,
   verifyPassword,
   verifyTotp,
 } = require("./crypto");
 const { parseCookies } = require("./http");
-const { patchRows, selectOne } = require("./supabase");
+const { patchRows, rpc, selectOne } = require("./supabase");
 
 const COOKIE_NAME = "engelbart_admin";
 const SESSION_SECONDS = 8 * 60 * 60;
@@ -89,6 +91,11 @@ async function login(password, totp, options = {}) {
     error.statusCode = 401;
     throw error;
   }
+  let generation = Number(config.session_generation);
+  let recoveryCodeUsed = false;
+  let recoveryCodesRemaining = Array.isArray(config.recovery_code_hashes)
+    ? config.recovery_code_hashes.length
+    : 0;
   if (config.totp_enabled) {
     if (!totp) return { mfaRequired: true };
     const secret = decryptSecret({
@@ -97,15 +104,26 @@ async function login(password, totp, options = {}) {
       tag: config.totp_secret_tag,
     }, options.env);
     if (!verifyTotp(secret, totp, options.now)) {
-      const error = new Error("Authenticator code is incorrect");
-      error.statusCode = 401;
-      throw error;
+      const result = await rpc("engelbart_consume_admin_recovery_code", {
+        p_code_hash: hashRecoveryCode(totp),
+      }, options);
+      const consumed = Array.isArray(result) ? result[0] : result;
+      if (!consumed || !consumed.consumed) {
+        const error = new Error("Authenticator or recovery code is incorrect");
+        error.statusCode = 401;
+        throw error;
+      }
+      generation = Number(consumed.session_generation);
+      recoveryCodeUsed = true;
+      recoveryCodesRemaining = Number(consumed.remaining);
     }
   }
   return {
     mfaRequired: false,
     mfaEnabled: Boolean(config.totp_enabled),
-    token: createSession(config.session_generation, options),
+    recoveryCodeUsed,
+    recoveryCodesRemaining,
+    token: createSession(generation, options),
   };
 }
 
@@ -168,13 +186,47 @@ async function verifyMfa(code, options = {}) {
     throw error;
   }
   const generation = Number(config.session_generation) + 1;
+  const recoveryCodes = newRecoveryCodes();
   await patchRows("engelbart_admin_config", "singleton=eq.true", {
     totp_enabled: true,
     totp_pending_until: null,
+    recovery_code_hashes: recoveryCodes.map(hashRecoveryCode),
     session_generation: generation,
     updated_at: new Date(Number(options.now || Date.now())).toISOString(),
   }, options);
-  return createSession(generation, options);
+  return { token: createSession(generation, options), recoveryCodes };
+}
+
+async function regenerateRecoveryCodes(password, code, options = {}) {
+  const config = await readAdminConfig(options);
+  if (!verifyPassword(password, config.password_hash)) {
+    const error = new Error("Admin password is incorrect");
+    error.statusCode = 401;
+    throw error;
+  }
+  if (!config.totp_enabled) {
+    const error = new Error("Enable two-factor authentication first");
+    error.statusCode = 409;
+    throw error;
+  }
+  const secret = decryptSecret({
+    ciphertext: config.totp_secret_ciphertext,
+    iv: config.totp_secret_iv,
+    tag: config.totp_secret_tag,
+  }, options.env);
+  if (!verifyTotp(secret, code, options.now)) {
+    const error = new Error("Authenticator code is incorrect");
+    error.statusCode = 401;
+    throw error;
+  }
+  const generation = Number(config.session_generation) + 1;
+  const recoveryCodes = newRecoveryCodes();
+  await patchRows("engelbart_admin_config", "singleton=eq.true", {
+    recovery_code_hashes: recoveryCodes.map(hashRecoveryCode),
+    session_generation: generation,
+    updated_at: new Date(Number(options.now || Date.now())).toISOString(),
+  }, options);
+  return { token: createSession(generation, options), recoveryCodes };
 }
 
 async function disableMfa(password, code, options = {}) {
@@ -203,6 +255,7 @@ async function disableMfa(password, code, options = {}) {
     totp_secret_tag: null,
     totp_pending_until: null,
     totp_enabled: false,
+    recovery_code_hashes: [],
     session_generation: generation,
     updated_at: new Date(Number(options.now || Date.now())).toISOString(),
   }, options);
@@ -219,6 +272,7 @@ module.exports = {
   login,
   parseSession,
   readAdminConfig,
+  regenerateRecoveryCodes,
   requireAdmin,
   resetPassword,
   sessionCookie,

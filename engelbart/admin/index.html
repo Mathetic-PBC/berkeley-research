@@ -35,8 +35,8 @@
           <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
         </div>
         <div id="admin-totp-field" class="field hidden">
-          <label for="admin-totp">Authenticator code</label>
-          <input id="admin-totp" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
+          <label for="admin-totp">Authenticator or recovery code</label>
+          <input id="admin-totp" name="totp" type="text" autocomplete="one-time-code">
         </div>
         <button class="button" type="submit">Continue</button>
         <p id="admin-login-status" class="status" aria-live="polite"></p>
@@ -51,7 +51,7 @@
         <form id="defaults-form" class="stack">
           <div class="field-grid">
             <div class="field">
-              <label for="pool-budget">Provider pool ceiling (USD)</label>
+              <label for="pool-budget">Assignable budget pool (USD)</label>
               <input id="pool-budget" name="poolBudget" type="number" min="0.01" max="1000" step="0.01" required>
             </div>
             <div class="field">
@@ -134,6 +134,27 @@
               </div>
               <button class="button" type="submit">Verify and require 2FA</button>
             </form>
+          </div>
+          <div id="recovery-management" class="stack hidden">
+            <p id="recovery-summary" class="fine-print"></p>
+            <form id="recovery-regenerate-form" class="stack">
+              <div class="field-grid">
+                <div class="field">
+                  <label for="recovery-password">Admin password</label>
+                  <input id="recovery-password" name="password" type="password" autocomplete="current-password" required>
+                </div>
+                <div class="field">
+                  <label for="recovery-totp">Authenticator code</label>
+                  <input id="recovery-totp" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+                </div>
+              </div>
+              <button class="button secondary" type="submit">Replace recovery codes</button>
+            </form>
+          </div>
+          <div id="recovery-result" class="stack hidden">
+            <p class="fine-print">Save these one-time codes now. They are never shown again.</p>
+            <pre id="recovery-codes" class="code recovery-codes"></pre>
+            <button id="copy-recovery-codes" class="button secondary" type="button">Copy recovery codes</button>
           </div>
           <form id="mfa-disable-form" class="stack hidden">
             <div class="field-grid">

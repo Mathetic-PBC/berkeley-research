@@ -6,6 +6,8 @@ const {
   decryptSecret,
   encryptSecret,
   hashPassword,
+  hashRecoveryCode,
+  newRecoveryCodes,
   newTotpSecret,
   totpCode,
   verifyPassword,
@@ -45,6 +47,18 @@ test("TOTP accepts the current step and adjacent clock-skew steps only", () => {
   assert.equal(verifyTotp(secret, totpCode(secret, now - 30_000), now), true);
   assert.equal(verifyTotp(secret, totpCode(secret, now - 60_000), now), false);
   assert.equal(verifyTotp(secret, "12345", now), false);
+});
+
+test("recovery codes are high-entropy, normalized, and stored only as hashes", () => {
+  const codes = newRecoveryCodes();
+  assert.equal(codes.length, 8);
+  assert.equal(new Set(codes).size, 8);
+  for (const code of codes) {
+    assert.match(code, /^(?:[A-F0-9]{4}-){4}[A-F0-9]{4}$/);
+    const digest = hashRecoveryCode(code);
+    assert.equal(digest.includes(code), false);
+    assert.equal(hashRecoveryCode(code.toLowerCase().replaceAll("-", " ")), digest);
+  }
 });
 
 test("admin sessions are signed, expire, and carry the password generation", () => {

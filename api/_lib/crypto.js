@@ -118,13 +118,31 @@ function newTotpSecret() {
   return base32Encode(crypto.randomBytes(20));
 }
 
+function normalizeRecoveryCode(value) {
+  return String(value || "").toUpperCase().replace(/[^A-F0-9]/g, "");
+}
+
+function hashRecoveryCode(value) {
+  return crypto.createHash("sha256").update(normalizeRecoveryCode(value)).digest("base64url");
+}
+
+function newRecoveryCodes(count = 8) {
+  return Array.from({ length: count }, () => {
+    const compact = crypto.randomBytes(10).toString("hex").toUpperCase();
+    return compact.match(/.{1,4}/g).join("-");
+  });
+}
+
 module.exports = {
   base32Decode,
   base32Encode,
   decryptSecret,
   encryptSecret,
   hashPassword,
+  hashRecoveryCode,
+  newRecoveryCodes,
   newTotpSecret,
+  normalizeRecoveryCode,
   parsePasswordHash,
   totpCode,
   verifyPassword,

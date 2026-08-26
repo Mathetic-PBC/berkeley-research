@@ -30,8 +30,10 @@ Production and preview deployments require:
 
 The bootstrap admin code exists in the migration only as a salted scrypt
 digest. Reset it from `/engelbart/admin` after the first login, then enroll
-TOTP. A password reset and MFA enrollment each increment the session generation
-and revoke every older admin cookie.
+TOTP. Enrollment produces eight one-time recovery codes; only their SHA-256
+digests are stored, and redemption is serialized in Postgres. A password reset,
+MFA enrollment, recovery-code replacement, or recovery-code use increments the
+session generation and revokes every older admin cookie.
 
 Do not deploy this branch partially. Apply the second migration, deploy a
 healthy LiteLLM proxy, and add all server secrets before enabling

@@ -16,6 +16,9 @@ async function handler(req, res) {
         return sendJson(res, 200, {
           authenticated: true,
           mfaEnabled: Boolean(config.totp_enabled),
+          recoveryCodesRemaining: Array.isArray(config.recovery_code_hashes)
+            ? config.recovery_code_hashes.length
+            : 0,
         });
       } catch (error) {
         if (error.statusCode === 401) return sendJson(res, 200, { authenticated: false });
@@ -30,6 +33,8 @@ async function handler(req, res) {
     return sendJson(res, 200, {
       authenticated: true,
       mfaEnabled: result.mfaEnabled,
+      recoveryCodeUsed: result.recoveryCodeUsed,
+      recoveryCodesRemaining: result.recoveryCodesRemaining,
     });
   } catch (error) {
     const failure = publicError(error);

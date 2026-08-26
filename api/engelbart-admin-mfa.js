@@ -8,7 +8,12 @@ async function handler(req, res) {
   try {
     const { config } = await Admin.requireAdmin(req);
     if (req.method === "GET") {
-      return sendJson(res, 200, { enabled: Boolean(config.totp_enabled) });
+      return sendJson(res, 200, {
+        enabled: Boolean(config.totp_enabled),
+        recoveryCodesRemaining: Array.isArray(config.recovery_code_hashes)
+          ? config.recovery_code_hashes.length
+          : 0,
+      });
     }
     const body = await readJson(req);
     if (body.action === "begin") {
@@ -16,9 +21,14 @@ async function handler(req, res) {
       return sendJson(res, 200, enrollment);
     }
     if (body.action === "verify") {
-      const token = await Admin.verifyMfa(body.code);
-      res.setHeader("Set-Cookie", Admin.sessionCookie(token));
-      return sendJson(res, 200, { enabled: true });
+      const result = await Admin.verifyMfa(body.code);
+      res.setHeader("Set-Cookie", Admin.sessionCookie(result.token));
+      return sendJson(res, 200, { enabled: true, recoveryCodes: result.recoveryCodes });
+    }
+    if (body.action === "regenerateRecoveryCodes") {
+      const result = await Admin.regenerateRecoveryCodes(body.password, body.code);
+      res.setHeader("Set-Cookie", Admin.sessionCookie(result.token));
+      return sendJson(res, 200, { enabled: true, recoveryCodes: result.recoveryCodes });
     }
     if (body.action === "disable") {
       const token = await Admin.disableMfa(body.password, body.code);
