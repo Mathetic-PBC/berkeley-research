@@ -141,13 +141,14 @@
     form.append(fields, checks, actions);
     form.addEventListener("submit", async function (event) {
       event.preventDefault();
+      var data = new FormData(form);
+      var models = selectedModels(checks);
       setBusy(form, true);
       try {
-        var data = new FormData(form);
         await mutate({
           action: "updateAccount", userId: account.userId,
           budgetUsd: data.get("budget"), rpmLimit: data.get("rpm"), tpmLimit: data.get("tpm"),
-          models: selectedModels(checks),
+          models: models,
         });
         setStatus("members-status", "Member limits updated.", "success");
       } catch (error) { setStatus("members-status", error.message, "error"); }
@@ -214,10 +215,10 @@
   byId("admin-login-form").addEventListener("submit", async function (event) {
     event.preventDefault();
     var form = event.currentTarget;
+    var data = new FormData(form);
     setBusy(form, true);
     setStatus("admin-login-status", "Checking…");
     try {
-      var data = new FormData(form);
       var result = await api("/api/engelbart-admin-session", {
         method: "POST",
         body: body({ password: data.get("password"), totpCode: data.get("totp") }),
@@ -246,14 +247,15 @@
   byId("defaults-form").addEventListener("submit", async function (event) {
     event.preventDefault();
     var form = event.currentTarget;
+    var data = new FormData(form);
+    var models = selectedModels(byId("default-models"));
     setBusy(form, true);
     try {
-      var data = new FormData(form);
       await mutate({
         action: "updateDefaults",
         poolBudgetUsd: data.get("poolBudget"), defaultBudgetUsd: data.get("defaultBudget"),
         defaultRpmLimit: data.get("defaultRpm"), defaultTpmLimit: data.get("defaultTpm"),
-        defaultModels: selectedModels(byId("default-models")),
+        defaultModels: models,
       });
       setStatus("defaults-status", "Global policy saved for future users.", "success");
     } catch (error) { setStatus("defaults-status", error.message, "error"); }
@@ -319,10 +321,11 @@
   byId("mfa-verify-form").addEventListener("submit", async function (event) {
     event.preventDefault();
     var form = event.currentTarget;
+    var data = new FormData(form);
     setBusy(form, true);
     try {
       var result = await api("/api/engelbart-admin-mfa", {
-        method: "POST", body: body({ action: "verify", code: new FormData(form).get("code") }),
+        method: "POST", body: body({ action: "verify", code: data.get("code") }),
       });
       byId("mfa-enrollment").classList.add("hidden");
       byId("mfa-begin").classList.add("hidden");
@@ -337,9 +340,9 @@
   byId("recovery-regenerate-form").addEventListener("submit", async function (event) {
     event.preventDefault();
     var form = event.currentTarget;
+    var data = new FormData(form);
     setBusy(form, true);
     try {
-      var data = new FormData(form);
       var result = await api("/api/engelbart-admin-mfa", {
         method: "POST",
         body: body({
@@ -364,9 +367,9 @@
   byId("mfa-disable-form").addEventListener("submit", async function (event) {
     event.preventDefault();
     var form = event.currentTarget;
+    var data = new FormData(form);
     setBusy(form, true);
     try {
-      var data = new FormData(form);
       await api("/api/engelbart-admin-mfa", {
         method: "POST",
         body: body({ action: "disable", password: data.get("password"), code: data.get("code") }),
