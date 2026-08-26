@@ -8,7 +8,7 @@
   --accent-soft: #f2e2d4;
   --success: #225b3a;
   --danger: #8c2e23;
-  --serif: "Newsreader", Georgia, serif;
+  --serif: Georgia, "Times New Roman", serif;
   --sans: Helvetica, Arial, sans-serif;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
