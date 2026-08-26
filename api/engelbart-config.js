@@ -7,7 +7,6 @@ function readPublicConfig(env = process.env) {
   const config = {
     supabaseUrl: String(env[PUBLIC_CONFIG_KEYS.url] || "").replace(/\/$/, ""),
     supabaseAnonKey: String(env[PUBLIC_CONFIG_KEYS.anonKey] || ""),
-    googleEnabled: env.ENGELBART_GOOGLE_ENABLED === "true",
     creditsEnabled: false,
   };
 

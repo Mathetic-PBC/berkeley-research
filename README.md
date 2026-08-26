@@ -26,7 +26,7 @@ npm run check
 vercel dev
 ```
 
-`vercel dev` requires `SUPABASE_URL` and `SUPABASE_ANON_KEY`. Google buttons remain disabled unless `ENGELBART_GOOGLE_ENABLED=true` and the provider is configured in Supabase.
+`vercel dev` requires `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
 
 ## Hosting
 

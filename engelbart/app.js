@@ -15,7 +15,6 @@
     loginView: document.getElementById("login-view"),
     signupView: document.getElementById("signup-view"),
     loginForm: document.getElementById("login-form"),
-    loginGoogle: document.getElementById("login-google"),
     loginStatus: document.getElementById("login-status"),
     inviteForm: document.getElementById("invite-form"),
     inviteCode: document.getElementById("invite-code"),
@@ -24,7 +23,6 @@
     signupOptions: document.getElementById("signup-options"),
     approvedEmail: document.getElementById("approved-email"),
     passwordSignupForm: document.getElementById("password-signup-form"),
-    signupGoogle: document.getElementById("signup-google"),
     changeInvite: document.getElementById("change-invite"),
     signupStatus: document.getElementById("signup-status"),
     sessionEmail: document.getElementById("session-email"),
@@ -58,24 +56,6 @@
     if (signedIn) el.sessionEmail.textContent = session.user.email || "Signed in";
   }
 
-  function setGoogleAvailability() {
-    var enabled = Boolean(config.googleEnabled);
-    el.loginGoogle.disabled = !enabled;
-    el.signupGoogle.disabled = !enabled;
-    if (!enabled) {
-      el.loginGoogle.textContent = "Google sign-in is not configured yet";
-      el.signupGoogle.textContent = "Google signup is not configured yet";
-    }
-  }
-
-  async function beginGoogle() {
-    var result = await client.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin + "/engelbart" },
-    });
-    if (result.error) throw result.error;
-  }
-
   el.loginTab.addEventListener("click", function () { selectMode("login"); });
   el.signupTab.addEventListener("click", function () { selectMode("signup"); });
 
@@ -95,16 +75,6 @@
     }
     setStatus(el.loginStatus, "");
     showSession(result.data.session);
-  });
-
-  el.loginGoogle.addEventListener("click", async function () {
-    if (!config.googleEnabled) return;
-    setStatus(el.loginStatus, "Opening Google…");
-    try {
-      await beginGoogle();
-    } catch (error) {
-      setStatus(el.loginStatus, shared.safeMessage(error, "Could not start Google sign-in."), "error");
-    }
   });
 
   el.inviteCode.addEventListener("input", function () {
@@ -164,16 +134,6 @@
     setStatus(el.signupStatus, "Check your email to confirm the account, then return here to sign in.", "success");
   });
 
-  el.signupGoogle.addEventListener("click", async function () {
-    if (!config.googleEnabled) return;
-    setStatus(el.signupStatus, "Opening Google…");
-    try {
-      await beginGoogle();
-    } catch (error) {
-      setStatus(el.signupStatus, shared.safeMessage(error, "Could not start Google signup."), "error");
-    }
-  });
-
   el.changeInvite.addEventListener("click", function () {
     approvedEmail = "";
     el.inviteForm.classList.remove("hidden");
@@ -195,7 +155,6 @@
       client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
         auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
       });
-      setGoogleAvailability();
       client.auth.onAuthStateChange(function (_event, session) { showSession(session); });
       var sessionResult = await client.auth.getSession();
       if (sessionResult.error) throw sessionResult.error;

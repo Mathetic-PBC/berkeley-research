@@ -8,13 +8,11 @@ test("returns only browser-safe configuration", () => {
     SUPABASE_ANON_KEY: "public-anon-key",
     SUPABASE_SERVICE_ROLE_KEY: "must-not-leak",
     LITELLM_MASTER_KEY: "must-not-leak-either",
-    ENGELBART_GOOGLE_ENABLED: "true",
   });
 
   assert.deepEqual(config, {
     supabaseUrl: "https://example.supabase.co",
     supabaseAnonKey: "public-anon-key",
-    googleEnabled: true,
     creditsEnabled: false,
   });
   assert.equal(JSON.stringify(config).includes("must-not-leak"), false);

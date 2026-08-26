@@ -180,17 +180,6 @@ input[readonly] { color: var(--muted); background: #efede6; }
 
 .button-row .button { flex: 1 1 220px; }
 
-.divider {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 12px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.divider::before, .divider::after { height: 1px; background: var(--line); content: ""; }
-
 .fine-print, .status, .callout {
   color: var(--muted);
   font-size: 13px;
