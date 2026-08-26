@@ -2,7 +2,14 @@
 
 Landing page for Mathetic's Berkeley research chats — served at **https://berkeley.mathetic.com**.
 
-Static site: `index.html` + `uploads/`. No build step.
+Static site with no build step:
+
+- `/` — Berkeley research-chat landing page (`index.html`)
+- `/engelbart` — Supabase login and invite-only signup
+- `/engelbart/admin` — intentionally unprotected invite generation during the pilot
+- `/api/engelbart-config` — browser-safe runtime configuration only
+
+The Engelbart database migration and activation instructions live in `supabase/`. Paid credit provisioning is deliberately absent while the admin route is public.
 
 ## Source of truth
 
@@ -10,6 +17,16 @@ Compiled by hand from the Claude Design project *Mathetic landing page design* �
 The design-canvas runtime (`support.js`, `image-slot.js`, React/Babel from unpkg) is not shipped; the
 `<x-dc>` template, `style-hover`, and `DCLogic` component were flattened into plain HTML/CSS/JS.
 To update copy or layout, edit `index.html` directly (or re-export from the design and re-flatten).
+
+## Local verification
+
+```sh
+npm test
+npm run check
+vercel dev
+```
+
+`vercel dev` requires `SUPABASE_URL` and `SUPABASE_ANON_KEY`. Google buttons remain disabled unless `ENGELBART_GOOGLE_ENABLED=true` and the provider is configured in Supabase.
 
 ## Hosting
 

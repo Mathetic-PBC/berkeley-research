@@ -1,0 +1,8 @@
+{
+  "name": "berkeley-research",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check api/engelbart-config.js && node --check engelbart/shared.js && node --check engelbart/app.js && node --check engelbart/admin/admin.js"
+  }
+}

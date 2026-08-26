@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Engelbart · Mathetic</title>
+  <meta name="description" content="Create or connect your Engelbart account.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/engelbart/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <nav class="topbar" aria-label="Primary">
+      <a class="wordmark" href="/">Mathetic</a>
+      <a href="/engelbart/admin">Invite admin</a>
+    </nav>
+
+    <section aria-labelledby="page-title">
+      <p class="eyebrow">Private beta</p>
+      <h1 id="page-title">Build with Engelbart.</h1>
+      <p class="lede">Sign in to download Engelbart, or use an invite code to create an account.</p>
+    </section>
+
+    <section id="loading-panel" class="panel" aria-live="polite">
+      <p class="status">Loading authentication…</p>
+    </section>
+
+    <section id="auth-panel" class="panel hidden" aria-label="Authentication">
+      <div class="tabs" role="tablist" aria-label="Authentication mode">
+        <button id="login-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="login-view">Sign in</button>
+        <button id="signup-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="signup-view">Create account</button>
+      </div>
+
+      <div id="login-view" role="tabpanel" aria-labelledby="login-tab">
+        <form id="login-form" class="stack">
+          <div class="field">
+            <label for="login-email">Email</label>
+            <input id="login-email" name="email" type="email" autocomplete="email" required>
+          </div>
+          <div class="field">
+            <label for="login-password">Password</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+          </div>
+          <button class="button" type="submit">Sign in</button>
+          <div class="divider">or</div>
+          <button id="login-google" class="button secondary" type="button">Continue with Google</button>
+          <p id="login-status" class="status" aria-live="polite"></p>
+        </form>
+      </div>
+
+      <div id="signup-view" class="hidden" role="tabpanel" aria-labelledby="signup-tab">
+        <form id="invite-form" class="stack">
+          <div class="field">
+            <label for="invite-code">Invite code</label>
+            <input id="invite-code" name="invite" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="EGB-0000-0000-0000-0000-0000" required>
+          </div>
+          <div class="field">
+            <label for="signup-email">Email</label>
+            <input id="signup-email" name="email" type="email" autocomplete="email" required>
+          </div>
+          <button class="button" type="submit">Verify invite</button>
+          <p class="fine-print">For Google signup, enter the email attached to the Google account you will choose.</p>
+          <p id="invite-status" class="status" aria-live="polite"></p>
+        </form>
+
+        <div id="signup-options" class="stack hidden">
+          <div class="field">
+            <label for="approved-email">Approved email</label>
+            <input id="approved-email" type="email" readonly>
+          </div>
+          <form id="password-signup-form" class="stack">
+            <div class="field">
+              <label for="signup-password">Create a password</label>
+              <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+            </div>
+            <button class="button" type="submit">Create account with email</button>
+          </form>
+          <div class="divider">or</div>
+          <button id="signup-google" class="button secondary" type="button">Create account with Google</button>
+          <button id="change-invite" class="button secondary" type="button">Use a different code or email</button>
+          <p id="signup-status" class="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="download-panel" class="panel hidden" aria-labelledby="download-title">
+      <div class="session-line"><span class="dot" aria-hidden="true"></span><span id="session-email"></span></div>
+      <h2 id="download-title">Install Engelbart</h2>
+      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer vel sem at nibh feugiat cursus.</p>
+      <code class="code">npx engelbart@latest</code>
+      <p class="callout">Prefer to keep everything local? Lorem ipsum dolor sit amet; the installer will expose a local-only bypass.</p>
+      <div class="button-row">
+        <a class="button" href="https://engelbart.mathetic.com" rel="noopener">Open download site</a>
+        <button id="sign-out" class="button secondary" type="button">Sign out</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js" integrity="sha384-yiVMs0R/Jyz7OhoXa/DsEMUSBLjEhr/QJta2ONO+zB6I8/GmNg/7AUFrZmAJV7KV" crossorigin="anonymous"></script>
+  <script src="/engelbart/shared.js"></script>
+  <script src="/engelbart/app.js"></script>
+</body>
+</html>
