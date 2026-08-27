@@ -38,6 +38,28 @@ function modelList() {
   return ALL_PROXY_MODELS.slice();
 }
 
+// Floating-point money: a key that has spent exactly its budget reads as
+// 24.999999999 as often as 25, and the difference decides whether a member is
+// told their credit is gone or left to find out from a proxy error.
+const SPEND_EPSILON = 0.0001;
+
+// Derived on every read, never stored. LiteLLM meters each request and this
+// row is only a mirror of that ledger, so a verdict persisted here would be
+// stale the moment it was written.
+function isExhausted(row) {
+  return Number(row.spend_usd || 0) >= Number(row.budget_usd || 0) - SPEND_EPSILON;
+}
+
+// The one word a client needs to decide whether to use this key. Inferring it
+// from budget and spend is what every caller was doing instead, and the CLI's
+// credential helper got it wrong in the only direction that matters: it handed
+// Claude Code a key the pool had already stopped honouring.
+function creditStatus(row) {
+  if (row.blocked) return "blocked";
+  if (row.status !== "ready") return "pending";
+  return isExhausted(row) ? "exhausted" : "active";
+}
+
 function policyFromRow(row) {
   return {
     budgetUsd: Number(row.budget_usd ?? row.default_budget_usd),
@@ -175,7 +197,14 @@ async function credentialsFor(user, options = {}) {
     row = await refreshSpend(row, options);
   } catch (error) { /* keep the stored figure */ }
 
+  // The key is still handed over when the credit is spent, and deliberately:
+  // it is the member's own, it starts working again the moment the pool is
+  // topped up, and the dashboard that shows it also shows the meter explaining
+  // why it is idle. What changes is that nobody has to infer the verdict from
+  // two numbers any more -- `status` says it, and a client that reads it can
+  // stop before spending a session on a key the proxy will refuse.
   return {
+    status: creditStatus(row),
     apiKey: encryptedKey(row, options.env),
     baseUrl: litellmConfig(options.env || process.env).baseUrl,
     budgetUsd: Number(row.budget_usd),
@@ -259,21 +288,31 @@ async function updateAccount(userId, input, options = {}) {
   if (increasing) {
     const updated = await updateStoredPolicy(userId, policy, options);
     try {
-      await LiteLLM.updateKey(key, policy, options);
+      await applyPolicy(userId, key, policy, options);
     } catch (error) {
       await updateStoredPolicy(userId, oldPolicy, options).catch(() => {});
       throw error;
     }
     return updated;
   } else {
-    await LiteLLM.updateKey(key, policy, options);
+    await applyPolicy(userId, key, policy, options);
     try {
       return await updateStoredPolicy(userId, policy, options);
     } catch (error) {
-      await LiteLLM.updateKey(key, oldPolicy, options).catch(() => {});
+      await applyPolicy(userId, key, oldPolicy, options).catch(() => {});
       throw error;
     }
   }
+}
+
+// LiteLLM carries a cap on the key and a second one on the user, and spends
+// against the lower of the two. Moving only the key is how topping someone up
+// could leave them stopped exactly where they were, with the key's own numbers
+// showing budget to spare -- which is the kind of thing that gets fixed by
+// hand, in a script, at the moment it is least convenient.
+async function applyPolicy(userId, key, policy, options = {}) {
+  await LiteLLM.updateKey(key, policy, options);
+  await LiteLLM.updateUser({ id: userId }, policy, options);
 }
 
 async function blockAccount(userId, blocked, options = {}) {
@@ -310,7 +349,41 @@ async function refreshSpend(row, options = {}) {
     { spend_usd: spend, synced_at: now, updated_at: now },
     options,
   );
-  return rows[0] || { ...row, spend_usd: spend, synced_at: now };
+  const next = rows[0] || { ...row, spend_usd: spend, synced_at: now };
+  await reconcileBlock(next, info, options);
+  return next;
+}
+
+// Claude Code re-runs its credential helper when a request comes back 401, and
+// LiteLLM answers 401 for a key that is blocked -- but 400 or 429 for one that
+// has merely spent its budget, which is the case that actually happens. So the
+// gate is held to match the ledger: an exhausted key is blocked, which turns
+// running out of credit into a status the client already knows how to recover
+// from, and a topped-up or freshly reset one is unblocked again without an
+// administrator being paged for it.
+//
+// Only LiteLLM's gate moves here. The `blocked` column stays what it has always
+// been -- an administrator's pause -- so the two never have to be told apart.
+// `/key/info` is not documented to report `blocked`, and treating a missing
+// field as `false` would be the worst possible guess: an exhausted key would
+// still be blocked, but a topped-up one would look like it was already
+// unblocked and never be told otherwise, so paying to refill someone's credit
+// would silently do nothing. Absent therefore means unknown, and unknown means
+// say it again -- /key/block and /key/unblock are both idempotent, so the only
+// cost of asserting a state that already holds is one call.
+async function reconcileBlock(row, info, options = {}) {
+  const desired = Boolean(row.blocked) || isExhausted(row);
+  const known = info && typeof info.blocked === "boolean" ? info.blocked : null;
+  if (known === desired) return false;
+  try {
+    await LiteLLM.setBlocked(encryptedKey(row, options.env), desired, options);
+    return true;
+  } catch (error) {
+    // A proxy that will not take the instruction is not a reason to fail the
+    // read that prompted it: the member still gets their balance, and the
+    // status they are handed is computed from the ledger either way.
+    return false;
+  }
 }
 
 async function syncAccount(userId, options = {}) {
@@ -366,16 +439,20 @@ async function adminState(options = {}) {
 module.exports = {
   ALL_PROXY_MODELS,
   adminState,
+  applyPolicy,
   allocatedBudget,
   blockAccount,
   claimAccount,
+  creditStatus,
   credentialsFor,
   encryptedKey,
+  isExhausted,
   modelList,
   optionalLimit,
   policyFromRow,
   positiveMoney,
   provision,
+  reconcileBlock,
   refreshSpend,
   settings,
   syncAccount,

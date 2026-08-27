@@ -242,3 +242,202 @@ test("admin policy changes cross the atomic Supabase pool allocator", async () =
     p_tpm_limit: null,
   });
 });
+
+// ---------------------------------------------------------------------------
+// Running out of credit, and coming back from it.
+// ---------------------------------------------------------------------------
+
+const Credits = require("../api/_lib/credits");
+const { budgetDuration } = require("../api/_lib/config");
+
+// Answers /key/info with a spend and a block state, and records every
+// block/unblock the code decides to issue.
+function proxyWithGate(row, spend, blocked = false) {
+  const gate = [];
+  return {
+    gate,
+    async fetchImpl(url, init = {}) {
+      if (url.includes("/key/info")) {
+        return { ok: true, status: 200, async text() {
+          return JSON.stringify({ info: { spend, blocked } });
+        } };
+      }
+      if (url.includes("/key/block") || url.includes("/key/unblock")) {
+        gate.push(url.includes("/key/unblock") ? "unblock" : "block");
+        return { ok: true, status: 200, async text() { return "{}"; } };
+      }
+      if (init.method === "PATCH") {
+        const patch = JSON.parse(init.body);
+        return { ok: true, status: 200, async text() { return JSON.stringify([{ ...row, ...patch }]); } };
+      }
+      return { ok: true, status: 200, async text() { return JSON.stringify([row]); } };
+    },
+  };
+}
+
+// Every caller was inferring this from two numbers, and the CLI's credential
+// helper inferred it wrong in the only direction that costs a member anything.
+test("whether the pool will still pay is one word, not an inference", () => {
+  assert.equal(Credits.creditStatus(readyRow({ spend_usd: "4.00" })), "active");
+  assert.equal(Credits.creditStatus(readyRow({ spend_usd: "25.00" })), "exhausted");
+  assert.equal(Credits.creditStatus(readyRow({ spend_usd: "31.00" })), "exhausted");
+  assert.equal(Credits.creditStatus(readyRow({ blocked: true })), "blocked");
+  assert.equal(Credits.creditStatus(readyRow({ status: "pending" })), "pending");
+
+  // Money that arrives as a float: a key that has spent its budget exactly
+  // reads as 24.999999999 as often as it reads as 25.
+  assert.equal(Credits.isExhausted({ budget_usd: 25, spend_usd: 24.999999999 }), true);
+  assert.equal(Credits.isExhausted({ budget_usd: 25, spend_usd: 24.9 }), false);
+});
+
+test("reading credentials says outright that the credit is spent", async () => {
+  const row = readyRow();
+  const scripted = proxyWithGate(row, 25);
+
+  const result = await Credits.credentialsFor({ id: "user-uuid", email: "m@example.com" }, {
+    env: PROXY_ENV,
+    fetchImpl: scripted.fetchImpl,
+  });
+
+  assert.equal(result.status, "exhausted");
+  assert.equal(result.spendUsd, 25);
+  // Still handed over: it is the member's own key and it works again the
+  // moment the pool is topped up. The status is what a client acts on.
+  assert.equal(result.apiKey, "sk-member-key");
+});
+
+test("a healthy account reads as active", async () => {
+  const row = readyRow();
+  const scripted = proxyWithGate(row, 4);
+
+  const result = await Credits.credentialsFor({ id: "user-uuid", email: "m@example.com" }, {
+    env: PROXY_ENV,
+    fetchImpl: scripted.fetchImpl,
+  });
+
+  assert.equal(result.status, "active");
+  assert.deepEqual(scripted.gate, [], "nothing to reconcile");
+});
+
+// Claude Code re-runs its credential helper on a 401, and LiteLLM answers 401
+// for a blocked key -- but 400 or 429 for one that has only spent its budget,
+// which is the case that actually happens. Blocking is what puts the failure
+// into the shape the client can already recover from.
+test("an exhausted key is blocked at the proxy so it answers 401", async () => {
+  const row = readyRow();
+  const scripted = proxyWithGate(row, 25, false);
+
+  await Credits.refreshSpend(row, { env: PROXY_ENV, fetchImpl: scripted.fetchImpl });
+
+  assert.deepEqual(scripted.gate, ["block"]);
+});
+
+// The half that means nobody gets paged: a top-up, or a budget cycle rolling
+// over, brings the key back without an administrator touching anything.
+test("a key with room again is unblocked without anyone being asked", async () => {
+  const row = readyRow();
+  const scripted = proxyWithGate(row, 3, true);
+
+  await Credits.refreshSpend(row, { env: PROXY_ENV, fetchImpl: scripted.fetchImpl });
+
+  assert.deepEqual(scripted.gate, ["unblock"]);
+});
+
+test("an administrator's pause is left alone by the reconcile", async () => {
+  const paused = readyRow({ blocked: true });
+  const scripted = proxyWithGate(paused, 3, true);
+
+  await Credits.refreshSpend(paused, { env: PROXY_ENV, fetchImpl: scripted.fetchImpl });
+
+  assert.deepEqual(scripted.gate, [], "already where an admin put it");
+});
+
+// A proxy that will not take the instruction is not a reason to fail the read
+// that prompted it.
+test("a proxy that refuses the block still returns the balance", async () => {
+  const row = readyRow();
+  async function fetchImpl(url, init = {}) {
+    if (url.includes("/key/info")) {
+      return { ok: true, status: 200, async text() { return JSON.stringify({ info: { spend: 25 } }); } };
+    }
+    if (url.includes("/key/block")) {
+      return { ok: false, status: 503, async text() { return "proxy down"; } };
+    }
+    if (init.method === "PATCH") {
+      const patch = JSON.parse(init.body);
+      return { ok: true, status: 200, async text() { return JSON.stringify([{ ...row, ...patch }]); } };
+    }
+    return { ok: true, status: 200, async text() { return JSON.stringify([row]); } };
+  }
+
+  const result = await Credits.credentialsFor({ id: "user-uuid", email: "m@example.com" }, {
+    env: PROXY_ENV, fetchImpl,
+  });
+  assert.equal(result.status, "exhausted");
+  assert.equal(result.spendUsd, 25);
+});
+
+// LiteLLM spends against the lower of the key's cap and the user's cap, so a
+// top-up that moves only the key is a top-up that does not happen.
+test("changing a budget moves the user's cap as well as the key's", async () => {
+  const seen = [];
+  async function fetchImpl(url, init = {}) {
+    seen.push({ url, body: JSON.parse(init.body) });
+    return { ok: true, status: 200, async text() { return "{}"; } };
+  }
+
+  await Credits.applyPolicy("user-uuid", "sk-member-key", {
+    budgetUsd: 50, models: ["all-proxy-models"], rpmLimit: null, tpmLimit: null,
+  }, { env: PROXY_ENV, fetchImpl });
+
+  assert.equal(seen.length, 2);
+  assert.ok(seen[0].url.endsWith("/key/update"));
+  assert.equal(seen[0].body.max_budget, 50);
+  assert.ok(seen[1].url.endsWith("/user/update"));
+  assert.equal(seen[1].body.max_budget, 50);
+  assert.equal(seen[1].body.user_id, "user-uuid");
+});
+
+// A recurring allowance is a different promise from a fixed pot: the pool can
+// pay out its allocated total once per cycle rather than once. So it stays off
+// unless someone sets it, and a typo is refused rather than ignored by the
+// proxy.
+test("the budget cycle is opt-in and its format is checked", () => {
+  assert.equal(budgetDuration({}), null);
+  assert.equal(budgetDuration({ LITELLM_BUDGET_DURATION: "" }), null);
+  assert.equal(budgetDuration({ LITELLM_BUDGET_DURATION: "30d" }), "30d");
+  assert.equal(budgetDuration({ LITELLM_BUDGET_DURATION: "1mo" }), "1mo");
+  assert.equal(budgetDuration({ LITELLM_BUDGET_DURATION: "24h" }), "24h");
+  assert.throws(() => budgetDuration({ LITELLM_BUDGET_DURATION: "monthly" }), /30d, 24h, or 1mo/);
+  assert.throws(() => budgetDuration({ LITELLM_BUDGET_DURATION: "0d" }), /30d, 24h, or 1mo/);
+});
+
+// The assumption this whole recovery path rests on is that LiteLLM tells us
+// whether a key is currently blocked. `/key/info` is not documented to, so the
+// code must not depend on it: treating a missing field as "not blocked" would
+// mean a refilled account never gets unblocked, and paying to top someone up
+// would silently do nothing.
+test("a proxy that does not report blocked state still gets told what to do", async () => {
+  const row = readyRow();
+  const withheld = { async fetchImpl(url, init = {}) {
+    if (url.includes("/key/info")) {
+      // No `blocked` field at all -- what an older proxy answers.
+      return { ok: true, status: 200, async text() { return JSON.stringify({ info: { spend: 3 } }); } };
+    }
+    if (url.includes("/key/block") || url.includes("/key/unblock")) {
+      withheld.gate.push(url.includes("/key/unblock") ? "unblock" : "block");
+      return { ok: true, status: 200, async text() { return "{}"; } };
+    }
+    if (init.method === "PATCH") {
+      const patch = JSON.parse(init.body);
+      return { ok: true, status: 200, async text() { return JSON.stringify([{ ...row, ...patch }]); } };
+    }
+    return { ok: true, status: 200, async text() { return JSON.stringify([row]); } };
+  }, gate: [] };
+
+  await Credits.refreshSpend(row, { env: PROXY_ENV, fetchImpl: withheld.fetchImpl });
+
+  // Spend is back under budget, so the key must be unblocked -- and since the
+  // proxy did not say, saying it anyway is the only safe move.
+  assert.deepEqual(withheld.gate, ["unblock"]);
+});
