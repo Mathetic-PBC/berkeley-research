@@ -9,7 +9,7 @@ Static site with no build step:
 - `/engelbart/signin` — Supabase login and invite-only signup; the URL `bart auth` opens
 - `/engelbart/admin` — password/TOTP-protected invite and credit administration
 - `/api/engelbart-config` — browser-safe runtime configuration only
-- `/api/engelbart-credentials` — authenticated per-member LiteLLM provisioning
+- `/api/engelbart-credentials` — authenticated, invite-entitled LiteLLM provisioning
 - `/api/engelbart-device` — CLI device-authorization pairing (`start`, `approve`,
   `deny`, `poll`, `whoami`, `revoke`)
 
@@ -34,8 +34,14 @@ Individual machines are revoked by their token row.
 The Engelbart database migrations and activation instructions live in
 `supabase/`. The application uses Vercel functions as the authenticated control
 plane and a separate LiteLLM deployment as the inference/metering data plane.
-One encrypted virtual key is stored per Supabase member; the Anthropic provider
+One encrypted virtual key is stored per invited Supabase member; the Anthropic provider
 key never reaches Vercel, Supabase, a browser, or the installer.
+
+Invites are the credit entitlement. Accounts created through invite-only signup
+already own one; legacy accounts must redeem an unused code on the authorization
+page before a new LiteLLM key can be allocated. Existing provisioned keys remain
+retrievable. Connecting a terminal without Mathetic credits remains available
+for members who bring their own Claude access.
 
 ## Server configuration
 

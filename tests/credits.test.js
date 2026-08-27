@@ -159,10 +159,11 @@ test("a negative figure from the proxy is floored at zero", async () => {
   assert.equal(Number(updated.spend_usd), 0);
 });
 
-test("account claims use the atomic Supabase pool allocator", async () => {
+test("account claims send the invite to the atomic Supabase allocator", async () => {
   let request;
   const result = await claimAccount({ id: "user-uuid", email: "member@example.com" }, {
     env: SUPABASE_ENV,
+    inviteCode: "EGB-A1B2-C3D4-E5F6-7788-9900",
     async fetchImpl(url, options) {
       request = { url, options, body: JSON.parse(options.body) };
       return {
@@ -179,9 +180,38 @@ test("account claims use the atomic Supabase pool allocator", async () => {
   });
   assert.equal(request.url, "https://project.supabase.co/rest/v1/rpc/engelbart_claim_credit_account");
   assert.equal(request.options.headers.Authorization, "Bearer service-role");
-  assert.deepEqual(request.body, { p_user_id: "user-uuid", p_email: "member@example.com" });
+  assert.deepEqual(request.body, {
+    p_user_id: "user-uuid",
+    p_email: "member@example.com",
+    p_invite_code: "EGB-A1B2-C3D4-E5F6-7788-9900",
+  });
   assert.equal(result.claimed, true);
   assert.equal(result.row.user_id, "user-uuid");
+});
+
+test("account claims fail closed when Supabase rejects missing credit entitlement", async () => {
+  let request;
+  await assert.rejects(
+    claimAccount({ id: "legacy-user", email: "legacy@example.com" }, {
+      env: SUPABASE_ENV,
+      async fetchImpl(url, options) {
+        request = { url, body: JSON.parse(options.body) };
+        return {
+          ok: false,
+          status: 400,
+          async text() {
+            return JSON.stringify({
+              message: "A valid Engelbart invite is required for Claude credits",
+            });
+          },
+        };
+      },
+    }),
+    (error) => error.statusCode === 403
+      && /valid, unused Engelbart invite code/i.test(error.message),
+  );
+  assert.match(request.url, /rpc\/engelbart_claim_credit_account$/);
+  assert.equal(request.body.p_invite_code, null);
 });
 
 test("admin policy changes cross the atomic Supabase pool allocator", async () => {

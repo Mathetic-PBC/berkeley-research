@@ -36,6 +36,9 @@
     navSession: document.getElementById("nav-session"),
     sessionEmail: document.getElementById("session-email"),
     creditStatus: document.getElementById("credit-status"),
+    creditInviteForm: document.getElementById("credit-invite-form"),
+    creditInviteCode: document.getElementById("credit-invite-code"),
+    creditInviteStatus: document.getElementById("credit-invite-status"),
     creditMeter: document.getElementById("credit-meter"),
     creditFill: document.getElementById("credit-fill"),
     keyBlock: document.getElementById("key-block"),
@@ -50,6 +53,9 @@
     pairingEmail: document.getElementById("pairing-email"),
     pairingCode: document.getElementById("pairing-code"),
     pairingLabel: document.getElementById("pairing-label"),
+    pairingUseCredits: document.getElementById("pairing-use-credits"),
+    pairingCreditInvite: document.getElementById("pairing-credit-invite"),
+    pairingInviteCode: document.getElementById("pairing-invite-code"),
     pairingActions: document.getElementById("pairing-actions"),
     pairingApprove: document.getElementById("pairing-approve"),
     pairingDeny: document.getElementById("pairing-deny"),
@@ -88,9 +94,9 @@
   }
 
   var DEF = {
-    login: "Sign in to pick up your Claude credit.",
+    login: "Sign in to connect Engelbart.",
     signup: "Your invite code reserves one account, and one Claude credit.",
-    session: "Your key works with Claude Code on any laptop you sign in from.",
+    session: "Use your own Claude access, or claim a Mathetic credit.",
   };
 
   var signedIn = false;
@@ -147,7 +153,10 @@
       el.sessionEmail.textContent = session.user.email || "Signed in";
       el.pairingEmail.textContent = session.user.email || "Signed in";
       if (pairing) el.pairingCode.textContent = pendingCode;
-      provisionCredits(session);
+      // While pairing, credit provisioning is part of the explicit approval
+      // action below. Keeping it out of this render avoids racing the CLI's
+      // credential fetch against the browser's LiteLLM key creation.
+      if (!pairing) provisionCredits(session);
     }
     if (was !== signedIn) replayFlight();
   }
@@ -191,6 +200,16 @@
     setBusy(el.pairing, true);
     setStatus(el.pairingStatus, approve ? "Connecting your terminal…" : "Rejecting that code…");
     try {
+      if (approve && el.pairingUseCredits.checked) {
+        var inviteCode = shared.normalizeInviteCode(el.pairingInviteCode.value);
+        if (inviteCode && !shared.isPlausibleInviteCode(inviteCode)) {
+          throw new Error("Enter a complete credit invite code.");
+        }
+        setStatus(el.pairingStatus, "Checking Claude credit access…");
+        var creditResult = await provisionCredits(currentSession, inviteCode);
+        if (!creditResult.ok) throw creditResult.error;
+        setStatus(el.pairingStatus, "Connecting your terminal…");
+      }
       var response = await fetch("/api/engelbart-device", {
         method: "POST",
         headers: {
@@ -221,23 +240,37 @@
       setStatus(el.pairingStatus, "");
     } catch (error) {
       setBusy(el.pairing, false);
-      forgetPendingCode();
       setStatus(el.pairingStatus, error.message || "That pairing code could not be used.", "error");
     }
   }
 
-  async function provisionCredits(session) {
+  async function provisionCredits(session, inviteCode) {
     if (!config || !config.creditsEnabled) {
       setStatus(el.creditStatus, "Claude credits are not connected on this deployment yet.");
-      return;
+      return {
+        ok: false,
+        error: new Error("Claude credits are not connected on this deployment yet."),
+      };
     }
-    if (!session || !session.user || provisionedUser === session.user.id) return;
+    if (!session || !session.user) {
+      return { ok: false, error: new Error("Sign in to claim Claude credits.") };
+    }
+    if (provisionedUser === session.user.id && credentials) return { ok: true };
     provisionedUser = session.user.id;
     setStatus(el.creditStatus, "Minting your Claude Code key\u2026");
     try {
       var auth = { Accept: "application/json", Authorization: "Bearer " + session.access_token };
+      var body;
+      if (inviteCode) {
+        auth["Content-Type"] = "application/json";
+        body = JSON.stringify({ inviteCode: inviteCode });
+      }
       // POST is idempotent: it creates the LiteLLM user and key only once.
-      var created = await fetch("/api/engelbart-credentials", { method: "POST", headers: auth });
+      var created = await fetch("/api/engelbart-credentials", {
+        method: "POST",
+        headers: auth,
+        body: body,
+      });
       var createdValue = await created.json();
       if (!created.ok) throw new Error(createdValue.error || "Credit allocation failed");
 
@@ -245,15 +278,58 @@
       var value = await read.json();
       if (!read.ok) throw new Error(value.error || "Could not read your key");
       credentials = value;
+      el.creditInviteForm.classList.add("hidden");
+      setStatus(el.creditInviteStatus, "");
       renderCredentials();
+      return { ok: true };
     } catch (error) {
       provisionedUser = "";
       credentials = null;
       el.keyBlock.classList.add("hidden");
       el.creditMeter.classList.add("hidden");
+      if (/invite code/i.test(String(error.message || ""))) {
+        el.creditInviteForm.classList.remove("hidden");
+      }
       setStatus(el.creditStatus, error.message || "Claude credit allocation is unavailable.", "error");
+      return { ok: false, error: error };
     }
   }
+
+  function normalizeCreditInput(input) {
+    input.value = shared.normalizeInviteCode(input.value);
+  }
+
+  el.pairingInviteCode.addEventListener("input", function () {
+    normalizeCreditInput(el.pairingInviteCode);
+  });
+
+  el.creditInviteCode.addEventListener("input", function () {
+    normalizeCreditInput(el.creditInviteCode);
+  });
+
+  el.pairingUseCredits.addEventListener("change", function () {
+    el.pairingCreditInvite.classList.toggle("hidden", !el.pairingUseCredits.checked);
+  });
+
+  el.creditInviteForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var inviteCode = shared.normalizeInviteCode(el.creditInviteCode.value);
+    if (!shared.isPlausibleInviteCode(inviteCode)) {
+      setStatus(el.creditInviteStatus, "Enter a complete invite code.", "error");
+      return;
+    }
+    setBusy(el.creditInviteForm, true);
+    setStatus(el.creditInviteStatus, "Checking invite…");
+    var result = await provisionCredits(currentSession, inviteCode);
+    setBusy(el.creditInviteForm, false);
+    if (!result.ok) {
+      setStatus(
+        el.creditInviteStatus,
+        result.error.message || "That invite could not be used.",
+        "error"
+      );
+    }
+  });
 
   el.revealKey.addEventListener("click", function () {
     keyVisible = !keyVisible;
@@ -387,6 +463,8 @@
     provisionedUser = "";
     el.keyBlock.classList.add("hidden");
     el.creditMeter.classList.add("hidden");
+    el.creditInviteForm.classList.add("hidden");
+    setStatus(el.creditInviteStatus, "");
     showSession(null);
     selectMode("login");
   });

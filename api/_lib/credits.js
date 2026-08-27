@@ -82,12 +82,17 @@ async function claimAccount(user, options = {}) {
     const result = await rpc("engelbart_claim_credit_account", {
       p_user_id: user.id,
       p_email: user.email,
+      p_invite_code: options.inviteCode ? String(options.inviteCode) : null,
     }, options);
     const value = Array.isArray(result) ? result[0] : result;
     if (!value || !value.account) throw new Error("Supabase returned no credit account claim");
     return { row: value.account, claimed: Boolean(value.claimed) };
   } catch (error) {
-    if (/credit pool is fully allocated/i.test(String(error.detail || error.message))) {
+    const detail = String(error.detail || error.message);
+    if (/valid Engelbart invite.*Claude credits/i.test(detail)) {
+      error.message = "Enter a valid, unused Engelbart invite code to claim Mathetic Claude credits";
+      error.statusCode = 403;
+    } else if (/credit pool is fully allocated/i.test(detail)) {
       error.message = "The configured credit pool is fully allocated";
       error.statusCode = 409;
     }

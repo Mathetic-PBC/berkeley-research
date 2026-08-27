@@ -1,7 +1,7 @@
 "use strict";
 
 const Credits = require("./_lib/credits");
-const { allowMethods, bearerToken, publicError, sendJson } = require("./_lib/http");
+const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("./_lib/http");
 const { verifyPrincipal } = require("./_lib/cli-auth");
 
 async function handler(req, res) {
@@ -9,7 +9,8 @@ async function handler(req, res) {
   try {
     const user = await verifyPrincipal(bearerToken(req));
     if (req.method === "POST") {
-      const row = await Credits.provision(user);
+      const body = await readJson(req);
+      const row = await Credits.provision(user, { inviteCode: body.inviteCode });
       return sendJson(res, 200, {
         ready: row.status === "ready",
         budgetUsd: Number(row.budget_usd),

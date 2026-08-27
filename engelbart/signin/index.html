@@ -40,7 +40,7 @@
         </svg>
       </div>
       <h1>Engelbart</h1>
-      <p id="page-def" class="def"><span class="def-login">Sign in to pick up your Claude credit.</span><span class="def-signup">Your invite code reserves one account, and one Claude credit.</span><span class="def-pairing">A terminal is waiting for you to approve it.</span><span class="def-connected" id="def-connected">That terminal is connected.</span></p>
+      <p id="page-def" class="def"><span class="def-login">Sign in to connect Engelbart.</span><span class="def-signup">Your invite code reserves one account, and one Claude credit.</span><span class="def-pairing">A terminal is waiting for you to approve it.</span><span class="def-connected" id="def-connected">That terminal is connected.</span></p>
     </header>
 
     <section id="loading-panel" class="hidden" aria-live="polite">
@@ -119,6 +119,17 @@
         <p class="pairing-code" id="pairing-code" aria-label="Verification code"></p>
         <p class="pairing-confirm">Check this matches the code in your terminal.</p>
         <p class="meta" id="pairing-label"></p>
+        <div class="pairing-credit">
+          <label class="check-row" for="pairing-use-credits">
+            <input id="pairing-use-credits" type="checkbox" checked>
+            <span>Set up Mathetic Claude credits</span>
+          </label>
+          <div id="pairing-credit-invite" class="field">
+            <label for="pairing-invite-code">Credit invite code</label>
+            <input id="pairing-invite-code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="EGB-0000-0000-0000-0000-0000">
+            <p class="fine-print">Enter a code unless this account redeemed one during signup. Uncheck above if you use your own Claude access.</p>
+          </div>
+        </div>
         <div class="pairing-actions" id="pairing-actions">
           <button id="pairing-approve" class="button" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -141,6 +152,14 @@
     <section id="download-panel" class="hidden" aria-labelledby="download-title">
       <h2 id="download-title">You're in.</h2>
       <p id="credit-status" class="status" aria-live="polite"></p>
+      <form id="credit-invite-form" class="stack credit-invite hidden">
+        <div class="field">
+          <label for="credit-invite-code">Credit invite code</label>
+          <input id="credit-invite-code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="EGB-0000-0000-0000-0000-0000" required>
+        </div>
+        <button class="button" type="submit">Claim Mathetic Claude credits</button>
+        <p id="credit-invite-status" class="status" aria-live="polite"></p>
+      </form>
       <div id="credit-meter" class="meter hidden" role="img" aria-label="Credit remaining">
         <span id="credit-fill" class="meter-fill"></span>
       </div>

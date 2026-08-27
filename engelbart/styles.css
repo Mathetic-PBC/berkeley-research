@@ -257,6 +257,7 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 600; }
 .status { min-height: 20px; margin: 0; }
 /* The credit line is the point of the signed-in page, so it gets prose weight. */
 #credit-status { margin-bottom: 22px; font-family: var(--serif); font-size: 18px; }
+.credit-invite { margin: 0 auto 24px; }
 .status[data-kind="error"] { color: var(--danger); }
 .status[data-kind="success"] { color: var(--success); }
 
@@ -964,6 +965,19 @@ body.connecting .landing-bar .nav-actions { display: none; }
   line-height: 1.55;
   text-wrap: balance;
 }
+
+.pairing-credit {
+  display: grid;
+  gap: 14px;
+  margin: 22px 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+}
+
+.check-row { display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: 14px; }
+.check-row input { width: 18px; min-height: 18px; margin: 0; accent-color: var(--ink); }
+.pairing-credit .fine-print { margin: 0; }
 
 .pairing .meta:empty { display: none; }
 
