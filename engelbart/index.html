@@ -25,6 +25,7 @@
     </section>
 
     <section id="auth-panel" class="panel hidden" aria-label="Authentication">
+      <p id="pairing-note" class="callout hidden">Sign in to finish connecting the Engelbart CLI waiting in your terminal.</p>
       <div class="tabs" role="tablist" aria-label="Authentication mode">
         <button id="login-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="login-view">Sign in</button>
         <button id="signup-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="signup-view">Create account</button>
@@ -78,14 +79,32 @@
       </div>
     </section>
 
+    <section id="pairing-panel" class="panel hidden" aria-labelledby="pairing-title">
+      <div class="session-line"><span class="dot" aria-hidden="true"></span><span id="pairing-email"></span></div>
+      <h2 id="pairing-title">Connect the Engelbart CLI</h2>
+      <p>Your terminal is waiting for approval. Check that the code below is the
+        one it printed, then connect it to this account.</p>
+      <p class="invite-code" id="pairing-code" aria-label="Pairing code"></p>
+      <p class="meta" id="pairing-label"></p>
+      <div class="button-row" id="pairing-actions">
+        <button id="pairing-approve" class="button" type="button">Connect this terminal</button>
+        <button id="pairing-deny" class="button secondary" type="button">Reject</button>
+      </div>
+      <p class="fine-print">Only approve a code you started yourself. Approving grants
+        that machine your Claude credits until you sign it out.</p>
+      <p id="pairing-status" class="status" aria-live="polite"></p>
+    </section>
+
     <section id="download-panel" class="panel hidden" aria-labelledby="download-title">
       <div class="session-line"><span class="dot" aria-hidden="true"></span><span id="session-email"></span></div>
       <h2 id="download-title">Install Engelbart</h2>
-      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer vel sem at nibh feugiat cursus.</p>
+      <p>Run this in a terminal. The installer opens this page again to connect
+        itself to your account; approve the code it prints and it finishes on its own.</p>
       <p id="credit-status" class="status" aria-live="polite"></p>
-      <span class="meta">Installation command coming soon</span>
-      <code class="code">Lorem ipsum installation command</code>
-      <p class="callout">Prefer to keep everything local? Lorem ipsum dolor sit amet; the installer will expose a local-only bypass.</p>
+      <span class="meta">Requires Claude Code and Node 18 or newer</span>
+      <code class="code">npx engelbart-cli</code>
+      <p class="callout">Already installed? Run <code>engelbart auth</code> to connect this
+        machine, or <code>engelbart logout</code> to disconnect it.</p>
       <div class="button-row">
         <a class="button" href="https://engelbart.mathetic.com" rel="noopener">Open download site</a>
         <button id="sign-out" class="button secondary" type="button">Sign out</button>

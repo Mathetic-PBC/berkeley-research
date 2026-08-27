@@ -9,6 +9,26 @@ Static site with no build step:
 - `/engelbart/admin` — password/TOTP-protected invite and credit administration
 - `/api/engelbart-config` — browser-safe runtime configuration only
 - `/api/engelbart-credentials` — authenticated per-member LiteLLM provisioning
+- `/api/engelbart-device` — CLI device-authorization pairing (`start`, `approve`,
+  `deny`, `poll`, `whoami`, `revoke`)
+
+## Signing in the CLI
+
+`npx engelbart-cli` never asks for a password. It starts a pairing session,
+opens `/engelbart?code=WXYZ-1234`, and polls while the member signs in and
+approves that code on screen. Approval mints a CLI-scoped token — an opaque
+`egb_` secret stored only as a SHA-256 digest — which the installer writes to
+`~/.human-compact/auth.json` with mode `0600`.
+
+Two secrets exist per pairing. The device code is held only by the CLI and is
+never displayed; the user code is the only half that reaches the browser, so a
+pairing link someone else sends cannot be approved without the member reading
+the code their own terminal printed. Approval requires a browser session: an
+already-installed CLI token is deliberately refused for that step.
+
+`engelbart_touch_cli_token` rechecks `engelbart_members` on every use, so
+removing a member closes their installed CLIs without hunting down each token.
+Individual machines are revoked by their token row.
 
 The Engelbart database migrations and activation instructions live in
 `supabase/`. The application uses Vercel functions as the authenticated control

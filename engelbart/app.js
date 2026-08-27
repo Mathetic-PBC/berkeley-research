@@ -6,6 +6,11 @@
   var config = null;
   var approvedEmail = "";
   var provisionedUser = "";
+  var currentSession = null;
+  // The installer sends the member here with ?code=; the browser half of the
+  // pairing is nothing more than proving who is sitting in front of it.
+  var pendingCode = readPendingCode();
+  var pairingResolved = false;
 
   var el = {
     loading: document.getElementById("loading-panel"),
@@ -29,7 +34,31 @@
     sessionEmail: document.getElementById("session-email"),
     creditStatus: document.getElementById("credit-status"),
     signOut: document.getElementById("sign-out"),
+    pairingNote: document.getElementById("pairing-note"),
+    pairing: document.getElementById("pairing-panel"),
+    pairingEmail: document.getElementById("pairing-email"),
+    pairingCode: document.getElementById("pairing-code"),
+    pairingLabel: document.getElementById("pairing-label"),
+    pairingActions: document.getElementById("pairing-actions"),
+    pairingApprove: document.getElementById("pairing-approve"),
+    pairingDeny: document.getElementById("pairing-deny"),
+    pairingStatus: document.getElementById("pairing-status"),
   };
+
+  function readPendingCode() {
+    var raw = new URLSearchParams(window.location.search).get("code");
+    var normalized = shared.normalizeUserCode(raw);
+    return shared.isPlausibleUserCode(normalized) ? normalized : "";
+  }
+
+  // A code is single-use. Dropping it from the URL keeps a reload or a shared
+  // link from replaying an approval the member has already answered.
+  function forgetPendingCode() {
+    pendingCode = "";
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }
 
   function setStatus(node, message, kind) {
     node.textContent = message || "";
@@ -52,12 +81,54 @@
 
   function showSession(session) {
     var signedIn = Boolean(session && session.user);
+    var pairing = signedIn && Boolean(pendingCode);
+    currentSession = signedIn ? session : null;
     el.loading.classList.add("hidden");
     el.auth.classList.toggle("hidden", signedIn);
-    el.download.classList.toggle("hidden", !signedIn);
+    el.pairingNote.classList.toggle("hidden", signedIn || !pendingCode);
+    el.pairing.classList.toggle("hidden", !pairing && !pairingResolved);
+    // While a code is waiting, the answer to it is the only thing on screen.
+    el.download.classList.toggle("hidden", !signedIn || pairing);
     if (signedIn) {
       el.sessionEmail.textContent = session.user.email || "Signed in";
+      el.pairingEmail.textContent = session.user.email || "Signed in";
+      if (pairing) el.pairingCode.textContent = pendingCode;
       provisionCredits(session);
+    }
+  }
+
+  async function resolvePairing(approve) {
+    if (!currentSession || !pendingCode) return;
+    var code = pendingCode;
+    setBusy(el.pairing, true);
+    setStatus(el.pairingStatus, approve ? "Connecting your terminal…" : "Rejecting that code…");
+    try {
+      var response = await fetch("/api/engelbart-device", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + currentSession.access_token,
+        },
+        body: JSON.stringify({ action: approve ? "approve" : "deny", userCode: code }),
+      });
+      var value = await response.json();
+      if (!response.ok) throw new Error(value.error || "That pairing code could not be used.");
+      pairingResolved = true;
+      forgetPendingCode();
+      el.pairingActions.classList.add("hidden");
+      el.download.classList.remove("hidden");
+      setStatus(
+        el.pairingStatus,
+        approve
+          ? "This terminal is connected. Return to it — the installer is finishing."
+          : "That code was rejected. Nothing was connected.",
+        approve ? "success" : ""
+      );
+    } catch (error) {
+      setBusy(el.pairing, false);
+      forgetPendingCode();
+      setStatus(el.pairingStatus, error.message || "That pairing code could not be used.", "error");
     }
   }
 
@@ -175,8 +246,12 @@
     setStatus(el.signupStatus, "");
   });
 
+  el.pairingApprove.addEventListener("click", function () { resolvePairing(true); });
+  el.pairingDeny.addEventListener("click", function () { resolvePairing(false); });
+
   el.signOut.addEventListener("click", async function () {
     await client.auth.signOut();
+    pairingResolved = false;
     showSession(null);
     selectMode("login");
   });

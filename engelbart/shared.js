@@ -25,6 +25,18 @@
     return /^EGB-[A-F0-9]{4}(?:-[A-F0-9]{4}){4}$/.test(normalizeInviteCode(value));
   }
 
+  // The CLI pairing code the installer prints. Kept in step with
+  // normalizeUserCode in api/_lib/cli-auth.js; a test pins the two together.
+  function normalizeUserCode(value) {
+    var compact = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (compact.length <= 4) return compact;
+    return compact.slice(0, 4) + "-" + compact.slice(4, 8);
+  }
+
+  function isPlausibleUserCode(value) {
+    return /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalizeUserCode(value));
+  }
+
   function safeMessage(error, fallback) {
     if (!error) return fallback;
     var message = typeof error === "string" ? error : error.message;
@@ -41,6 +53,8 @@
     normalizeInviteCode: normalizeInviteCode,
     isPlausibleEmail: isPlausibleEmail,
     isPlausibleInviteCode: isPlausibleInviteCode,
+    isPlausibleUserCode: isPlausibleUserCode,
+    normalizeUserCode: normalizeUserCode,
     safeMessage: safeMessage,
   };
 });

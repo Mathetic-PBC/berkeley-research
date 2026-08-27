@@ -2,12 +2,12 @@
 
 const Credits = require("./_lib/credits");
 const { allowMethods, bearerToken, publicError, sendJson } = require("./_lib/http");
-const { verifyUser } = require("./_lib/supabase");
+const { verifyPrincipal } = require("./_lib/cli-auth");
 
 async function handler(req, res) {
   if (!allowMethods(req, res, ["GET", "POST"])) return;
   try {
-    const user = await verifyUser(bearerToken(req));
+    const user = await verifyPrincipal(bearerToken(req));
     if (req.method === "POST") {
       const row = await Credits.provision(user);
       return sendJson(res, 200, {
