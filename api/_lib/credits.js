@@ -5,11 +5,10 @@ const { litellmConfig } = require("./config");
 const LiteLLM = require("./litellm");
 const { patchRows, rpc, selectOne, selectRows } = require("./supabase");
 
-const AVAILABLE_MODELS = Object.freeze([
-  "claude-sonnet-4-6",
-  "claude-opus-4-7",
-  "claude-haiku-4-5",
-]);
+// LiteLLM's wildcard for "everything this proxy serves" (SpecialModelNames in
+// litellm/proxy/_types.py). Members get a plain API key, so the line-up is
+// never pinned here and never drifts when the proxy adds a model.
+const ALL_PROXY_MODELS = Object.freeze(["all-proxy-models"]);
 
 function positiveMoney(value, name) {
   const number = Number(value);
@@ -31,11 +30,6 @@ function optionalLimit(value, name) {
   }
   return number;
 }
-
-// LiteLLM's wildcard for "everything this proxy serves" (SpecialModelNames in
-// litellm/proxy/_types.py). Members get a plain API key, so the line-up is
-// never pinned here and never drifts when the proxy adds a model.
-const ALL_PROXY_MODELS = Object.freeze(["all-proxy-models"]);
 
 // Keys are never scoped to a model subset, so this ignores any caller input.
 // Validating a chosen list would only let an admin re-pin what this change
@@ -333,18 +327,16 @@ async function adminState(options = {}) {
     settings(options),
     selectRows(
       "engelbart_credit_accounts",
-      "select=user_id,email,budget_usd,models,rpm_limit,tpm_limit,spend_usd,blocked,status,error_message,provisioned_at,synced_at,created_at&order=created_at.desc",
+      "select=user_id,email,budget_usd,rpm_limit,tpm_limit,spend_usd,blocked,status,error_message,provisioned_at,synced_at,created_at&order=created_at.desc",
       options,
     ),
   ]);
   const allocated = accounts.filter((row) => row.status !== "error")
     .reduce((sum, row) => sum + Number(row.budget_usd || 0), 0);
   return {
-    availableModels: AVAILABLE_MODELS,
     settings: {
       poolBudgetUsd: Number(configuration.pool_budget_usd),
       defaultBudgetUsd: Number(configuration.default_budget_usd),
-      defaultModels: configuration.default_models,
       defaultRpmLimit: configuration.default_rpm_limit,
       defaultTpmLimit: configuration.default_tpm_limit,
       allocatedBudgetUsd: allocated,
@@ -353,7 +345,6 @@ async function adminState(options = {}) {
       userId: row.user_id,
       email: row.email,
       budgetUsd: Number(row.budget_usd),
-      models: row.models,
       rpmLimit: row.rpm_limit,
       tpmLimit: row.tpm_limit,
       spendUsd: Number(row.spend_usd),
@@ -369,7 +360,6 @@ async function adminState(options = {}) {
 
 module.exports = {
   ALL_PROXY_MODELS,
-  AVAILABLE_MODELS,
   adminState,
   allocatedBudget,
   blockAccount,

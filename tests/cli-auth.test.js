@@ -71,7 +71,7 @@ test("starting a session stores only digests and returns both halves once", asyn
   assert.ok(result.deviceCode.startsWith(CliAuth.DEVICE_CODE_PREFIX));
   assert.equal(
     result.verificationUrlComplete,
-    `https://berkeley.mathetic.com/engelbart?code=${result.userCode}`,
+    `https://berkeley.mathetic.com/engelbart/signin?code=${result.userCode}`,
   );
 });
 

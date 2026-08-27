@@ -5,7 +5,8 @@ Landing page for Mathetic's Berkeley research chats — served at **https://berk
 Static site with no build step:
 
 - `/` — Berkeley research-chat landing page (`index.html`)
-- `/engelbart` — Supabase login and invite-only signup
+- `/engelbart` — Engelbart landing page and product demo
+- `/engelbart/signin` — Supabase login and invite-only signup; the URL `bart auth` opens
 - `/engelbart/admin` — password/TOTP-protected invite and credit administration
 - `/api/engelbart-config` — browser-safe runtime configuration only
 - `/api/engelbart-credentials` — authenticated per-member LiteLLM provisioning
@@ -15,7 +16,7 @@ Static site with no build step:
 ## Signing in the CLI
 
 `npx engelbart-cli` never asks for a password. It starts a pairing session,
-opens `/engelbart?code=WXYZ-1234`, and polls while the member signs in and
+opens `/engelbart/signin?code=WXYZ-1234`, and polls while the member signs in and
 approves that code on screen. Approval mints a CLI-scoped token — an opaque
 `egb_` secret stored only as a SHA-256 digest — which the installer writes to
 `~/.human-compact/auth.json` with mode `0600`.
@@ -61,10 +62,19 @@ healthy LiteLLM proxy, and add all server secrets before enabling
 
 ## Source of truth
 
-Compiled by hand from the Claude Design project *Mathetic landing page design* → `Mathetic Landing.dc.html`.
+Compiled by hand from the Claude Design project *Mathetic landing page design*:
+
+- `index.html` ← `Mathetic Landing.dc.html`
+- `engelbart/index.html` + `engelbart/demo.js` ← `Mathetic Demo.dc.html`
+
 The design-canvas runtime (`support.js`, `image-slot.js`, React/Babel from unpkg) is not shipped; the
 `<x-dc>` template, `style-hover`, and `DCLogic` component were flattened into plain HTML/CSS/JS.
-To update copy or layout, edit `index.html` directly (or re-export from the design and re-flatten).
+To update copy or layout, edit those files directly (or re-export from the design and re-flatten).
+
+Shipping the runtime instead was rejected on the Engelbart CSP: `support.js` compiles the
+`<script data-dc-script>` body with `new Function` (needs `'unsafe-eval'`), injects React/ReactDOM
+and Babel from `unpkg.com`, `fetch`es its own page URL at boot, registers an unauthenticated
+`message` listener, and injects global CSS that rewrites `html`/`body` layout and `@media print`.
 
 ## Local verification
 
@@ -73,6 +83,17 @@ npm test
 npm run check
 vercel dev
 ```
+
+`npm run verify:proxy` checks the live LiteLLM proxy from this side of the
+boundary: it sends the dated model ids Claude Code actually uses
+(`claude-sonnet-4-5-20250929`, not `claude-sonnet-4-6`) and asserts they come
+back 200. A proxy whose `model_list` names models answers those with a 400, so
+a student key can look perfectly healthy here and still fail on `claude`.
+
+The proxy itself lives in **`Mathetic-PBC/engelbart-litellm`**, which Railway
+builds from directly; its `config.yaml` is the only copy that takes effect.
+Deliberately not duplicated here — a second copy is a copy that goes stale.
+This repo holds only the control plane and the check.
 
 `vercel dev` requires `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
 

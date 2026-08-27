@@ -4,116 +4,127 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Engelbart · Mathetic</title>
-  <meta name="description" content="Create or connect your Engelbart account.">
+  <meta name="description" content="Engelbart keeps your goals, plans, and problems in context while you build.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/engelbart/styles.css">
 </head>
 <body>
-  <main class="shell">
-    <nav class="topbar" aria-label="Primary">
-      <a class="wordmark" href="/">Mathetic</a>
-      <a href="/engelbart/admin">Invite admin</a>
-    </nav>
+  <nav class="landing-bar" aria-label="Primary">
+    <a class="wordmark" href="/">Mathetic</a>
+    <div class="nav-actions">
+      <a class="pill" href="/engelbart/signin">Sign in</a>
+      <a class="pill" href="/engelbart/signin?mode=signup">Create account</a>
+    </div>
+  </nav>
 
-    <section aria-labelledby="page-title">
-      <p class="eyebrow">Private beta</p>
-      <h1 id="page-title">Build with Engelbart.</h1>
-      <p class="lede">Sign in to download Engelbart, or use an invite code to create an account.</p>
-    </section>
+  <main class="landing">
+    <header class="dm-hero">
+      <h1 class="dm-title">Engelbart</h1>
+      <p class="dm-tagline">Keep your goals, plans, and problems in context while building.</p>
+      <button id="copy-cmd" class="dm-cmd" type="button" title="click to copy">npx engelbart-cli<svg id="copy-cmd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="12" height="12" rx="1.5"></rect><path d="M9 6.5 V4.5 A1.5 1.5 0 0 1 10.5 3 H19.5 A1.5 1.5 0 0 1 21 4.5 V13.5 A1.5 1.5 0 0 1 19.5 15 H17.5"></path></svg></button>
+    </header>
 
-    <section id="loading-panel" class="panel" aria-live="polite">
-      <p class="status">Loading authentication…</p>
-    </section>
-
-    <section id="auth-panel" class="panel hidden" aria-label="Authentication">
-      <p id="pairing-note" class="callout hidden">Sign in to finish connecting the Engelbart CLI waiting in your terminal.</p>
-      <div class="tabs" role="tablist" aria-label="Authentication mode">
-        <button id="login-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="login-view">Sign in</button>
-        <button id="signup-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="signup-view">Create account</button>
+    <div id="demo" class="dm-panel" role="img" aria-label="A recording of Engelbart: goals on the left, notes in the middle, and an agent closing TODOs on the right.">
+      <div class="dm-chrome">
+        <span class="dm-chrome-name">Engelbart</span>
+        <span class="dm-chrome-sep">/</span>
+        <span class="dm-chrome-repo">rocket-sim &#9662;</span>
+        <span class="dm-spacer"></span>
+        <span class="dm-chrome-saved">saved &#10003;</span>
       </div>
 
-      <div id="login-view" role="tabpanel" aria-labelledby="login-tab">
-        <form id="login-form" class="stack">
-          <div class="field">
-            <label for="login-email">Email</label>
-            <input id="login-email" name="email" type="email" autocomplete="email" required>
-          </div>
-          <div class="field">
-            <label for="login-password">Password</label>
-            <input id="login-password" name="password" type="password" autocomplete="current-password" required>
-          </div>
-          <button class="button" type="submit">Sign in</button>
-          <p id="login-status" class="status" aria-live="polite"></p>
-        </form>
+      <div class="dm-tabbar">
+        <span class="dm-crumb">Overview</span>
+        <span class="dm-crumb on">Goals</span>
+        <span class="dm-spacer"></span>
+        <div id="dm-filters" class="dm-filters"></div>
       </div>
 
-      <div id="signup-view" class="hidden" role="tabpanel" aria-labelledby="signup-tab">
-        <form id="invite-form" class="stack">
-          <div class="field">
-            <label for="invite-code">Invite code</label>
-            <input id="invite-code" name="invite" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="EGB-0000-0000-0000-0000-0000" required>
-          </div>
-          <div class="field">
-            <label for="signup-email">Email</label>
-            <input id="signup-email" name="email" type="email" autocomplete="email" required>
-          </div>
-          <button class="button" type="submit">Verify invite</button>
-          <p class="fine-print">The code reserves this email for 30 minutes while you create the account.</p>
-          <p id="invite-status" class="status" aria-live="polite"></p>
-        </form>
-
-        <div id="signup-options" class="stack hidden">
-          <div class="field">
-            <label for="approved-email">Approved email</label>
-            <input id="approved-email" type="email" readonly>
-          </div>
-          <form id="password-signup-form" class="stack">
-            <div class="field">
-              <label for="signup-password">Create a password</label>
-              <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
-            </div>
-            <button class="button" type="submit">Create account with email</button>
+      <div class="dm-body">
+        <div class="dm-col-goals">
+          <div class="dm-eyebrow dm-eyebrow-row"><span>GOALS</span><span id="dm-count"></span></div>
+          <div class="dm-search">Search goals, notes, TODOs</div>
+          <div id="dm-goals" class="dm-goal-list"></div>
+          <form id="dm-goal-form" class="dm-add-row">
+            <input id="dm-goal-input" class="dm-add" type="text" placeholder="+ Add goal" autocomplete="off">
           </form>
-          <button id="change-invite" class="button secondary" type="button">Use a different code or email</button>
-          <p id="signup-status" class="status" aria-live="polite"></p>
+        </div>
+
+        <div class="dm-col-detail">
+          <div class="dm-detail-head">
+            <div id="dm-goal-title" class="dm-goal-title"></div>
+            <span id="dm-chip" class="dm-chip"></span>
+          </div>
+
+          <div class="dm-sources">
+            <span class="dm-eyebrow">SOURCES</span>
+            <span class="dm-source"><span class="dm-source-key">REPO:</span> rocket-sim</span>
+            <span id="dm-sources"></span>
+            <button id="dm-add-source" class="dm-source-add" type="button">+ Add source</button>
+          </div>
+
+          <div class="dm-field">
+            <div class="dm-eyebrow">NOTES</div>
+            <textarea id="dm-notes" class="dm-notes" spellcheck="false" placeholder="Write in markdown &mdash; # heading, - list, - [ ] task"></textarea>
+          </div>
+
+          <div class="dm-field">
+            <div class="dm-prompt-bar">
+              <span class="dm-eyebrow">RELATED PROMPTS</span>
+              <button id="dm-add-prompt" class="dm-source-add dm-solid" type="button">+ add a prompt</button>
+            </div>
+            <div id="dm-prompts"></div>
+          </div>
+        </div>
+
+        <div class="dm-rail">
+          <div id="dm-rail-head" class="dm-detail-head dm-rail-head">
+            <div id="dm-rail-title" class="dm-goal-title dm-rail-title"></div>
+            <span id="dm-rail-chip" class="dm-chip"></span>
+          </div>
+          <div class="dm-rail-tabs">
+            <button class="dm-rail-tab on" type="button" data-rail="todos">TODOs</button>
+            <button class="dm-rail-tab" type="button" data-rail="understanding">Understanding</button>
+            <span class="dm-spacer"></span>
+            <span id="dm-progress" class="dm-progress"></span>
+          </div>
+
+          <div id="dm-todos-view">
+            <div id="dm-todos" class="dm-todo-list"></div>
+            <form id="dm-todo-form" class="dm-add-row">
+              <input id="dm-todo-input" class="dm-add dm-add-todo" type="text" placeholder="+ add a TODO" autocomplete="off">
+            </form>
+
+            <div class="dm-run">
+              <div class="dm-run-head">
+                <span id="dm-run-dot" class="dm-run-dot"></span>
+                <span id="dm-run-status" class="dm-run-status"></span>
+                <span class="dm-spacer"></span>
+                <span class="dm-run-btn">Log</span>
+                <span class="dm-run-btn">Terminal</span>
+              </div>
+              <div id="dm-run-lines" class="dm-run-lines"></div>
+              <div class="dm-run-foot">
+                <span>send to local claude code</span>
+                <button id="dm-copy-note" class="dm-copy" type="button">copy</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="dm-understanding-view" class="dm-understanding hidden"></div>
         </div>
       </div>
-    </section>
+      <div id="dm-toast" class="dm-toast">sent to claude code &#10003;</div>
+    </div>
 
-    <section id="pairing-panel" class="panel hidden" aria-labelledby="pairing-title">
-      <div class="session-line"><span class="dot" aria-hidden="true"></span><span id="pairing-email"></span></div>
-      <h2 id="pairing-title">Connect the Engelbart CLI</h2>
-      <p>Your terminal is waiting for approval. Check that the code below is the
-        one it printed, then connect it to this account.</p>
-      <p class="invite-code" id="pairing-code" aria-label="Pairing code"></p>
-      <p class="meta" id="pairing-label"></p>
-      <div class="button-row" id="pairing-actions">
-        <button id="pairing-approve" class="button" type="button">Connect this terminal</button>
-        <button id="pairing-deny" class="button secondary" type="button">Reject</button>
-      </div>
-      <p class="fine-print">Only approve a code you started yourself. Approving grants
-        that machine your Claude credits until you sign it out.</p>
-      <p id="pairing-status" class="status" aria-live="polite"></p>
-    </section>
-
-    <section id="download-panel" class="panel hidden" aria-labelledby="download-title">
-      <div class="session-line"><span class="dot" aria-hidden="true"></span><span id="session-email"></span></div>
-      <h2 id="download-title">Install Engelbart</h2>
-      <p>Run this in a terminal. The installer opens this page again to connect
-        itself to your account; approve the code it prints and it finishes on its own.</p>
-      <p id="credit-status" class="status" aria-live="polite"></p>
-      <span class="meta">Requires Claude Code and Node 18 or newer</span>
-      <code class="code">npx engelbart-cli</code>
-      <p class="callout">Already installed? Run <code>engelbart auth</code> to connect this
-        machine, or <code>engelbart logout</code> to disconnect it.</p>
-      <div class="button-row">
-        <a class="button" href="https://engelbart.mathetic.com" rel="noopener">Open download site</a>
-        <button id="sign-out" class="button secondary" type="button">Sign out</button>
-      </div>
-    </section>
+    <footer class="colophon">
+      <a href="/">Mathetic</a>
+      <a href="/engelbart/admin">Admin</a>
+    </footer>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js" integrity="sha384-yiVMs0R/Jyz7OhoXa/DsEMUSBLjEhr/QJta2ONO+zB6I8/GmNg/7AUFrZmAJV7KV" crossorigin="anonymous"></script>
-  <script src="/engelbart/shared.js"></script>
-  <script src="/engelbart/app.js"></script>
+  <script src="/engelbart/demo.js"></script>
 </body>
 </html>

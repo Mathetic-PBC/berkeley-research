@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { encryptSecret } = require("../api/_lib/crypto");
 const {
+  ALL_PROXY_MODELS,
   claimAccount,
   credentialsFor,
   refreshSpend,
@@ -72,7 +73,9 @@ function proxyAndDatabase(row, spend, options = {}) {
 // else, and the names drift every time Anthropic ships a model. So no caller
 // gets to choose a subset, not even an admin sending one deliberately.
 test("credit policy never pins a key to named models", () => {
-  assert.deepEqual(modelList(), ["all-proxy-models"]);
+  assert.deepEqual(ALL_PROXY_MODELS, ["all-proxy-models"], "LiteLLM's proxy-wide wildcard");
+  assert.deepEqual(modelList(), ALL_PROXY_MODELS);
+  assert.notEqual(modelList(), ALL_PROXY_MODELS, "callers must not mutate the frozen constant");
   assert.deepEqual(modelList([]), ["all-proxy-models"]);
   assert.deepEqual(modelList(["claude-sonnet-4-6"]), ["all-proxy-models"]);
   assert.deepEqual(modelList(["openai/gpt-5"]), ["all-proxy-models"]);
@@ -91,12 +94,12 @@ test("budgets and rate limits fail closed outside bounded values", () => {
 test("new accounts inherit the global policy exactly once", () => {
   assert.deepEqual(policyFromRow({
     default_budget_usd: "25.00",
-    default_models: ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    default_models: ["all-proxy-models"],
     default_rpm_limit: 30,
     default_tpm_limit: null,
   }), {
     budgetUsd: 25,
-    models: ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    models: ["all-proxy-models"],
     rpmLimit: 30,
     tpmLimit: null,
   });
@@ -185,7 +188,7 @@ test("admin policy changes cross the atomic Supabase pool allocator", async () =
   let request;
   const policy = {
     budgetUsd: 40,
-    models: ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    models: ["all-proxy-models"],
     rpmLimit: 20,
     tpmLimit: null,
   };
@@ -204,7 +207,7 @@ test("admin policy changes cross the atomic Supabase pool allocator", async () =
   assert.deepEqual(request.body, {
     p_user_id: "user-uuid",
     p_budget_usd: 40,
-    p_models: ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    p_models: ["all-proxy-models"],
     p_rpm_limit: 20,
     p_tpm_limit: null,
   });
