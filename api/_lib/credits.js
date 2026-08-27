@@ -168,6 +168,14 @@ async function credentialsFor(user, options = {}) {
     error.statusCode = 409;
     throw error;
   }
+  // The balance a member is about to be shown, so it is read from the proxy
+  // rather than from whenever an admin last pressed sync. A proxy that cannot
+  // answer must not cost them their key: the stored figure is stale, not
+  // wrong, and refusing the whole credential over it would be worse.
+  try {
+    row = await refreshSpend(row, options);
+  } catch (error) { /* keep the stored figure */ }
+
   return {
     apiKey: encryptedKey(row, options.env),
     baseUrl: litellmConfig(options.env || process.env).baseUrl,
@@ -290,6 +298,22 @@ async function blockAccount(userId, blocked, options = {}) {
   return rows[0];
 }
 
+// LiteLLM meters every request and enforces the budget; this row is only a
+// mirror of that ledger. Anything that shows a member their balance has to
+// refresh it first, or the number stands still while the money runs out.
+async function refreshSpend(row, options = {}) {
+  const info = await LiteLLM.keyInfo(encryptedKey(row, options.env), options);
+  const spend = Math.max(0, Number(info.spend || 0));
+  const now = new Date().toISOString();
+  const rows = await patchRows(
+    "engelbart_credit_accounts",
+    `user_id=eq.${encodeURIComponent(row.user_id)}`,
+    { spend_usd: spend, synced_at: now, updated_at: now },
+    options,
+  );
+  return rows[0] || { ...row, spend_usd: spend, synced_at: now };
+}
+
 async function syncAccount(userId, options = {}) {
   const row = await selectOne(
     "engelbart_credit_accounts",
@@ -301,15 +325,7 @@ async function syncAccount(userId, options = {}) {
     error.statusCode = 404;
     throw error;
   }
-  const info = await LiteLLM.keyInfo(encryptedKey(row, options.env), options);
-  const spend = Math.max(0, Number(info.spend || 0));
-  const rows = await patchRows(
-    "engelbart_credit_accounts",
-    `user_id=eq.${encodeURIComponent(userId)}`,
-    { spend_usd: spend, synced_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-    options,
-  );
-  return rows[0];
+  return refreshSpend(row, options);
 }
 
 async function adminState(options = {}) {
@@ -365,6 +381,7 @@ module.exports = {
   policyFromRow,
   positiveMoney,
   provision,
+  refreshSpend,
   settings,
   syncAccount,
   updateAccount,
