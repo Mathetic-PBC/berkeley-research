@@ -26,7 +26,7 @@
   </nav>
 
   <main class="shell">
-    <header class="masthead" id="intro">
+    <header class="masthead">
       <div class="flight" aria-hidden="true">
         <svg id="flight-scene" viewBox="0 0 360 84" fill="none">
           <mask id="flightmask">
@@ -40,7 +40,7 @@
         </svg>
       </div>
       <h1>Engelbart</h1>
-      <p id="page-def" class="def"><span class="def-login">Sign in to pick up your Claude credit.</span><span class="def-signup">Your invite code reserves one account, and one Claude credit.</span></p>
+      <p id="page-def" class="def"><span class="def-login">Sign in to pick up your Claude credit.</span><span class="def-signup">Your invite code reserves one account, and one Claude credit.</span><span class="def-pairing">A terminal is waiting for you to approve it.</span><span class="def-connected" id="def-connected">That terminal is connected.</span></p>
     </header>
 
     <section id="loading-panel" class="hidden" aria-live="polite">
@@ -113,24 +113,26 @@
       </div>
     </section>
 
-    <section id="pairing-panel" class="panel pairing hidden" aria-labelledby="pairing-title">
+    <section id="pairing-panel" class="pairing hidden" aria-label="Connect a terminal">
       <div id="pairing-request">
-        <h1 class="pairing-title" id="pairing-title">Connect Engelbart</h1>
         <p class="pairing-identity"><span class="dot" aria-hidden="true"></span><span id="pairing-email"></span></p>
-        <p class="pairing-lede">Connect this terminal to your Engelbart account.</p>
         <p class="pairing-code" id="pairing-code" aria-label="Verification code"></p>
-        <p class="pairing-confirm">Make sure this code matches the one shown in your terminal.</p>
+        <p class="pairing-confirm">Check this matches the code in your terminal.</p>
         <p class="meta" id="pairing-label"></p>
         <div class="pairing-actions" id="pairing-actions">
-          <button id="pairing-approve" class="button" type="button">Connect terminal</button>
+          <button id="pairing-approve" class="button" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
+              <path d="M21 3 L10 13"></path>
+            </svg>
+            Connect terminal</button>
           <button id="pairing-deny" class="button quiet" type="button">Cancel</button>
         </div>
         <p class="fine-print">Only approve a code you started yourself.</p>
       </div>
       <div id="pairing-done" class="pairing-done hidden">
         <p class="pairing-mark" id="pairing-mark" aria-hidden="true">&#10003;</p>
-        <h1 class="pairing-title" id="pairing-done-title">Terminal connected</h1>
-        <p class="pairing-lede" id="pairing-done-body">You can return to your terminal.
+        <p class="pairing-done-body" id="pairing-done-body">You can return to your terminal.
           Engelbart will finish automatically.</p>
       </div>
       <p id="pairing-status" class="status" aria-live="polite"></p>

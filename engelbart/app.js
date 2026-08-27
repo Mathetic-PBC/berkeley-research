@@ -14,7 +14,6 @@
 
   var el = {
     loading: document.getElementById("loading-panel"),
-    intro: document.getElementById("intro"),
     auth: document.getElementById("auth-panel"),
     download: document.getElementById("download-panel"),
     loginTab: document.getElementById("login-tab"),
@@ -58,7 +57,7 @@
     pairingRequest: document.getElementById("pairing-request"),
     pairingDone: document.getElementById("pairing-done"),
     pairingMark: document.getElementById("pairing-mark"),
-    pairingDoneTitle: document.getElementById("pairing-done-title"),
+    defConnected: document.getElementById("def-connected"),
     pairingDoneBody: document.getElementById("pairing-done-body"),
   };
 
@@ -132,8 +131,14 @@
     // and the answer is still the only thing on screen once it has been given:
     // whatever the CLI needs next, it says in the terminal the member is
     // already looking at.
-    el.intro.classList.toggle("hidden", connecting);
+    // The masthead stays: on this page the plane and the name are the frame,
+    // and its italic line is where the page says what it wants. Connecting a
+    // terminal is one more thing it can want, so it speaks there.
     document.body.classList.toggle("connecting", connecting);
+    if (connecting) {
+      document.documentElement.setAttribute(
+        "data-auth-mode", pairingResolved ? "connected" : "pairing");
+    }
     el.download.classList.toggle("hidden", !signedIn || connecting);
     el.navAuth.classList.toggle("hidden", signedIn);
     el.navSession.classList.toggle("hidden", !signedIn);
@@ -204,7 +209,11 @@
       // something still to be done.
       el.pairingRequest.classList.add("hidden");
       el.pairingMark.classList.toggle("hidden", !approve);
-      el.pairingDoneTitle.textContent = approve ? "Terminal connected" : "Nothing connected";
+      // The masthead's italic line says what happened, the way it says what
+      // the page wants everywhere else on it.
+      el.defConnected.textContent = approve
+        ? "That terminal is connected."
+        : "Nothing was connected.";
       el.pairingDoneBody.textContent = approve
         ? "You can return to your terminal. Engelbart will finish automatically."
         : "That code was rejected. You can close this tab.";
