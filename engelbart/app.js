@@ -14,6 +14,7 @@
 
   var el = {
     loading: document.getElementById("loading-panel"),
+    intro: document.getElementById("intro"),
     auth: document.getElementById("auth-panel"),
     download: document.getElementById("download-panel"),
     loginTab: document.getElementById("login-tab"),
@@ -43,6 +44,11 @@
     pairingApprove: document.getElementById("pairing-approve"),
     pairingDeny: document.getElementById("pairing-deny"),
     pairingStatus: document.getElementById("pairing-status"),
+    pairingRequest: document.getElementById("pairing-request"),
+    pairingDone: document.getElementById("pairing-done"),
+    pairingMark: document.getElementById("pairing-mark"),
+    pairingDoneTitle: document.getElementById("pairing-done-title"),
+    pairingDoneBody: document.getElementById("pairing-done-body"),
   };
 
   function readPendingCode() {
@@ -86,9 +92,15 @@
     el.loading.classList.add("hidden");
     el.auth.classList.toggle("hidden", signedIn);
     el.pairingNote.classList.toggle("hidden", signedIn || !pendingCode);
-    el.pairing.classList.toggle("hidden", !pairing && !pairingResolved);
-    // While a code is waiting, the answer to it is the only thing on screen.
-    el.download.classList.toggle("hidden", !signedIn || pairing);
+    var connecting = pairing || pairingResolved;
+    el.pairing.classList.toggle("hidden", !connecting);
+    // Answering the terminal is the only thing on screen while a code is live,
+    // and the answer is still the only thing on screen once it has been given:
+    // whatever the CLI needs next, it says in the terminal the member is
+    // already looking at.
+    el.intro.classList.toggle("hidden", connecting);
+    document.body.classList.toggle("connecting", connecting);
+    el.download.classList.toggle("hidden", !signedIn || connecting);
     if (signedIn) {
       el.sessionEmail.textContent = session.user.email || "Signed in";
       el.pairingEmail.textContent = session.user.email || "Signed in";
@@ -116,15 +128,17 @@
       if (!response.ok) throw new Error(value.error || "That pairing code could not be used.");
       pairingResolved = true;
       forgetPendingCode();
-      el.pairingActions.classList.add("hidden");
-      el.download.classList.remove("hidden");
-      setStatus(
-        el.pairingStatus,
-        approve
-          ? "This terminal is connected. Return to it — the installer is finishing."
-          : "That code was rejected. Nothing was connected.",
-        approve ? "success" : ""
-      );
+      // The card becomes its own answer rather than growing a second half: the
+      // code is spent, so showing it again only invites a member to read it as
+      // something still to be done.
+      el.pairingRequest.classList.add("hidden");
+      el.pairingMark.classList.toggle("hidden", !approve);
+      el.pairingDoneTitle.textContent = approve ? "Terminal connected" : "Nothing connected";
+      el.pairingDoneBody.textContent = approve
+        ? "You can return to your terminal. Engelbart will finish automatically."
+        : "That code was rejected. You can close this tab.";
+      el.pairingDone.classList.remove("hidden");
+      setStatus(el.pairingStatus, "");
     } catch (error) {
       setBusy(el.pairing, false);
       forgetPendingCode();

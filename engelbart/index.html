@@ -14,7 +14,7 @@
       <a href="/engelbart/admin">Invite admin</a>
     </nav>
 
-    <section aria-labelledby="page-title">
+    <section id="intro" aria-labelledby="page-title">
       <p class="eyebrow">Private beta</p>
       <h1 id="page-title">Build with Engelbart.</h1>
       <p class="lede">Sign in to download Engelbart, or use an invite code to create an account.</p>
@@ -79,19 +79,26 @@
       </div>
     </section>
 
-    <section id="pairing-panel" class="panel hidden" aria-labelledby="pairing-title">
-      <div class="session-line"><span class="dot" aria-hidden="true"></span><span id="pairing-email"></span></div>
-      <h2 id="pairing-title">Connect the Engelbart CLI</h2>
-      <p>Your terminal is waiting for approval. Check that the code below is the
-        one it printed, then connect it to this account.</p>
-      <p class="invite-code" id="pairing-code" aria-label="Pairing code"></p>
-      <p class="meta" id="pairing-label"></p>
-      <div class="button-row" id="pairing-actions">
-        <button id="pairing-approve" class="button" type="button">Connect this terminal</button>
-        <button id="pairing-deny" class="button secondary" type="button">Reject</button>
+    <section id="pairing-panel" class="panel pairing hidden" aria-labelledby="pairing-title">
+      <div id="pairing-request">
+        <h1 class="pairing-title" id="pairing-title">Connect Engelbart</h1>
+        <p class="pairing-identity"><span class="dot" aria-hidden="true"></span><span id="pairing-email"></span></p>
+        <p class="pairing-lede">Connect this terminal to your Engelbart account.</p>
+        <p class="pairing-code" id="pairing-code" aria-label="Verification code"></p>
+        <p class="pairing-confirm">Make sure this code matches the one shown in your terminal.</p>
+        <p class="meta" id="pairing-label"></p>
+        <div class="pairing-actions" id="pairing-actions">
+          <button id="pairing-approve" class="button" type="button">Connect terminal</button>
+          <button id="pairing-deny" class="button quiet" type="button">Cancel</button>
+        </div>
+        <p class="fine-print">Only approve a code you started yourself.</p>
       </div>
-      <p class="fine-print">Only approve a code you started yourself. Approving grants
-        that machine your Claude credits until you sign it out.</p>
+      <div id="pairing-done" class="pairing-done hidden">
+        <p class="pairing-mark" id="pairing-mark" aria-hidden="true">&#10003;</p>
+        <h1 class="pairing-title" id="pairing-done-title">Terminal connected</h1>
+        <p class="pairing-lede" id="pairing-done-body">You can return to your terminal.
+          Engelbart will finish automatically.</p>
+      </div>
       <p id="pairing-status" class="status" aria-live="polite"></p>
     </section>
 
