@@ -56,6 +56,7 @@
     pairingUseCredits: document.getElementById("pairing-use-credits"),
     pairingCreditInvite: document.getElementById("pairing-credit-invite"),
     pairingInviteCode: document.getElementById("pairing-invite-code"),
+    pairingInviteStatus: document.getElementById("pairing-invite-status"),
     pairingActions: document.getElementById("pairing-actions"),
     pairingApprove: document.getElementById("pairing-approve"),
     pairingDeny: document.getElementById("pairing-deny"),
@@ -198,16 +199,20 @@
     if (!currentSession || !pendingCode) return;
     var code = pendingCode;
     setBusy(el.pairing, true);
+    setStatus(el.pairingInviteStatus, "");
     setStatus(el.pairingStatus, approve ? "Connecting your terminal…" : "Rejecting that code…");
     try {
       if (approve && el.pairingUseCredits.checked) {
         var inviteCode = shared.normalizeInviteCode(el.pairingInviteCode.value);
-        if (inviteCode && !shared.isPlausibleInviteCode(inviteCode)) {
-          throw new Error("Enter a complete credit invite code.");
-        }
-        setStatus(el.pairingStatus, "Checking Claude credit access…");
+        // Supabase owns the invite definition and consumes the code in the
+        // same transaction as the credit claim. Sending every entry there
+        // avoids a second browser-side gate silently disagreeing with it.
+        setStatus(el.pairingInviteStatus, inviteCode
+          ? "Checking invite…"
+          : "Checking this account’s credit access…");
         var creditResult = await provisionCredits(currentSession, inviteCode);
         if (!creditResult.ok) throw creditResult.error;
+        setStatus(el.pairingInviteStatus, "");
         setStatus(el.pairingStatus, "Connecting your terminal…");
       }
       var response = await fetch("/api/engelbart-device", {
@@ -240,7 +245,13 @@
       setStatus(el.pairingStatus, "");
     } catch (error) {
       setBusy(el.pairing, false);
-      setStatus(el.pairingStatus, error.message || "That pairing code could not be used.", "error");
+      var message = error.message || "That pairing code could not be used.";
+      if (approve && el.pairingUseCredits.checked) {
+        setStatus(el.pairingInviteStatus, message, "error");
+        setStatus(el.pairingStatus, "");
+      } else {
+        setStatus(el.pairingStatus, message, "error");
+      }
     }
   }
 
@@ -301,6 +312,7 @@
 
   el.pairingInviteCode.addEventListener("input", function () {
     normalizeCreditInput(el.pairingInviteCode);
+    setStatus(el.pairingInviteStatus, "");
   });
 
   el.creditInviteCode.addEventListener("input", function () {
@@ -309,6 +321,7 @@
 
   el.pairingUseCredits.addEventListener("change", function () {
     el.pairingCreditInvite.classList.toggle("hidden", !el.pairingUseCredits.checked);
+    setStatus(el.pairingInviteStatus, "");
   });
 
   el.creditInviteForm.addEventListener("submit", async function (event) {
