@@ -117,7 +117,10 @@ test("redemption presents the anon key rather than the service role", async () =
   assert.match(verify.url, /\/auth\/v1\/verify$/);
   assert.equal(verify.headers.apikey, "anon");
   assert.equal(verify.headers.Authorization, undefined);
-  assert.deepEqual(verify.body, { type: "magiclink", token: "hashed-abc" });
+  // Verified against the live GoTrue: `token` answers 400 validation_failed
+  // without an address, while `token_hash` is the parameter that takes what
+  // generate_link hands back.
+  assert.deepEqual(verify.body, { type: "magiclink", token_hash: "hashed-abc" });
 });
 
 test("a lifetime longer than the ceiling is capped", async () => {
