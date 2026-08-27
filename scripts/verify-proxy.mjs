@@ -1,5 +1,11 @@
 // Checks that the LiteLLM proxy will actually serve Claude Code: the endpoints
-// it calls, and the dated model ids it sends. Run after changing config.yaml.
+// it calls, and the dated model ids it sends.
+//
+// This lives here rather than in Mathetic-PBC/engelbart-litellm on purpose. It
+// is a check on the boundary, run with the same credentials Vercel uses, and it
+// fails for two very different reasons: the proxy's config names models, or the
+// proxy is serving an older build than the config in git. Only one of those is
+// visible from inside the proxy repo.
 //
 //   npm run verify:proxy
 //
@@ -85,7 +91,7 @@ for (const result of results) {
 
 console.log(
   failed
-    ? `\n${failed} of ${results.length} failed. If these are 400s, config.yaml is still pinning model names — apply the two wildcard routes in litellm/config.yaml.`
+    ? `\n${failed} of ${results.length} failed. 400s mean the running proxy still names models. Check Mathetic-PBC/engelbart-litellm: if config.yaml already has the two wildcard routes, then Railway has not deployed them and the fix is a redeploy, not an edit.`
     : `\nAll ${results.length} checks passed. Claude Code will work with a student key.`
 );
 process.exit(failed ? 1 : 0);

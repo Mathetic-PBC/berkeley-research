@@ -10,7 +10,6 @@ Static site with no build step:
 - `/engelbart/admin` — password/TOTP-protected invite and credit administration
 - `/api/engelbart-config` — browser-safe runtime configuration only
 - `/api/engelbart-credentials` — authenticated per-member LiteLLM provisioning
-- `litellm/` — the proxy's `config.yaml`, deployed separately on Railway
 
 The Engelbart database migrations and activation instructions live in
 `supabase/`. The application uses Vercel functions as the authenticated control
@@ -65,10 +64,16 @@ npm run check
 vercel dev
 ```
 
-`npm run verify:proxy` checks the live LiteLLM proxy against the dated model ids
-Claude Code actually sends (`claude-sonnet-4-5-20250929`, not
-`claude-sonnet-4-6`). A pinned `model_list` answers those with a 400, so a
-student key can look healthy and still fail on `claude`. See `litellm/README.md`.
+`npm run verify:proxy` checks the live LiteLLM proxy from this side of the
+boundary: it sends the dated model ids Claude Code actually uses
+(`claude-sonnet-4-5-20250929`, not `claude-sonnet-4-6`) and asserts they come
+back 200. A proxy whose `model_list` names models answers those with a 400, so
+a student key can look perfectly healthy here and still fail on `claude`.
+
+The proxy itself lives in **`Mathetic-PBC/engelbart-litellm`**, which Railway
+builds from directly; its `config.yaml` is the only copy that takes effect.
+Deliberately not duplicated here — a second copy is a copy that goes stale.
+This repo holds only the control plane and the check.
 
 `vercel dev` requires `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
 
