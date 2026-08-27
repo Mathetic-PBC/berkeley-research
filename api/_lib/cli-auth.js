@@ -73,8 +73,11 @@ async function startSession(input = {}, options = {}) {
   return {
     deviceCode,
     userCode,
-    verificationUrl: `${options.origin || ""}/engelbart`,
-    verificationUrlComplete: `${options.origin || ""}/engelbart?code=${encodeURIComponent(userCode)}`,
+    // The approval UI lives on the sign-in page: /engelbart is a static demo
+    // that loads none of the auth code, so a member sent there sees marketing
+    // and the terminal waits forever.
+    verificationUrl: `${options.origin || ""}/engelbart/signin`,
+    verificationUrlComplete: `${options.origin || ""}/engelbart/signin?code=${encodeURIComponent(userCode)}`,
     intervalSeconds: POLL_INTERVAL_SECONDS,
     expiresInSeconds: SESSION_TTL_SECONDS,
   };

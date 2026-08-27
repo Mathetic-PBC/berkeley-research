@@ -5,29 +5,43 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Engelbart admin · Mathetic</title>
   <meta name="robots" content="noindex, nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/engelbart/styles.css">
 </head>
 <body>
+  <nav class="landing-bar" aria-label="Primary">
+    <a class="wordmark" href="/engelbart">Engelbart</a>
+    <div class="nav-actions">
+      <a class="pill" href="/engelbart">Back to Engelbart</a>
+      <button id="admin-logout" class="pill hidden" type="button">Sign out</button>
+    </div>
+  </nav>
+
   <main class="shell admin-shell">
-    <nav class="topbar" aria-label="Primary">
-      <a class="wordmark" href="/">Mathetic</a>
-      <div class="nav-actions">
-        <a href="/engelbart">Back to Engelbart</a>
-        <button id="admin-logout" class="link-button hidden" type="button">Sign out</button>
+    <header class="masthead admin-masthead">
+      <div class="flight" aria-hidden="true">
+        <svg id="flight-scene" viewBox="0 0 360 84" fill="none">
+          <mask id="flightmask">
+            <path id="flight-trail" d="M6 74 C 56 74, 74 34, 122 32 C 170 30, 178 66, 216 58 C 262 48, 290 26, 354 12" stroke="white" stroke-width="10" fill="none" stroke-linecap="round"></path>
+          </mask>
+          <path d="M6 74 C 56 74, 74 34, 122 32 C 170 30, 178 66, 216 58 C 262 48, 290 26, 354 12" stroke="#17150F" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="1 6" mask="url(#flightmask)"></path>
+          <g id="flight-plane">
+            <path d="M-11 5.5 L11 -8.5 L0 8.5 Z" stroke="#17150F" stroke-width="2" stroke-linejoin="round" fill="#FBFAF6"></path>
+            <path d="M11 -8.5 L-1 2.5 L0 8.5" stroke="#17150F" stroke-width="2" stroke-linejoin="round"></path>
+          </g>
+        </svg>
       </div>
-    </nav>
+      <h1 id="page-title">Admin</h1>
+      <p class="def">Invite students, hand out Claude credit, pause a key when you need to.</p>
+    </header>
 
-    <section aria-labelledby="page-title">
-      <p class="eyebrow">Engelbart control plane</p>
-      <h1 id="page-title">Admin.</h1>
-      <p class="lede">Invite members, allocate the shared Claude budget, and revoke individual keys.</p>
-    </section>
-
-    <section id="admin-loading" class="panel">
+    <section id="admin-loading" class="panel auth-card">
       <p class="status">Checking admin session…</p>
     </section>
 
-    <section id="admin-login-panel" class="panel hidden" aria-labelledby="login-title">
+    <section id="admin-login-panel" class="panel auth-card hidden" aria-labelledby="login-title">
       <h2 id="login-title">Enter the admin code</h2>
       <form id="admin-login-form" class="stack">
         <div class="field">
@@ -45,17 +59,16 @@
 
     <div id="admin-dashboard" class="hidden">
       <section class="panel" aria-labelledby="budget-title">
-        <p class="eyebrow">Global policy</p>
-        <h2 id="budget-title">Claude credit pool</h2>
+        <h2 id="budget-title">Credit pool</h2>
         <p id="pool-summary" class="callout"></p>
         <form id="defaults-form" class="stack">
           <div class="field-grid">
             <div class="field">
-              <label for="pool-budget">Assignable budget pool (USD)</label>
+              <label for="pool-budget">Total budget to hand out (USD)</label>
               <input id="pool-budget" name="poolBudget" type="number" min="0.01" max="1000" step="0.01" required>
             </div>
             <div class="field">
-              <label for="default-budget">New-user budget (USD)</label>
+              <label for="default-budget">Each new student gets (USD)</label>
               <input id="default-budget" name="defaultBudget" type="number" min="0.01" max="1000" step="0.01" required>
             </div>
             <div class="field">
@@ -67,23 +80,19 @@
               <input id="default-tpm" name="defaultTpm" type="number" min="1" step="1" placeholder="No explicit limit">
             </div>
           </div>
-          <fieldset>
-            <legend>Models available to new users</legend>
-            <div id="default-models" class="check-grid"></div>
-          </fieldset>
-          <button class="button" type="submit">Save global policy</button>
+          <p class="fine-print">Keys are not scoped to particular models — everyone gets a plain API key. Only budget and rate limits are set here.</p>
+          <button class="button" type="submit">Save</button>
           <p id="defaults-status" class="status" aria-live="polite"></p>
         </form>
       </section>
 
       <section class="panel" aria-labelledby="invite-title">
-        <p class="eyebrow">Onboarding</p>
-        <h2 id="invite-title">Create an invite</h2>
-        <p>Each code reserves one email for 30 minutes and expires after 14 days if unused.</p>
+        <h2 id="invite-title">Invite someone</h2>
+        <p class="fine-print">A code holds one email for 30 minutes, and expires after 14 days if nobody uses it.</p>
         <button id="generate-invite" class="button" type="button">Generate invite</button>
         <p id="invite-status" class="status" aria-live="polite"></p>
         <div id="invite-result" class="invite-result hidden" aria-live="polite">
-          <span class="meta">Send this code once. The database stores only its digest.</span>
+          <span class="meta">Send this code once — we only store its digest, so it cannot be looked up again.</span>
           <strong id="generated-code" class="invite-code"></strong>
           <div class="button-row">
             <button id="copy-code" class="button secondary" type="button">Copy code</button>
@@ -94,16 +103,14 @@
       </section>
 
       <section class="panel" aria-labelledby="members-title">
-        <p class="eyebrow">Individual policy</p>
-        <h2 id="members-title">Member keys</h2>
-        <p class="fine-print">Budgets are lifetime ceilings. Updating a member changes the corresponding LiteLLM virtual key.</p>
+        <h2 id="members-title">Students</h2>
+        <p class="fine-print">Budgets are lifetime ceilings, not monthly ones. Saving a change updates that student’s key right away.</p>
         <div id="member-list" class="member-list"></div>
         <p id="members-status" class="status" aria-live="polite"></p>
       </section>
 
       <section class="panel" aria-labelledby="security-title">
-        <p class="eyebrow">Security</p>
-        <h2 id="security-title">Admin access</h2>
+        <h2 id="security-title">Your access</h2>
         <form id="password-form" class="stack security-block">
           <div class="field-grid">
             <div class="field">
@@ -173,8 +180,13 @@
         </div>
       </section>
     </div>
+    <footer class="colophon">
+      <a href="/engelbart">Engelbart</a>
+      <a href="/">Mathetic</a>
+    </footer>
   </main>
 
+  <script src="/engelbart/flight.js"></script>
   <script src="/engelbart/admin/admin.js"></script>
 </body>
 </html>

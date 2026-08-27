@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Engelbart</title>
+  <meta name="description" content="Sign in to Engelbart, or create an account with your invite code.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/engelbart/styles.css">
+  <script src="/engelbart/boot.js"></script>
+</head>
+<body class="centered">
+  <nav class="landing-bar" aria-label="Primary">
+    <a class="wordmark" href="/engelbart">Engelbart</a>
+    <div id="nav-auth" class="nav-actions">
+      <button id="login-tab" class="pill on" type="button">Sign in</button>
+      <button id="signup-tab" class="pill" type="button">Create account</button>
+    </div>
+    <div id="nav-session" class="nav-actions hidden">
+      <span class="session-line"><span class="dot" aria-hidden="true"></span><span id="session-email"></span></span>
+      <button id="sign-out" class="pill" type="button">Sign out</button>
+    </div>
+  </nav>
+
+  <main class="shell">
+    <header class="masthead">
+      <div class="flight" aria-hidden="true">
+        <svg id="flight-scene" viewBox="0 0 360 84" fill="none">
+          <mask id="flightmask">
+            <path id="flight-trail" d="M6 74 C 56 74, 74 34, 122 32 C 170 30, 178 66, 216 58 C 262 48, 290 26, 354 12" stroke="white" stroke-width="10" fill="none" stroke-linecap="round"></path>
+          </mask>
+          <path d="M6 74 C 56 74, 74 34, 122 32 C 170 30, 178 66, 216 58 C 262 48, 290 26, 354 12" stroke="#17150F" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="1 6" mask="url(#flightmask)"></path>
+          <g id="flight-plane">
+            <path d="M-11 5.5 L11 -8.5 L0 8.5 Z" stroke="#17150F" stroke-width="2" stroke-linejoin="round" fill="#FBFAF6"></path>
+            <path d="M11 -8.5 L-1 2.5 L0 8.5" stroke="#17150F" stroke-width="2" stroke-linejoin="round"></path>
+          </g>
+        </svg>
+      </div>
+      <h1>Engelbart</h1>
+      <p id="page-def" class="def"><span class="def-login">Sign in to pick up your Claude credit.</span><span class="def-signup">Your invite code reserves one account, and one Claude credit.</span><span class="def-pairing">A terminal is waiting for you to approve it.</span><span class="def-connected" id="def-connected">That terminal is connected.</span></p>
+    </header>
+
+    <section id="loading-panel" class="hidden" aria-live="polite">
+      <p class="status">Waking up…</p>
+    </section>
+
+    <p id="pairing-note" class="callout hidden">Sign in to finish connecting the Engelbart CLI waiting in your terminal.</p>
+
+    <section id="auth-panel" aria-label="Sign in or create an account">
+      <div id="login-view">
+        <form id="login-form" class="stack">
+          <div class="field">
+            <label for="login-email">Email</label>
+            <input id="login-email" name="email" type="email" autocomplete="email" required>
+          </div>
+          <div class="field">
+            <label for="login-password">Password</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+          </div>
+          <button class="button" type="submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
+              <path d="M21 3 L10 13"></path>
+            </svg>
+            Sign in</button>
+          <p id="login-status" class="status" aria-live="polite"></p>
+        </form>
+      </div>
+
+      <div id="signup-view" class="hidden">
+        <form id="invite-form" class="stack">
+          <div class="field">
+            <label for="invite-code">Invite code</label>
+            <input id="invite-code" name="invite" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="EGB-0000-0000-0000-0000-0000" required>
+          </div>
+          <div class="field">
+            <label for="signup-email">Email</label>
+            <input id="signup-email" name="email" type="email" autocomplete="email" required>
+          </div>
+          <button class="button" type="submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
+              <path d="M21 3 L10 13"></path>
+            </svg>
+            Check the code</button>
+          <p class="fine-print">The code holds this email for you for 30 minutes.</p>
+          <p id="invite-status" class="status" aria-live="polite"></p>
+        </form>
+
+        <div id="signup-options" class="stack hidden">
+          <div class="field">
+            <label for="approved-email">Your email</label>
+            <input id="approved-email" type="email" readonly>
+          </div>
+          <form id="password-signup-form" class="stack">
+            <div class="field">
+              <label for="signup-password">Pick a password</label>
+              <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+            </div>
+            <button class="button" type="submit">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
+                <path d="M21 3 L10 13"></path>
+              </svg>
+              Create account</button>
+          </form>
+          <p class="switch"><button id="change-invite" class="link-button" type="button">Use a different code or email</button></p>
+          <p id="signup-status" class="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="pairing-panel" class="pairing hidden" aria-label="Connect a terminal">
+      <div id="pairing-request">
+        <p class="pairing-identity"><span class="dot" aria-hidden="true"></span><span id="pairing-email"></span></p>
+        <p class="pairing-code" id="pairing-code" aria-label="Verification code"></p>
+        <p class="pairing-confirm">Check this matches the code in your terminal.</p>
+        <p class="meta" id="pairing-label"></p>
+        <div class="pairing-actions" id="pairing-actions">
+          <button id="pairing-approve" class="button" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
+              <path d="M21 3 L10 13"></path>
+            </svg>
+            Connect terminal</button>
+          <button id="pairing-deny" class="button quiet" type="button">Cancel</button>
+        </div>
+        <p class="fine-print">Only approve a code you started yourself.</p>
+      </div>
+      <div id="pairing-done" class="pairing-done hidden">
+        <p class="pairing-mark" id="pairing-mark" aria-hidden="true">&#10003;</p>
+        <p class="pairing-done-body" id="pairing-done-body">You can return to your terminal.
+          Engelbart will finish automatically.</p>
+      </div>
+      <p id="pairing-status" class="status" aria-live="polite"></p>
+    </section>
+
+    <section id="download-panel" class="hidden" aria-labelledby="download-title">
+      <h2 id="download-title">You're in.</h2>
+      <p id="credit-status" class="status" aria-live="polite"></p>
+      <div id="credit-meter" class="meter hidden" role="img" aria-label="Credit remaining">
+        <span id="credit-fill" class="meter-fill"></span>
+      </div>
+
+      <div id="key-block" class="key-block hidden">
+        <div class="key-head">
+          <span class="dm-eyebrow">YOUR API KEY</span>
+          <button id="reveal-key" class="link-button" type="button">Show</button>
+        </div>
+        <code id="api-key" class="code key-value"></code>
+        <div class="button-row">
+          <button id="copy-key" class="button secondary" type="button">Copy key</button>
+        </div>
+
+        <p class="key-lede">Point Claude Code at it — run this once, then run <code class="inline-code">claude</code>.</p>
+        <code id="setup-cmd" class="code setup-cmd"></code>
+        <div class="button-row">
+          <button id="copy-setup" class="button secondary" type="button">Copy setup command</button>
+        </div>
+      </div>
+
+      <p class="callout">The key works with every Claude model Claude Code offers. Already have your own Anthropic key? The installer has a local-only bypass, so nothing you build has to run through us.</p>
+      <p class="sign">&lt;3 Hudson and David</p>
+    </section>
+
+    <footer class="colophon">
+      <a href="/engelbart">Back to Engelbart</a>
+      <a href="/">Mathetic</a>
+      <a href="/engelbart/admin">Admin</a>
+    </footer>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js" integrity="sha384-yiVMs0R/Jyz7OhoXa/DsEMUSBLjEhr/QJta2ONO+zB6I8/GmNg/7AUFrZmAJV7KV" crossorigin="anonymous"></script>
+  <script src="/engelbart/shared.js"></script>
+  <script src="/engelbart/flight.js"></script>
+  <script src="/engelbart/app.js"></script>
+</body>
+</html>

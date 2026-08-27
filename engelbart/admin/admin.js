@@ -29,25 +29,6 @@
     return { status: response.status, value: value };
   }
   function body(value) { return JSON.stringify(value); }
-  function selectedModels(container) {
-    return Array.prototype.filter.call(container.querySelectorAll("input[type=checkbox]"), function (input) {
-      return input.checked;
-    }).map(function (input) { return input.value; });
-  }
-  function modelChecks(container, selected, prefix) {
-    container.replaceChildren();
-    state.availableModels.forEach(function (model) {
-      var label = document.createElement("label");
-      label.className = "check-option";
-      var input = document.createElement("input");
-      input.type = "checkbox";
-      input.name = prefix + "Models";
-      input.value = model;
-      input.checked = selected.indexOf(model) >= 0;
-      label.append(input, document.createTextNode(model));
-      container.appendChild(label);
-    });
-  }
   function money(value) { return "$" + Number(value || 0).toFixed(2); }
   function updateRecoverySummary(count) {
     var remaining = Number(count || 0);
@@ -67,7 +48,6 @@
     byId("default-budget").value = settings.defaultBudgetUsd;
     byId("default-rpm").value = settings.defaultRpmLimit || "";
     byId("default-tpm").value = settings.defaultTpmLimit || "";
-    modelChecks(byId("default-models"), settings.defaultModels, "default");
     byId("pool-summary").textContent = money(settings.allocatedBudgetUsd)
       + " allocated of " + money(settings.poolBudgetUsd)
       + "; " + money(settings.poolBudgetUsd - settings.allocatedBudgetUsd) + " unallocated.";
@@ -120,9 +100,6 @@
         field.append(label, input);
         fields.appendChild(field);
       });
-    var checks = document.createElement("div");
-    checks.className = "check-grid";
-    modelChecks(checks, account.models, "member");
     var actions = document.createElement("div");
     actions.className = "button-row";
     var save = document.createElement("button");
@@ -138,17 +115,15 @@
     sync.type = "button";
     sync.textContent = "Refresh spend";
     actions.append(save, pause, sync);
-    form.append(fields, checks, actions);
+    form.append(fields, actions);
     form.addEventListener("submit", async function (event) {
       event.preventDefault();
       var data = new FormData(form);
-      var models = selectedModels(checks);
       setBusy(form, true);
       try {
         await mutate({
           action: "updateAccount", userId: account.userId,
           budgetUsd: data.get("budget"), rpmLimit: data.get("rpm"), tpmLimit: data.get("tpm"),
-          models: models,
         });
         setStatus("members-status", "Member limits updated.", "success");
       } catch (error) { setStatus("members-status", error.message, "error"); }
@@ -248,14 +223,12 @@
     event.preventDefault();
     var form = event.currentTarget;
     var data = new FormData(form);
-    var models = selectedModels(byId("default-models"));
     setBusy(form, true);
     try {
       await mutate({
         action: "updateDefaults",
         poolBudgetUsd: data.get("poolBudget"), defaultBudgetUsd: data.get("defaultBudget"),
         defaultRpmLimit: data.get("defaultRpm"), defaultTpmLimit: data.get("defaultTpm"),
-        defaultModels: models,
       });
       setStatus("defaults-status", "Global policy saved for future users.", "success");
     } catch (error) { setStatus("defaults-status", error.message, "error"); }
