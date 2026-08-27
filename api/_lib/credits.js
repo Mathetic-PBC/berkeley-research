@@ -32,15 +32,16 @@ function optionalLimit(value, name) {
   return number;
 }
 
-function modelList(value) {
-  const models = Array.from(new Set((Array.isArray(value) ? value : [])
-    .map((item) => String(item || "").trim()).filter(Boolean)));
-  if (!models.length || models.some((model) => !AVAILABLE_MODELS.includes(model))) {
-    const error = new Error("Choose at least one supported Claude model");
-    error.statusCode = 400;
-    throw error;
-  }
-  return models;
+// LiteLLM's wildcard for "everything this proxy serves" (SpecialModelNames in
+// litellm/proxy/_types.py). Members get a plain API key, so the line-up is
+// never pinned here and never drifts when the proxy adds a model.
+const ALL_PROXY_MODELS = Object.freeze(["all-proxy-models"]);
+
+// Keys are never scoped to a model subset, so this ignores any caller input.
+// Validating a chosen list would only let an admin re-pin what this change
+// exists to unpin.
+function modelList() {
+  return ALL_PROXY_MODELS.slice();
 }
 
 function policyFromRow(row) {
@@ -182,7 +183,7 @@ async function updateDefaults(input, options = {}) {
   const values = {
     pool_budget_usd: positiveMoney(input.poolBudgetUsd, "Pool budget"),
     default_budget_usd: positiveMoney(input.defaultBudgetUsd, "Default user budget"),
-    default_models: modelList(input.defaultModels),
+    default_models: modelList(),
     default_rpm_limit: optionalLimit(input.defaultRpmLimit, "Default RPM limit"),
     default_tpm_limit: optionalLimit(input.defaultTpmLimit, "Default TPM limit"),
     updated_at: new Date().toISOString(),
@@ -241,7 +242,7 @@ async function updateAccount(userId, input, options = {}) {
   }
   const policy = {
     budgetUsd: positiveMoney(input.budgetUsd, "User budget"),
-    models: modelList(input.models),
+    models: modelList(),
     rpmLimit: optionalLimit(input.rpmLimit, "RPM limit"),
     tpmLimit: optionalLimit(input.tpmLimit, "TPM limit"),
   };
@@ -351,6 +352,7 @@ async function adminState(options = {}) {
 }
 
 module.exports = {
+  ALL_PROXY_MODELS,
   AVAILABLE_MODELS,
   adminState,
   allocatedBudget,

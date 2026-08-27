@@ -3,7 +3,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  AVAILABLE_MODELS,
   claimAccount,
   modelList,
   optionalLimit,
@@ -18,13 +17,15 @@ const SUPABASE_ENV = {
   SUPABASE_SERVICE_ROLE_KEY: "service-role",
 };
 
-test("credit policy admits only explicit Claude models", () => {
-  assert.deepEqual(modelList(["claude-sonnet-4-6", "claude-sonnet-4-6"]), ["claude-sonnet-4-6"]);
-  assert.throws(() => modelList([]), /at least one/);
-  assert.throws(() => modelList(["openai/gpt-5"]), /supported Claude/);
-  assert.deepEqual(AVAILABLE_MODELS, [
-    "claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5",
-  ]);
+// A key scoped to named models 403s the moment Claude Code asks for anything
+// else, and the names drift every time Anthropic ships a model. So no caller
+// gets to choose a subset, not even an admin sending one deliberately.
+test("credit policy never pins a key to named models", () => {
+  assert.deepEqual(modelList(), ["all-proxy-models"]);
+  assert.deepEqual(modelList([]), ["all-proxy-models"]);
+  assert.deepEqual(modelList(["claude-sonnet-4-6"]), ["all-proxy-models"]);
+  assert.deepEqual(modelList(["openai/gpt-5"]), ["all-proxy-models"]);
+  assert.notEqual(modelList(), modelList(), "each caller gets its own array to mutate");
 });
 
 test("budgets and rate limits fail closed outside bounded values", () => {
