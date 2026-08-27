@@ -167,12 +167,14 @@
   el.loginForm.addEventListener("submit", async function (event) {
     event.preventDefault();
     setStatus(el.loginStatus, "Signing in…");
-    setBusy(el.loginForm, true);
+    // Read the fields before disabling them. A disabled control is omitted
+    // from FormData, so reversing these two lines submits an empty email and
+    // the sign-in fails as "missing email or phone".
     var form = new FormData(el.loginForm);
-    var result = await client.auth.signInWithPassword({
-      email: shared.normalizeEmail(form.get("email")),
-      password: String(form.get("password") || ""),
-    });
+    var email = shared.normalizeEmail(form.get("email"));
+    var password = String(form.get("password") || "");
+    setBusy(el.loginForm, true);
+    var result = await client.auth.signInWithPassword({ email: email, password: password });
     setBusy(el.loginForm, false);
     if (result.error) {
       setStatus(el.loginStatus, shared.safeMessage(result.error, "Could not sign in."), "error");
@@ -219,8 +221,9 @@
   el.passwordSignupForm.addEventListener("submit", async function (event) {
     event.preventDefault();
     setStatus(el.signupStatus, "Creating account…");
-    setBusy(el.passwordSignupForm, true);
+    // Same ordering trap as the sign-in form above.
     var password = new FormData(el.passwordSignupForm).get("password");
+    setBusy(el.passwordSignupForm, true);
     var result = await client.auth.signUp({
       email: approvedEmail,
       password: String(password || ""),
