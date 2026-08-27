@@ -49,15 +49,38 @@ function adminSessionSecret(env = process.env) {
   return value;
 }
 
+// LiteLLM's own duration grammar for `budget_duration` (30s, 30m, 24h, 30d,
+// 1mo). Anything else is silently ignored by the proxy, which would leave a
+// pool that looks like it recycles and does not.
+const BUDGET_DURATION = /^[1-9][0-9]*(s|m|h|d|mo)$/;
+
+// Unset by default, and deliberately so. A duration here turns each member's
+// budget from a fixed pot into a recurring allowance: LiteLLM resets their
+// spend every cycle, which is what stops an exhausted key needing a hand to
+// come back, but it also means the pool can pay out its allocated total once
+// per cycle rather than once. Set it only with that arithmetic in mind.
+function budgetDuration(env = process.env) {
+  const value = String(env.LITELLM_BUDGET_DURATION || "").trim();
+  if (!value) return null;
+  if (!BUDGET_DURATION.test(value)) {
+    const error = new Error("LITELLM_BUDGET_DURATION must look like 30d, 24h, or 1mo");
+    error.statusCode = 503;
+    throw error;
+  }
+  return value;
+}
+
 function litellmConfig(env = process.env) {
   return {
     baseUrl: httpsOrigin(required(env, "LITELLM_BASE_URL"), "LITELLM_BASE_URL"),
     masterKey: required(env, "LITELLM_MASTER_KEY"),
+    budgetDuration: budgetDuration(env),
   };
 }
 
 module.exports = {
   adminSessionSecret,
+  budgetDuration,
   encryptionKey,
   httpsOrigin,
   litellmConfig,

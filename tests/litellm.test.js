@@ -40,6 +40,7 @@ test("provisions one non-admin LiteLLM user and one inference-only key", async (
     user_alias: "member@example.com",
     user_role: "internal_user",
     max_budget: 25,
+    budget_duration: null,
     auto_create_key: false,
   });
   assert.equal(calls[1].body.user_id, "supabase-uuid");
