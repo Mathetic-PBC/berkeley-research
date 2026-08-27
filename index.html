@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mathetic · Berkeley research chats</title>
-<meta name="description" content="Mathetic is meeting first-year STEM undergrads at UC Berkeley this week. Free, in-person help finding a lab, picking a project, and building it with Engelbart.">
-<meta property="og:title" content="Want to do research this school year?">
-<meta property="og:description" content="Free in-person chats with Mathetic at UC Berkeley this week — find a lab, pick a project, start building.">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Want to do research as an undergrad?</title>
+<meta name="description" content="We're at UC Berkeley this week helping STEM undergrads land their first research position. Free in-person chats: find a lab, pick a project, start building it.">
+<meta property="og:title" content="Want to do research as an undergrad?">
+<meta property="og:description" content="Free in-person chats at UC Berkeley this week — find a lab, pick a project, and start building it. Plus $25 of Claude Code credits.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://berkeley.mathetic.com/">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,19 +14,25 @@
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&display=swap" rel="stylesheet">
 <style>
   html, body { margin:0; padding:0; background:#FBFAF6; }
-  body { -webkit-font-smoothing:antialiased; font-family:Helvetica, Arial, sans-serif; color:#17150F; }
+  /* iOS inflates text in portrait unless this is pinned. */
+  html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
+  body { -webkit-font-smoothing:antialiased; font-family:Helvetica, Arial, sans-serif; color:#17150F; overflow-wrap:break-word; }
   a { color:#17150F; }
   a:hover { color:#B8500A; }
 
-  /* Letter */
-  .letter { background:#FBFAF6; display:flex; justify-content:center; padding:clamp(56px, 12vh, 110px) 24px 72px; box-sizing:border-box; }
+  /* Letter - the whole page now, so the safe-area insets live here. */
+  .letter {
+    background:#FBFAF6; display:flex; justify-content:center; box-sizing:border-box;
+    padding:clamp(56px, 12vh, 110px) calc(24px + env(safe-area-inset-right))
+            calc(72px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
+  }
   .letter-inner { max-width:640px; font-family:'Newsreader', Georgia, serif; font-size:19px; line-height:1.7; color:#17150F; display:flex; flex-direction:column; gap:22px; }
-  .letter-inner h2 { font-size:clamp(28px, 3.4vw, 36px); font-weight:500; margin:0; line-height:1.3; }
-  .letter-inner p { margin:0; }
+  .letter-inner h2 { font-size:clamp(28px, 3.4vw, 36px); font-weight:500; margin:0; line-height:1.3; text-wrap:balance; }
+  .letter-inner p { margin:0; text-wrap:pretty; }
   .steps { list-style:none; padding:0; display:flex; flex-direction:column; gap:12px; margin:4px 0; }
   .steps li { display:flex; gap:12px; align-items:baseline; }
   .steps .n { flex:0 0 auto; }
-  .cta { display:inline-flex; align-items:center; gap:10px; background:transparent; color:#17150F; border:1.5px solid #17150F; text-decoration:none; font-family:Helvetica, Arial, sans-serif; font-size:16px; font-weight:600; padding:13px 26px; border-radius:10px; }
+  .cta { display:inline-flex; align-items:center; justify-content:center; gap:10px; min-height:48px; background:transparent; color:#17150F; border:1.5px solid #17150F; text-decoration:none; font-family:Helvetica, Arial, sans-serif; font-size:16px; font-weight:600; padding:13px 26px; border-radius:10px; box-sizing:border-box; }
   .cta:hover { background:#F4F2EA; color:#17150F; }
   .cta svg { width:18px; height:18px; flex:0 0 auto; }
   .sign { margin:8px 0 0; font-style:italic; color:#3A372E; }
@@ -38,10 +44,15 @@
   .person .who .role { color:#6E6A5E; }
 
   @media (max-width: 640px) {
-    .letter { padding:52px 30px 56px; }
+    .letter { padding-top:44px; padding-bottom:calc(56px + env(safe-area-inset-bottom)); }
     .letter-inner { font-size:17px; line-height:1.65; gap:18px; }
     .letter-inner h2 { font-size:26px; }
-    .people { gap:20px; }
+    .steps { gap:14px; }
+    /* A thumb reaches the whole button, and the two of us stack rather than
+       squeezing a name into a two-character column. */
+    .cta { width:100%; }
+    .people { gap:18px; }
+    .person { flex:1 1 100%; }
   }
 </style>
 </head>
@@ -49,23 +60,23 @@
 
 <section class="letter">
   <div class="letter-inner">
-    <h2>Want to do research this school year?</h2>
-    <p>We're <em>Mathetic</em>, a small team of CS researchers and PhD students interested in computer and cognitive science. We volunteer to help first-year STEM undergrads build a free project and land their first research position during their first few weeks on campus.</p>
-    <p>We're meeting with undergrads every day this week, so if you'd like to learn about undergrad research at Berkeley and get started on a project to build up your resumé and begin doing research with a professor, we'd love to chat!</p>
-    <p>Book a time for an in-person chat with us on campus this week. We'll sit down together and</p>
+    <h2>Want to do research as an undergrad?</h2>
+    <p>We're volunteering at Berkeley this week to help STEM undergrads land their first research position during their first few weeks on campus. We got into research by working on side projects while in university and sending them to PhD students and professors we wanted to work with. Similarly, we'll work with you (for free) to build a free project that helps you land your first research position within the next couple weeks.</p>
+    <p>We're meeting with undergrads every day this week, so if you'd like to learn about undergrad research at Berkeley and get started on a project to build up your resumé and begin doing research with a professor, we'd love to chat! We can also get you set up with $25 of Claude Code credits to help you build your first project!</p>
+    <p>Book a time for an in-person chat with us on campus this week. We can grab coffee and</p>
     <ol class="steps">
       <li><span class="n">1.</span><span>find some interesting labs and professors you'd like to do research with,</span></li>
       <li><span class="n">2.</span><span>pick out a cool project you'd like to start building to impress a professor,</span></li>
       <li><span class="n">3.</span><span>help you begin building the project from scratch using <em>Engelbart</em>, our open-source AI creation tool for student researchers.</span></li>
     </ol>
-    <p>This is totally free :)</p>
+    <p>This is totally free, we just want to see more people get into research early on :)</p>
     <div>
       <a class="cta" href="https://calendly.com/d/d2mx-64j-g4h/berkeley-research-chat-mathetic" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="none" stroke="#17150F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
           <path d="M21 3 L10 13"></path>
         </svg>
-        Book a chat</a>
+        Grab coffee</a>
     </div>
     <p class="sign">&lt;3 Hudson and David</p>
     <div class="people">
@@ -73,14 +84,14 @@
         <img src="uploads/hudson.jpeg" alt="Hudson" width="76" height="76">
         <div class="who">
           <div class="name">Hudson</div>
-          <div class="role">cognitive science researcher<br>co-founder, Mathetic</div>
+          <div class="role">cognitive science researcher</div>
         </div>
       </div>
       <div class="person">
         <img src="uploads/david.png" alt="David" width="76" height="76">
         <div class="who">
           <div class="name">David</div>
-          <div class="role">computer science researcher<br>co-founder, Mathetic</div>
+          <div class="role">computer science researcher</div>
         </div>
       </div>
     </div>
