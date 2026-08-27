@@ -364,9 +364,17 @@ async function refreshSpend(row, options = {}) {
 //
 // Only LiteLLM's gate moves here. The `blocked` column stays what it has always
 // been -- an administrator's pause -- so the two never have to be told apart.
+// `/key/info` is not documented to report `blocked`, and treating a missing
+// field as `false` would be the worst possible guess: an exhausted key would
+// still be blocked, but a topped-up one would look like it was already
+// unblocked and never be told otherwise, so paying to refill someone's credit
+// would silently do nothing. Absent therefore means unknown, and unknown means
+// say it again -- /key/block and /key/unblock are both idempotent, so the only
+// cost of asserting a state that already holds is one call.
 async function reconcileBlock(row, info, options = {}) {
   const desired = Boolean(row.blocked) || isExhausted(row);
-  if (Boolean(info && info.blocked) === desired) return false;
+  const known = info && typeof info.blocked === "boolean" ? info.blocked : null;
+  if (known === desired) return false;
   try {
     await LiteLLM.setBlocked(encryptedKey(row, options.env), desired, options);
     return true;

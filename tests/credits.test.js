@@ -411,3 +411,33 @@ test("the budget cycle is opt-in and its format is checked", () => {
   assert.throws(() => budgetDuration({ LITELLM_BUDGET_DURATION: "monthly" }), /30d, 24h, or 1mo/);
   assert.throws(() => budgetDuration({ LITELLM_BUDGET_DURATION: "0d" }), /30d, 24h, or 1mo/);
 });
+
+// The assumption this whole recovery path rests on is that LiteLLM tells us
+// whether a key is currently blocked. `/key/info` is not documented to, so the
+// code must not depend on it: treating a missing field as "not blocked" would
+// mean a refilled account never gets unblocked, and paying to top someone up
+// would silently do nothing.
+test("a proxy that does not report blocked state still gets told what to do", async () => {
+  const row = readyRow();
+  const withheld = { async fetchImpl(url, init = {}) {
+    if (url.includes("/key/info")) {
+      // No `blocked` field at all -- what an older proxy answers.
+      return { ok: true, status: 200, async text() { return JSON.stringify({ info: { spend: 3 } }); } };
+    }
+    if (url.includes("/key/block") || url.includes("/key/unblock")) {
+      withheld.gate.push(url.includes("/key/unblock") ? "unblock" : "block");
+      return { ok: true, status: 200, async text() { return "{}"; } };
+    }
+    if (init.method === "PATCH") {
+      const patch = JSON.parse(init.body);
+      return { ok: true, status: 200, async text() { return JSON.stringify([{ ...row, ...patch }]); } };
+    }
+    return { ok: true, status: 200, async text() { return JSON.stringify([row]); } };
+  }, gate: [] };
+
+  await Credits.refreshSpend(row, { env: PROXY_ENV, fetchImpl: withheld.fetchImpl });
+
+  // Spend is back under budget, so the key must be unblocked -- and since the
+  // proxy did not say, saying it anyway is the only safe move.
+  assert.deepEqual(withheld.gate, ["unblock"]);
+});
