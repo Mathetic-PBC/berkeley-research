@@ -53,7 +53,11 @@ async function redeemLink(hashed, options = {}) {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ type: "magiclink", token: hashed }),
+    // `token_hash`, not `token`: the latter is the raw-OTP path and GoTrue
+    // rejects it without an accompanying address ("Only an email address or
+    // phone number should be provided on verify"). What generate_link returns
+    // is the hashed form.
+    body: JSON.stringify({ type: "magiclink", token_hash: hashed }),
   });
   let value = {};
   try {
