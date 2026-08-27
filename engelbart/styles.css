@@ -473,62 +473,427 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 600; }
 .dm-cmd {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 7px 16px;
-  border: 1px solid #e4e0d3;
-  border-radius: 6px;
-  background: var(--wash);
+  gap: .7em;
+  margin-top: 14px;
+  padding: .62em .9em;
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  background: #fffdf8;
+  /* The design's hard offset shadow: the button reads as a physical key the
+     visitor is meant to press, which is the one action this page asks for. */
+  box-shadow: 5px 5px 0 #efede4;
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: clamp(18px, 3.4vw, 30px);
+  letter-spacing: -.01em;
   cursor: pointer;
+  transition: box-shadow .07s cubic-bezier(.2, 0, 0, 1), transform .07s cubic-bezier(.2, 0, 0, 1);
 }
+
+.dm-cmd-sigil { flex: 0 0 auto; color: var(--hint); }
+.dm-cmd-text { flex: 1 1 auto; text-align: left; white-space: nowrap; }
 
 .dm-cmd:hover { border-color: var(--ink); }
 
-.dm-cmd svg { width: 15px; height: 15px; flex: 0 0 auto; color: var(--hint); transition: color .2s; }
-.dm-cmd svg.copied { color: #4a7c4e; }
+/* Pressed: the key travels the length of its own shadow. */
+.dm-cmd:active { box-shadow: 0 0 0 #efede4; transform: translate(5px, 5px); }
 
-/* The recording of the real product. It was captured with its own frame and
-   drop shadow, so it gets none here: a border around an already-bordered
-   screenshot reads as a mistake rather than a frame. */
-.dm-reel {
+.dm-cmd svg { width: .78em; height: .78em; flex: 0 0 auto; color: #cfc9b9; transition: color .08s; }
+.dm-cmd svg.copied { color: var(--success); }
+
+/* The product panel itself */
+.dm-panel {
+  position: relative;
+  overflow: hidden;
   width: 100%;
   max-width: 1280px;
-  margin: 0;
+  border: 1px solid var(--ink);
+  border-radius: 12px;
+  background: #fffdf8;
+  box-shadow: 8px 8px 0 #efede4;
+  font-family: var(--mono);
+  font-size: 13px;
 }
 
-.dm-reel video {
-  display: block;
-  width: 100%;
-  height: auto;
-  /* Reserve the box before the file arrives so the footer does not jump. */
-  aspect-ratio: 1200 / 676;
-  background: var(--paper);
+.dm-spacer { flex: 1 1 auto; }
+
+.dm-chrome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border-bottom: 1px solid #efe9dc;
 }
 
-/* Kept because the sign-in page labels its API key with it. */
-.dm-eyebrow { font-size: 10px; letter-spacing: .16em; color: var(--hint); }
+.dm-chrome-name { font-family: var(--serif); font-weight: 700; font-size: 17px; }
+.dm-chrome-sep { color: #cfc9b9; }
+.dm-chrome-repo { font-size: 12.5px; color: var(--ink-soft); }
+.dm-chrome-saved { font-size: 11.5px; color: var(--hint); }
 
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
+.dm-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 0 22px;
+  border-bottom: 1px solid #efe9dc;
+}
+
+.dm-crumb { padding: 11px 0; font-size: 12px; color: var(--hint); }
+.dm-crumb.on { margin-bottom: -1px; color: var(--ink); font-weight: 700; border-bottom: 2px solid var(--ink); }
+
+.dm-filters { display: flex; align-items: center; }
+
+.dm-filter {
+  margin: 0 0 -1px 18px;
+  padding: 11px 0;
   border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--hint);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
+
+.dm-filter.on { color: var(--ink); font-weight: 700; border-bottom-color: var(--ink); }
+
+.dm-body { display: flex; flex-wrap: wrap; align-items: stretch; min-height: 470px; }
+
+.dm-col-goals {
+  display: flex;
+  flex: 1 1 290px;
+  flex-direction: column;
+  max-width: 340px;
+  padding: 18px 18px 16px;
+  border-right: 1px solid #efe9dc;
+}
+
+.dm-col-detail {
+  display: flex;
+  flex: 1 1 380px;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  padding: 20px clamp(20px, 2.6vw, 30px) 24px;
+  border-right: 1px solid #efe9dc;
+}
+
+.dm-rail {
+  display: flex;
+  flex: 1 1 300px;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 360px;
+  padding: 18px 20px 20px;
+  background: #f8f6ef;
+}
+
+.dm-eyebrow { font-size: 10px; letter-spacing: .16em; color: var(--hint); }
+.dm-eyebrow-row { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 12px; }
+
+.dm-search {
+  margin-bottom: 14px;
+  padding: 7px 11px;
+  border: 1px solid #efe9dc;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 11.5px;
+  color: #b4afa0;
+}
+
+.dm-goal-list { display: flex; flex-direction: column; gap: 1px; }
+
+.dm-goal {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 6px;
+  border-radius: 5px;
+  transition: background .15s;
+}
+
+.dm-goal.on { background: #f4eee1; }
+
+.dm-goal-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  background: transparent;
+  color: #8a8577;
+  font-size: 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dm-goal-mark.is-doing { border-color: var(--accent); }
+.dm-goal-mark.is-done { border-color: #bdb7a7; background: #efede4; }
+
+.dm-goal-label {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dm-goal-label.is-done { color: var(--hint); text-decoration: line-through; }
+
+.dm-goal-del {
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+  color: #cfc9b9;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dm-goal-del:hover { color: var(--accent); }
+
+.dm-add-row { display: flex; margin-top: 8px; padding-left: 2px; }
+
+.dm-add {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.dm-add:focus { border-color: transparent; box-shadow: none; }
+.dm-add-todo { padding-left: 16px; }
+
+.dm-detail-head { display: flex; align-items: flex-start; gap: 12px; }
+.dm-goal-title { flex: 1 1 auto; min-width: 0; font-size: 16px; font-weight: 700; line-height: 1.45; }
+.dm-rail-head { display: none; }
+.dm-rail-title { font-size: 14px; }
+
+.dm-chip {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border: 1px solid #e8b98f;
+  border-radius: 5px;
+  color: var(--accent);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.dm-chip.done { border-color: #dfd9c9; color: var(--hint); }
+
+.dm-sources { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+#dm-sources { display: contents; }
+
+.dm-source {
+  padding: 3px 9px;
+  border: 1px solid #e4e0d3;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dm-source-key { color: var(--hint); }
+
+.dm-source-add {
+  padding: 3px 9px;
+  border: 1px dashed #d8d2c2;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--hint);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.dm-source-add:hover { border-color: var(--ink); color: var(--ink); }
+.dm-source-add.dm-solid { padding: 4px 9px; border-style: solid; border-color: #e4e0d3; color: var(--muted); }
+
+.dm-field { display: flex; flex-direction: column; gap: 8px; }
+
+.dm-notes {
+  width: 100%;
+  height: 212px;
+  min-height: 0;
+  padding: 14px 16px;
+  border: 1px solid #efe9dc;
+  border-radius: 8px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.8;
+  resize: none;
+}
+
+.dm-notes:focus { border-color: #efe9dc; box-shadow: none; }
+
+.dm-prompt-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+.dm-prompt {
+  margin-top: 9px;
+  padding: 11px 13px;
+  border: 1px solid #efe9dc;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.dm-prompt-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; font-size: 10.5px; color: var(--hint); }
+.dm-prompt-tag { padding: 1px 6px; border: 1px solid #efe9dc; border-radius: 4px; font-size: 10px; }
+
+.dm-prompt-empty {
+  margin-top: 9px;
+  padding: 12px;
+  border: 1px dashed #e4e0d3;
+  border-radius: 8px;
+  color: #b4afa0;
+  font-size: 11.5px;
+}
+
+.dm-rail-tabs { display: flex; align-items: center; gap: 16px; }
+
+.dm-rail-tab {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--hint);
+  font-family: inherit;
+  font-size: 11.5px;
+  letter-spacing: .02em;
+  cursor: pointer;
+}
+
+.dm-rail-tab.on { color: var(--ink); font-weight: 700; }
+.dm-progress { font-size: 10px; color: #bdb7a7; }
+
+.dm-todo-list { display: flex; flex-direction: column; gap: 2px; }
+.dm-todo { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; }
+.dm-todo-dash { color: #cfc9b9; font-size: 12px; line-height: 1.6; }
+
+.dm-todo-text {
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dm-todo-text.done { color: var(--hint); text-decoration: line-through; }
+
+.dm-todo-tag {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  color: #4a7c4e;
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity .3s;
+}
+
+.dm-todo-tag.on { opacity: 1; }
+
+/* Three agents, stacked. Each is its own card so that "they are running at the
+   same time" is legible at a glance rather than inferred from a log. */
+.dm-agents { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+
+.dm-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 11px;
+  border: 1px solid #e4e0d3;
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.dm-agent-head { display: flex; align-items: center; gap: 7px; }
+.dm-agent-name { font-size: 11px; color: var(--ink-soft); }
+.dm-agent-sep { color: #cfc9b9; font-size: 11px; }
+.dm-agent-task { font-size: 11px; color: var(--muted); }
+
+.dm-agent-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #cfc9b9; }
+.dm-agent-dot.is-running { background: var(--accent); animation: dm-pulse 1.1s ease-in-out infinite; }
+.dm-agent-dot.is-done { background: var(--success); }
+
+@keyframes dm-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dm-agent-dot.is-running { animation: none; }
+}
+
+.dm-agent-state { flex: 0 0 auto; font-size: 9.5px; letter-spacing: .1em; color: var(--hint); }
+.dm-agent-state.is-running { color: var(--accent); }
+.dm-agent-state.is-done { color: var(--success); }
+
+.dm-agent-log { display: flex; flex-direction: column; gap: 4px; min-height: 30px; }
+.dm-run-line { font-size: 10.5px; line-height: 1.55; color: var(--muted); }
+
+.dm-run-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #efe9dc;
+  font-size: 10.5px;
+  color: #b4afa0;
+}
+
+.dm-run-foot span { flex: 1 1 auto; }
+
+.dm-copy { padding: 0; border: 0; background: transparent; color: var(--accent); font-family: inherit; font-size: 10.5px; cursor: pointer; }
+
+.dm-understanding { font-size: 11.5px; line-height: 1.9; color: var(--muted); white-space: pre-wrap; }
+
+.dm-toast {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  padding: 7px 15px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 11px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: all .25s;
+  pointer-events: none;
+}
+
+.dm-toast.on { opacity: 1; transform: translateY(0); }
+
 .landing .colophon { margin-top: 8px; }
 
-/* The recording is legible full-bleed on a phone, so the page just tightens
-   around it. */
+/* Below the design's 760px breakpoint the goal list and notes fold away and the
+   rail becomes the whole panel, so it needs the goal's title back. */
 @media (max-width: 760px) {
+  .dm-col-goals, .dm-col-detail { display: none; }
+  .dm-rail { flex: 1 1 100%; max-width: none; padding: 16px 16px 20px; }
+  .dm-rail-head { display: flex; }
   .dm-tagline { font-size: 19px; }
   .landing { padding: 44px 24px 70px; gap: 34px; }
   .landing-bar { width: min(100% - 32px, 1280px); }
+  .dm-panel { box-shadow: 5px 5px 0 #efede4; }
 }
 
 /* The key, the meter, and the one command a student has to run. */

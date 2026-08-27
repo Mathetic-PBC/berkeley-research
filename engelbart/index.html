@@ -23,23 +23,93 @@
     <header class="dm-hero">
       <h1 class="dm-title">Engelbart</h1>
       <p class="dm-tagline">Keep your goals, plans, and problems in context while building.</p>
-      <button id="copy-cmd" class="dm-cmd" type="button" title="click to copy">npx engelbart-cli<svg id="copy-cmd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="12" height="12" rx="1.5"></rect><path d="M9 6.5 V4.5 A1.5 1.5 0 0 1 10.5 3 H19.5 A1.5 1.5 0 0 1 21 4.5 V13.5 A1.5 1.5 0 0 1 19.5 15 H17.5"></path></svg></button>
+      <button id="copy-cmd" class="dm-cmd" type="button" title="click to copy"><span class="dm-cmd-sigil" aria-hidden="true">$</span><span class="dm-cmd-text">npx engelbart-cli</span><svg id="copy-cmd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="12" height="12" rx="1.5"></rect><path d="M9 6.5 V4.5 A1.5 1.5 0 0 1 10.5 3 H19.5 A1.5 1.5 0 0 1 21 4.5 V13.5 A1.5 1.5 0 0 1 19.5 15 H17.5"></path></svg></button>
     </header>
 
-    <!-- A recording of the real thing. It carries its own frame and shadow, so
-         it gets no panel chrome here - a second border around a bordered
-         screenshot reads as a mistake. -->
-    <figure class="dm-reel">
-      <video
-        src="/uploads/engelbart-demo.mp4"
-        poster="/uploads/engelbart-demo-poster.jpg"
-        width="1200" height="676"
-        autoplay muted loop playsinline preload="auto"
-        aria-label="A recording of Engelbart: it reads back what you are working on, then agents build the goals while you review the physics."></video>
-      <figcaption class="visually-hidden">Engelbart asks what to build first, plays back its
-        understanding of the project, and then runs agents against the goals while you review
-        the physics rather than the diffs.</figcaption>
-    </figure>
+    <div id="demo" class="dm-panel" role="img" aria-label="Engelbart: goals on the left, notes in the middle, and three agents building against them on the right.">
+      <div class="dm-chrome">
+        <span class="dm-chrome-name">Engelbart</span>
+        <span class="dm-chrome-sep">/</span>
+        <span class="dm-chrome-repo">nuclear-sim &#9662;</span>
+        <span class="dm-spacer"></span>
+        <span class="dm-chrome-saved">saved &#10003;</span>
+      </div>
+
+      <div class="dm-tabbar">
+        <span class="dm-crumb">Overview</span>
+        <span class="dm-crumb on">Goals</span>
+        <span class="dm-spacer"></span>
+        <div id="dm-filters" class="dm-filters"></div>
+      </div>
+
+      <div class="dm-body">
+        <div class="dm-col-goals">
+          <div class="dm-eyebrow dm-eyebrow-row"><span>GOALS</span><span id="dm-count"></span></div>
+          <div class="dm-search">Search goals, notes, TODOs</div>
+          <div id="dm-goals" class="dm-goal-list"></div>
+          <form id="dm-goal-form" class="dm-add-row">
+            <input id="dm-goal-input" class="dm-add" type="text" placeholder="+ Add goal" autocomplete="off">
+          </form>
+        </div>
+
+        <div class="dm-col-detail">
+          <div class="dm-detail-head">
+            <div id="dm-goal-title" class="dm-goal-title"></div>
+            <span id="dm-chip" class="dm-chip"></span>
+          </div>
+
+          <div class="dm-sources">
+            <span class="dm-eyebrow">SOURCES</span>
+            <span class="dm-source"><span class="dm-source-key">REPO:</span> nuclear-sim</span>
+            <span id="dm-sources"></span>
+            <button id="dm-add-source" class="dm-source-add" type="button">+ Add source</button>
+          </div>
+
+          <div class="dm-field">
+            <div class="dm-eyebrow">NOTES</div>
+            <textarea id="dm-notes" class="dm-notes" spellcheck="false" placeholder="Write in markdown &mdash; # heading, - list, - [ ] task"></textarea>
+          </div>
+
+          <div class="dm-field">
+            <div class="dm-prompt-bar">
+              <span class="dm-eyebrow">RELATED PROMPTS</span>
+              <button id="dm-add-prompt" class="dm-source-add dm-solid" type="button">+ add a prompt</button>
+            </div>
+            <div id="dm-prompts"></div>
+          </div>
+        </div>
+
+        <div class="dm-rail">
+          <div id="dm-rail-head" class="dm-detail-head dm-rail-head">
+            <div id="dm-rail-title" class="dm-goal-title dm-rail-title"></div>
+            <span id="dm-rail-chip" class="dm-chip"></span>
+          </div>
+          <div class="dm-rail-tabs">
+            <button class="dm-rail-tab on" type="button" data-rail="todos">TODOs</button>
+            <button class="dm-rail-tab" type="button" data-rail="understanding">Understanding</button>
+            <span class="dm-spacer"></span>
+            <span id="dm-progress" class="dm-progress"></span>
+          </div>
+
+          <div id="dm-todos-view">
+            <div id="dm-todos" class="dm-todo-list"></div>
+            <form id="dm-todo-form" class="dm-add-row">
+              <input id="dm-todo-input" class="dm-add dm-add-todo" type="text" placeholder="+ add a TODO" autocomplete="off">
+            </form>
+
+            <div id="dm-agents" class="dm-agents"></div>
+
+            <div class="dm-run-foot">
+              <span>send to local claude code</span>
+              <button id="dm-copy-note" class="dm-copy" type="button">copy</button>
+            </div>
+          </div>
+
+          <div id="dm-understanding-view" class="dm-understanding hidden"></div>
+        </div>
+      </div>
+      <div id="dm-toast" class="dm-toast">sent to claude code &#10003;</div>
+    </div>
 
     <footer class="colophon">
       <a href="/">Mathetic</a>
@@ -47,6 +117,6 @@
     </footer>
   </main>
 
-  <script src="/engelbart/landing.js"></script>
+  <script src="/engelbart/demo.js"></script>
 </body>
 </html>
