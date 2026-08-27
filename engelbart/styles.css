@@ -916,3 +916,126 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 600; }
 :root[data-session="1"] #auth-panel { display: none !important; }
 :root[data-session="1"] #nav-auth { display: none !important; }
 :root[data-session="1"] #loading-panel.hidden { display: block !important; }
+/* The connect screen. One decision, centred, with nothing else competing for
+   it: no hero, no admin link, no install instructions underneath. */
+body.connecting .shell {
+  width: min(100% - 40px, 468px);
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 30px;
+}
+
+/* The wordmark stays; the sign-in pills and the account controls do not.
+   Nothing in the bar is part of the decision being asked. */
+body.connecting .landing-bar { padding-top: 22px; }
+body.connecting .landing-bar .nav-actions { display: none; }
+
+/* Slightly above true centre — optically centred reads as centred. */
+body.connecting .panel { margin: auto 0; }
+body.connecting .masthead { display: none; }
+
+.pairing {
+  padding: clamp(30px, 7vw, 44px) clamp(24px, 6vw, 40px);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .5);
+  box-shadow: none;
+  text-align: center;
+}
+
+.pairing-title {
+  max-width: none;
+  margin-bottom: 14px;
+  font-size: clamp(27px, 6vw, 31px);
+  letter-spacing: -.02em;
+  line-height: 1.05;
+}
+
+.pairing-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pairing-lede {
+  max-width: 40ch;
+  margin: 0 auto 30px;
+  text-wrap: balance;
+  color: #3a372e;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.pairing-code {
+  margin-bottom: 12px;
+  padding: 16px 12px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: clamp(26px, 7vw, 32px);
+  font-weight: 500;
+  letter-spacing: .14em;
+  line-height: 1.2;
+}
+
+.pairing-confirm {
+  max-width: 40ch;
+  margin: 0 auto 26px;
+  text-wrap: balance;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.pairing .meta:empty { display: none; }
+
+.pairing-actions { display: grid; gap: 6px; }
+
+.pairing-actions .button { width: 100%; }
+
+/* The site's buttons are outlined; this one is not. The whole screen exists
+   to ask one question, and the answer to it should be the heaviest thing on
+   it -- scoped here so the rest of the design language is untouched. */
+.pairing-actions .button:not(.quiet) {
+  border-color: var(--ink);
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.pairing-actions .button:not(.quiet):hover { background: #373329; color: var(--paper); }
+
+/* Cancel is available, not offered: a quiet second choice under the one the
+   member almost certainly came here to make. */
+.button.quiet {
+  min-height: 38px;
+  border-color: transparent;
+  color: var(--muted);
+  background: none;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.button.quiet:hover { color: var(--ink); background: none; text-decoration: underline; }
+
+.pairing .fine-print { margin: 22px 0 0; }
+
+.pairing .status:empty { min-height: 0; }
+.pairing .status { margin-top: 16px; }
+
+.pairing-mark {
+  margin-bottom: 16px;
+  color: var(--accent);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.pairing-done .pairing-lede { margin-bottom: 0; }
+
+@media (max-width: 560px) {
+  body.connecting .shell { width: min(100% - 28px, 468px); }
+}
