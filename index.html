@@ -35,6 +35,11 @@
   .cta { display:inline-flex; align-items:center; justify-content:center; gap:10px; min-height:48px; background:transparent; color:#17150F; border:1.5px solid #17150F; text-decoration:none; font-family:Helvetica, Arial, sans-serif; font-size:16px; font-weight:600; padding:13px 26px; border-radius:10px; box-sizing:border-box; }
   .cta:hover { background:#F4F2EA; color:#17150F; }
   .cta svg { width:18px; height:18px; flex:0 0 auto; }
+  .hero-actions { display:flex; flex-direction:column; gap:12px; }
+  .hero-actions .cta { width:100%; min-height:68px; font-size:20px; padding:18px 30px; }
+  .hero-actions .cta svg { width:22px; height:22px; }
+  .hero-actions .text-cta { background:#17150F; color:#FBFAF6; }
+  .hero-actions .text-cta:hover { background:#B8500A; color:#FBFAF6; border-color:#B8500A; }
   .sign { margin:8px 0 0; font-style:italic; color:#3A372E; }
   .people { display:flex; gap:32px; flex-wrap:wrap; margin-top:10px; }
   .person { display:flex; gap:14px; align-items:center; }
@@ -61,6 +66,29 @@
 <section class="letter">
   <div class="letter-inner">
     <h2>Want to do research as an undergrad?</h2>
+    <div class="hero-actions">
+      <a class="cta" href="https://calendly.com/d/d2mx-64j-g4h/berkeley-research-chat-mathetic" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="16" rx="2"></rect>
+          <path d="M16 3v4M8 3v4M3 10h18"></path>
+        </svg>
+        Schedule a meeting
+      </a>
+      <a class="cta text-cta" href="sms:+18588680309?body=Hi%2C%20I%20want%20to%20do%20research">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path>
+        </svg>
+        Text us
+      </a>
+      <a class="cta" href="https://discord.gg/ACEK85XnR" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9" cy="7" r="4"></circle>
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+        Join Discord
+      </a>
+    </div>
     <p>We're volunteering at Berkeley this week to help STEM undergrads land their first research position during their first few weeks on campus. We got into research by working on side projects while in university and sending them to PhD students and professors we wanted to work with. Similarly, we'll work with you (for free) to build a free project that helps you land your first research position within the next couple weeks.</p>
     <p>We're meeting with undergrads every day this week, so if you'd like to learn about undergrad research at Berkeley and get started on a project to build up your resumé and begin doing research with a professor, we'd love to chat! We can also get you set up with $25 of Claude Code credits to help you build your first project!</p>
     <p>Book a time for an in-person chat with us on campus this week. We can grab coffee and</p>
@@ -76,7 +104,7 @@
           <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
           <path d="M21 3 L10 13"></path>
         </svg>
-        Grab coffee</a>
+        Schedule a meeting</a>
     </div>
     <p class="sign">&lt;3 Hudson and David</p>
     <div class="people">
