@@ -23,7 +23,7 @@ test("provisions one non-admin LiteLLM user and one inference-only key", async (
   }
   const policy = {
     budgetUsd: 25,
-    models: ["claude-sonnet-4-6"],
+    models: ["all-proxy-models"],
     rpmLimit: 30,
     tpmLimit: 100000,
   };
@@ -45,7 +45,7 @@ test("provisions one non-admin LiteLLM user and one inference-only key", async (
   assert.equal(calls[1].body.user_id, "supabase-uuid");
   assert.equal(calls[1].body.key_type, "llm_api");
   assert.equal(calls[1].body.max_budget, 25);
-  assert.deepEqual(calls[1].body.models, ["claude-sonnet-4-6"]);
+  assert.deepEqual(calls[1].body.models, ["all-proxy-models"]);
   assert.equal(calls[1].body.rpm_limit, 30);
   assert.equal(calls[1].body.tpm_limit, 100000);
   assert.equal(calls[1].options.headers.Authorization, "Bearer sk-admin-only");

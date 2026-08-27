@@ -5,10 +5,12 @@ Landing page for Mathetic's Berkeley research chats — served at **https://berk
 Static site with no build step:
 
 - `/` — Berkeley research-chat landing page (`index.html`)
-- `/engelbart` — Supabase login and invite-only signup
+- `/engelbart` — Engelbart landing page and product demo
+- `/engelbart/signin` — Supabase login and invite-only signup; the URL `bart auth` opens
 - `/engelbart/admin` — password/TOTP-protected invite and credit administration
 - `/api/engelbart-config` — browser-safe runtime configuration only
 - `/api/engelbart-credentials` — authenticated per-member LiteLLM provisioning
+- `litellm/` — the proxy's `config.yaml`, deployed separately on Railway
 
 The Engelbart database migrations and activation instructions live in
 `supabase/`. The application uses Vercel functions as the authenticated control
@@ -41,10 +43,19 @@ healthy LiteLLM proxy, and add all server secrets before enabling
 
 ## Source of truth
 
-Compiled by hand from the Claude Design project *Mathetic landing page design* → `Mathetic Landing.dc.html`.
+Compiled by hand from the Claude Design project *Mathetic landing page design*:
+
+- `index.html` ← `Mathetic Landing.dc.html`
+- `engelbart/index.html` + `engelbart/demo.js` ← `Mathetic Demo.dc.html`
+
 The design-canvas runtime (`support.js`, `image-slot.js`, React/Babel from unpkg) is not shipped; the
 `<x-dc>` template, `style-hover`, and `DCLogic` component were flattened into plain HTML/CSS/JS.
-To update copy or layout, edit `index.html` directly (or re-export from the design and re-flatten).
+To update copy or layout, edit those files directly (or re-export from the design and re-flatten).
+
+Shipping the runtime instead was rejected on the Engelbart CSP: `support.js` compiles the
+`<script data-dc-script>` body with `new Function` (needs `'unsafe-eval'`), injects React/ReactDOM
+and Babel from `unpkg.com`, `fetch`es its own page URL at boot, registers an unauthenticated
+`message` listener, and injects global CSS that rewrites `html`/`body` layout and `@media print`.
 
 ## Local verification
 
@@ -53,6 +64,11 @@ npm test
 npm run check
 vercel dev
 ```
+
+`npm run verify:proxy` checks the live LiteLLM proxy against the dated model ids
+Claude Code actually sends (`claude-sonnet-4-5-20250929`, not
+`claude-sonnet-4-6`). A pinned `model_list` answers those with a 400, so a
+student key can look healthy and still fail on `claude`. See `litellm/README.md`.
 
 `vercel dev` requires `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
 

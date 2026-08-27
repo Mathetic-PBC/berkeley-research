@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  AVAILABLE_MODELS,
+  ALL_PROXY_MODELS,
   claimAccount,
   modelList,
   optionalLimit,
@@ -18,13 +18,11 @@ const SUPABASE_ENV = {
   SUPABASE_SERVICE_ROLE_KEY: "service-role",
 };
 
-test("credit policy admits only explicit Claude models", () => {
-  assert.deepEqual(modelList(["claude-sonnet-4-6", "claude-sonnet-4-6"]), ["claude-sonnet-4-6"]);
-  assert.throws(() => modelList([]), /at least one/);
-  assert.throws(() => modelList(["openai/gpt-5"]), /supported Claude/);
-  assert.deepEqual(AVAILABLE_MODELS, [
-    "claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5",
-  ]);
+test("keys are never scoped to a model subset", () => {
+  assert.deepEqual(ALL_PROXY_MODELS, ["all-proxy-models"], "LiteLLM's proxy-wide wildcard");
+  assert.deepEqual(modelList(), ALL_PROXY_MODELS);
+  assert.notEqual(modelList(), ALL_PROXY_MODELS, "callers must not mutate the frozen constant");
+  assert.deepEqual(modelList(["openai/gpt-5"]), ALL_PROXY_MODELS, "request input is ignored");
 });
 
 test("budgets and rate limits fail closed outside bounded values", () => {
@@ -39,12 +37,12 @@ test("budgets and rate limits fail closed outside bounded values", () => {
 test("new accounts inherit the global policy exactly once", () => {
   assert.deepEqual(policyFromRow({
     default_budget_usd: "25.00",
-    default_models: ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    default_models: ["all-proxy-models"],
     default_rpm_limit: 30,
     default_tpm_limit: null,
   }), {
     budgetUsd: 25,
-    models: ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    models: ["all-proxy-models"],
     rpmLimit: 30,
     tpmLimit: null,
   });
@@ -79,7 +77,7 @@ test("admin policy changes cross the atomic Supabase pool allocator", async () =
   let request;
   const policy = {
     budgetUsd: 40,
-    models: ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    models: ["all-proxy-models"],
     rpmLimit: 20,
     tpmLimit: null,
   };
@@ -98,7 +96,7 @@ test("admin policy changes cross the atomic Supabase pool allocator", async () =
   assert.deepEqual(request.body, {
     p_user_id: "user-uuid",
     p_budget_usd: 40,
-    p_models: ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    p_models: ["all-proxy-models"],
     p_rpm_limit: 20,
     p_tpm_limit: null,
   });

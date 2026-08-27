@@ -5,11 +5,10 @@ const { litellmConfig } = require("./config");
 const LiteLLM = require("./litellm");
 const { patchRows, rpc, selectOne, selectRows } = require("./supabase");
 
-const AVAILABLE_MODELS = Object.freeze([
-  "claude-sonnet-4-6",
-  "claude-opus-4-7",
-  "claude-haiku-4-5",
-]);
+// LiteLLM's wildcard for "everything this proxy serves". Members get a plain
+// API key, so the model line-up is never pinned here and never drifts when the
+// proxy adds a model.
+const ALL_PROXY_MODELS = Object.freeze(["all-proxy-models"]);
 
 function positiveMoney(value, name) {
   const number = Number(value);
@@ -32,15 +31,9 @@ function optionalLimit(value, name) {
   return number;
 }
 
-function modelList(value) {
-  const models = Array.from(new Set((Array.isArray(value) ? value : [])
-    .map((item) => String(item || "").trim()).filter(Boolean)));
-  if (!models.length || models.some((model) => !AVAILABLE_MODELS.includes(model))) {
-    const error = new Error("Choose at least one supported Claude model");
-    error.statusCode = 400;
-    throw error;
-  }
-  return models;
+// Keys are never scoped to a model subset, so this ignores any caller input.
+function modelList() {
+  return ALL_PROXY_MODELS.slice();
 }
 
 function policyFromRow(row) {
@@ -182,7 +175,7 @@ async function updateDefaults(input, options = {}) {
   const values = {
     pool_budget_usd: positiveMoney(input.poolBudgetUsd, "Pool budget"),
     default_budget_usd: positiveMoney(input.defaultBudgetUsd, "Default user budget"),
-    default_models: modelList(input.defaultModels),
+    default_models: modelList(),
     default_rpm_limit: optionalLimit(input.defaultRpmLimit, "Default RPM limit"),
     default_tpm_limit: optionalLimit(input.defaultTpmLimit, "Default TPM limit"),
     updated_at: new Date().toISOString(),
@@ -241,7 +234,7 @@ async function updateAccount(userId, input, options = {}) {
   }
   const policy = {
     budgetUsd: positiveMoney(input.budgetUsd, "User budget"),
-    models: modelList(input.models),
+    models: modelList(),
     rpmLimit: optionalLimit(input.rpmLimit, "RPM limit"),
     tpmLimit: optionalLimit(input.tpmLimit, "TPM limit"),
   };
@@ -316,18 +309,16 @@ async function adminState(options = {}) {
     settings(options),
     selectRows(
       "engelbart_credit_accounts",
-      "select=user_id,email,budget_usd,models,rpm_limit,tpm_limit,spend_usd,blocked,status,error_message,provisioned_at,synced_at,created_at&order=created_at.desc",
+      "select=user_id,email,budget_usd,rpm_limit,tpm_limit,spend_usd,blocked,status,error_message,provisioned_at,synced_at,created_at&order=created_at.desc",
       options,
     ),
   ]);
   const allocated = accounts.filter((row) => row.status !== "error")
     .reduce((sum, row) => sum + Number(row.budget_usd || 0), 0);
   return {
-    availableModels: AVAILABLE_MODELS,
     settings: {
       poolBudgetUsd: Number(configuration.pool_budget_usd),
       defaultBudgetUsd: Number(configuration.default_budget_usd),
-      defaultModels: configuration.default_models,
       defaultRpmLimit: configuration.default_rpm_limit,
       defaultTpmLimit: configuration.default_tpm_limit,
       allocatedBudgetUsd: allocated,
@@ -336,7 +327,6 @@ async function adminState(options = {}) {
       userId: row.user_id,
       email: row.email,
       budgetUsd: Number(row.budget_usd),
-      models: row.models,
       rpmLimit: row.rpm_limit,
       tpmLimit: row.tpm_limit,
       spendUsd: Number(row.spend_usd),
@@ -351,7 +341,7 @@ async function adminState(options = {}) {
 }
 
 module.exports = {
-  AVAILABLE_MODELS,
+  ALL_PROXY_MODELS,
   adminState,
   allocatedBudget,
   blockAccount,
