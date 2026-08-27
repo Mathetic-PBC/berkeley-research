@@ -813,6 +813,185 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 600; }
 
 .dm-todo-tag.on { opacity: 1; }
 
+
+/* ---- Act one: the intake -------------------------------------------------
+   Cards accumulate on the panel's paper and the column slides up to keep the
+   newest one in frame, the way the recording scrolls. The stage is the same
+   height as the app body so the page never jumps between acts. */
+.dm-intake {
+  overflow: hidden;
+  min-height: 548px;
+  height: 548px;
+  padding: 22px clamp(18px, 4vw, 54px);
+}
+
+.dm-intake-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transition: transform .5s cubic-bezier(.2, 0, 0, 1);
+}
+
+.dm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fffdf8;
+}
+
+.dm-card-head { display: flex; align-items: center; gap: 10px; }
+.dm-card-meta { font-size: 9.5px; letter-spacing: .14em; color: var(--hint); }
+
+.dm-ask {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.dm-ask-next { margin-top: 12px; }
+.dm-sub { margin-top: -4px; }
+
+.dm-pill-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 4px; }
+.dm-pill-row-end { justify-content: flex-end; }
+
+.dm-pill {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--hint);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .12em;
+  white-space: nowrap;
+}
+
+/* The option that was actually taken. */
+.dm-pill.is-solid { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+
+.dm-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: var(--serif);
+  font-size: 14px;
+  transition: border-color .25s, opacity .25s;
+}
+
+.dm-choice.is-picked { border-color: var(--ink); }
+.dm-choice.is-dim { opacity: .45; }
+
+.dm-choice-mark {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border: 1.5px solid var(--hint);
+  background: transparent;
+  transition: background .2s, border-color .2s;
+}
+
+.dm-choice-mark.is-radio { border-radius: 50%; }
+.dm-choice-mark.is-check { border-radius: 3px; }
+.dm-choice-mark.is-on { border-color: var(--ink); background: var(--ink); }
+
+.dm-said {
+  align-self: flex-end;
+  width: min(100%, 460px);
+  padding: 13px 16px;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.dm-said-eyebrow { color: #8a8577; }
+.dm-said-text { margin: 6px 0 0; font-family: var(--serif); font-size: 14px; line-height: 1.55; }
+
+/* Blinks while the sentence is still arriving. */
+.dm-caret {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--paper);
+  vertical-align: text-bottom;
+  animation: dm-blink .9s steps(1) infinite;
+}
+
+@keyframes dm-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+.dm-readback {
+  margin: 0;
+  padding-left: 11px;
+  border-left: 1px solid var(--line);
+  font-family: var(--serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+
+.dm-unsure {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--wash);
+  font-family: var(--serif);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dm-unsure-head { display: block; color: var(--muted); }
+.dm-unsure-body { color: var(--ink-soft); }
+
+.dm-tree-top, .dm-tree-sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-family: var(--serif);
+  font-size: 14px;
+}
+
+.dm-tree-top { font-weight: 700; background: var(--wash); }
+.dm-tree-sub { margin-left: 22px; color: var(--ink-soft); }
+
+.dm-task {
+  display: flex;
+  gap: 10px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--serif);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.dm-task-dash { flex: 0 0 auto; color: var(--hint); }
+
+.dm-note { color: var(--muted); font-family: var(--serif); font-size: 12.5px; }
+.dm-note-block { display: block; margin-bottom: 2px; }
+
+.dm-name-row { display: flex; align-items: center; gap: 9px; margin-top: 8px; }
+.dm-name { font-family: var(--mono); font-size: 13px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dm-intake-scroll { transition: none; }
+  .dm-caret { animation: none; }
+}
+
+@media (max-width: 760px) {
+  .dm-intake { min-height: 470px; height: 470px; padding: 16px; }
+  .dm-ask { font-size: 15px; }
+  .dm-choice, .dm-tree-top, .dm-tree-sub { font-size: 12.5px; }
+  .dm-said { width: 100%; }
+}
+
 /* Three agents, stacked. Each is its own card so that "they are running at the
    same time" is legible at a glance rather than inferred from a log. */
 .dm-agents { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }

@@ -27,87 +27,96 @@
     </header>
 
     <div id="demo" class="dm-panel" role="img" aria-label="Engelbart: goals on the left, notes in the middle, and three agents building against them on the right.">
-      <div class="dm-chrome">
-        <span class="dm-chrome-name">Engelbart</span>
-        <span class="dm-chrome-sep">/</span>
-        <span class="dm-chrome-repo">nuclear-sim &#9662;</span>
-        <span class="dm-spacer"></span>
-        <span class="dm-chrome-saved">saved &#10003;</span>
+      <!-- Act one: the questions Engelbart asks before a project exists. -->
+      <div id="dm-stage-intake" class="dm-intake">
+        <div id="dm-intake-scroll" class="dm-intake-scroll"></div>
       </div>
 
-      <div class="dm-tabbar">
-        <span class="dm-crumb">Overview</span>
-        <span class="dm-crumb on">Goals</span>
-        <span class="dm-spacer"></span>
-        <div id="dm-filters" class="dm-filters"></div>
-      </div>
-
-      <div class="dm-body">
-        <div class="dm-col-goals">
-          <div class="dm-eyebrow dm-eyebrow-row"><span>GOALS</span><span id="dm-count"></span></div>
-          <div class="dm-search">Search goals, notes, TODOs</div>
-          <div id="dm-goals" class="dm-goal-list"></div>
-          <form id="dm-goal-form" class="dm-add-row">
-            <input id="dm-goal-input" class="dm-add" type="text" placeholder="+ Add goal" autocomplete="off">
-          </form>
+      <!-- Act two: the project those answers turned into. -->
+      <div id="dm-stage-app" class="dm-stage hidden">
+        <div class="dm-chrome">
+          <span class="dm-chrome-name">Engelbart</span>
+          <span class="dm-chrome-sep">/</span>
+          <span class="dm-chrome-repo">nuclear-sim &#9662;</span>
+          <span class="dm-spacer"></span>
+          <span class="dm-chrome-saved">saved &#10003;</span>
         </div>
 
-        <div class="dm-col-detail">
-          <div class="dm-detail-head">
-            <div id="dm-goal-title" class="dm-goal-title"></div>
-            <span id="dm-chip" class="dm-chip"></span>
-          </div>
-
-          <div class="dm-sources">
-            <span class="dm-eyebrow">SOURCES</span>
-            <span class="dm-source"><span class="dm-source-key">REPO:</span> nuclear-sim</span>
-            <span id="dm-sources"></span>
-            <button id="dm-add-source" class="dm-source-add" type="button">+ Add source</button>
-          </div>
-
-          <div class="dm-field">
-            <div class="dm-eyebrow">NOTES</div>
-            <textarea id="dm-notes" class="dm-notes" spellcheck="false" placeholder="Write in markdown &mdash; # heading, - list, - [ ] task"></textarea>
-          </div>
-
-          <div class="dm-field">
-            <div class="dm-prompt-bar">
-              <span class="dm-eyebrow">RELATED PROMPTS</span>
-              <button id="dm-add-prompt" class="dm-source-add dm-solid" type="button">+ add a prompt</button>
-            </div>
-            <div id="dm-prompts"></div>
-          </div>
+        <div class="dm-tabbar">
+          <span class="dm-crumb">Overview</span>
+          <span class="dm-crumb on">Goals</span>
+          <span class="dm-spacer"></span>
+          <div id="dm-filters" class="dm-filters"></div>
         </div>
 
-        <div class="dm-rail">
-          <div id="dm-rail-head" class="dm-detail-head dm-rail-head">
-            <div id="dm-rail-title" class="dm-goal-title dm-rail-title"></div>
-            <span id="dm-rail-chip" class="dm-chip"></span>
-          </div>
-          <div class="dm-rail-tabs">
-            <button class="dm-rail-tab on" type="button" data-rail="todos">TODOs</button>
-            <button class="dm-rail-tab" type="button" data-rail="understanding">Understanding</button>
-            <span class="dm-spacer"></span>
-            <span id="dm-progress" class="dm-progress"></span>
-          </div>
-
-          <div id="dm-todos-view">
-            <div id="dm-todos" class="dm-todo-list"></div>
-            <form id="dm-todo-form" class="dm-add-row">
-              <input id="dm-todo-input" class="dm-add dm-add-todo" type="text" placeholder="+ add a TODO" autocomplete="off">
+        <div class="dm-body">
+          <div class="dm-col-goals">
+            <div class="dm-eyebrow dm-eyebrow-row"><span>GOALS</span><span id="dm-count"></span></div>
+            <div class="dm-search">Search goals, notes, TODOs</div>
+            <div id="dm-goals" class="dm-goal-list"></div>
+            <form id="dm-goal-form" class="dm-add-row">
+              <input id="dm-goal-input" class="dm-add" type="text" placeholder="+ Add goal" autocomplete="off">
             </form>
+          </div>
 
-            <div id="dm-agents" class="dm-agents"></div>
+          <div class="dm-col-detail">
+            <div class="dm-detail-head">
+              <div id="dm-goal-title" class="dm-goal-title"></div>
+              <span id="dm-chip" class="dm-chip"></span>
+            </div>
 
-            <div class="dm-run-foot">
-              <span>send to local claude code</span>
-              <button id="dm-copy-note" class="dm-copy" type="button">copy</button>
+            <div class="dm-sources">
+              <span class="dm-eyebrow">SOURCES</span>
+              <span class="dm-source"><span class="dm-source-key">REPO:</span> nuclear-sim</span>
+              <span id="dm-sources"></span>
+              <button id="dm-add-source" class="dm-source-add" type="button">+ Add source</button>
+            </div>
+
+            <div class="dm-field">
+              <div class="dm-eyebrow">NOTES</div>
+              <textarea id="dm-notes" class="dm-notes" spellcheck="false" placeholder="Write in markdown &mdash; # heading, - list, - [ ] task"></textarea>
+            </div>
+
+            <div class="dm-field">
+              <div class="dm-prompt-bar">
+                <span class="dm-eyebrow">RELATED PROMPTS</span>
+                <button id="dm-add-prompt" class="dm-source-add dm-solid" type="button">+ add a prompt</button>
+              </div>
+              <div id="dm-prompts"></div>
             </div>
           </div>
 
-          <div id="dm-understanding-view" class="dm-understanding hidden"></div>
+          <div class="dm-rail">
+            <div id="dm-rail-head" class="dm-detail-head dm-rail-head">
+              <div id="dm-rail-title" class="dm-goal-title dm-rail-title"></div>
+              <span id="dm-rail-chip" class="dm-chip"></span>
+            </div>
+            <div class="dm-rail-tabs">
+              <button class="dm-rail-tab on" type="button" data-rail="todos">TODOs</button>
+              <button class="dm-rail-tab" type="button" data-rail="understanding">Understanding</button>
+              <span class="dm-spacer"></span>
+              <span id="dm-progress" class="dm-progress"></span>
+            </div>
+
+            <div id="dm-todos-view">
+              <div id="dm-todos" class="dm-todo-list"></div>
+              <form id="dm-todo-form" class="dm-add-row">
+                <input id="dm-todo-input" class="dm-add dm-add-todo" type="text" placeholder="+ add a TODO" autocomplete="off">
+              </form>
+
+              <div id="dm-agents" class="dm-agents"></div>
+
+              <div class="dm-run-foot">
+                <span>send to local claude code</span>
+                <button id="dm-copy-note" class="dm-copy" type="button">copy</button>
+              </div>
+            </div>
+
+            <div id="dm-understanding-view" class="dm-understanding hidden"></div>
+          </div>
         </div>
       </div>
+
       <div id="dm-toast" class="dm-toast">sent to claude code &#10003;</div>
     </div>
 
