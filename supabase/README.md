@@ -23,6 +23,9 @@ where routine_name = 'engelbart_generate_invite';
 New accounts default to a lifetime `$25` ceiling within a `$1,000` allocation
 pool. Claims, account adjustments, and pool changes serialize through the same
 locked settings row, so concurrent requests cannot over-allocate the pool.
+The credit-claim transaction also locks and consumes the member's single-use
+invite before allocating a new account. Invite-only signups carry that
+entitlement forward; legacy members supply a code when they claim credits.
 LiteLLM remains the source of truth for actual spend and enforces each key;
 Supabase stores only an AES-256-GCM-encrypted copy of each virtual key. The
 provider key and LiteLLM master key must never be returned to a browser or
