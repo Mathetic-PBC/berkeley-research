@@ -59,6 +59,11 @@ function parseSession(token, options = {}) {
   return value;
 }
 
+function totpUri(secret) {
+  return `otpauth://totp/${encodeURIComponent("Mathetic:Engelbart Admin")}`
+    + `?secret=${secret}&issuer=${encodeURIComponent("Mathetic")}&digits=6&period=30`;
+}
+
 function sessionCookie(token) {
   return `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${SESSION_SECONDS}; HttpOnly; Secure; SameSite=Strict`;
 }
@@ -162,9 +167,32 @@ async function beginMfa(options = {}) {
     totp_enabled: false,
     updated_at: new Date(Number(options.now || Date.now())).toISOString(),
   }, options);
-  const uri = `otpauth://totp/${encodeURIComponent("Mathetic:Engelbart Admin")}`
-    + `?secret=${secret}&issuer=${encodeURIComponent("Mathetic")}&digits=6&period=30`;
-  return { secret, uri, expiresAt };
+  return { secret, uri: totpUri(secret), expiresAt };
+}
+
+async function addAuthenticator(password, code, options = {}) {
+  const config = await readAdminConfig(options);
+  if (!verifyPassword(password, config.password_hash)) {
+    const error = new Error("Admin password is incorrect");
+    error.statusCode = 401;
+    throw error;
+  }
+  if (!config.totp_enabled) {
+    const error = new Error("Enable two-factor authentication first");
+    error.statusCode = 409;
+    throw error;
+  }
+  const secret = decryptSecret({
+    ciphertext: config.totp_secret_ciphertext,
+    iv: config.totp_secret_iv,
+    tag: config.totp_secret_tag,
+  }, options.env);
+  if (!verifyTotp(secret, code, options.now)) {
+    const error = new Error("Authenticator code is incorrect");
+    error.statusCode = 401;
+    throw error;
+  }
+  return { secret, uri: totpUri(secret) };
 }
 
 async function verifyMfa(code, options = {}) {
@@ -265,6 +293,7 @@ async function disableMfa(password, code, options = {}) {
 module.exports = {
   COOKIE_NAME,
   SESSION_SECONDS,
+  addAuthenticator,
   beginMfa,
   clearCookie,
   createSession,

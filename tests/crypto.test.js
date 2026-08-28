@@ -13,7 +13,7 @@ const {
   verifyPassword,
   verifyTotp,
 } = require("../api/_lib/crypto");
-const { beginMfa, createSession, parseSession } = require("../api/_lib/admin-auth");
+const { addAuthenticator, beginMfa, createSession, parseSession } = require("../api/_lib/admin-auth");
 
 const ENV = {
   ENGELBART_CREDENTIAL_KEY: Buffer.alloc(32, 7).toString("base64url"),
@@ -83,4 +83,35 @@ test("enabled MFA cannot be overwritten by beginning a new enrollment", async ()
     },
   }), /already enabled/);
   assert.equal(calls, 1);
+});
+
+test("another authenticator can reuse the enabled TOTP seed only after both factors", async () => {
+  const now = Date.UTC(2026, 7, 26, 12, 0, 0);
+  const password = "a sufficiently long admin password";
+  const secret = newTotpSecret();
+  const encrypted = encryptSecret(secret, ENV);
+  const config = {
+    password_hash: hashPassword(password),
+    totp_enabled: true,
+    totp_secret_ciphertext: encrypted.ciphertext,
+    totp_secret_iv: encrypted.iv,
+    totp_secret_tag: encrypted.tag,
+  };
+  let calls = 0;
+  const options = {
+    env: ENV,
+    now,
+    async fetchImpl() {
+      calls += 1;
+      return { ok: true, status: 200, async text() { return JSON.stringify([config]); } };
+    },
+  };
+
+  await assert.rejects(addAuthenticator("incorrect password", totpCode(secret, now), options), /password is incorrect/);
+  await assert.rejects(addAuthenticator(password, "invalid", options), /code is incorrect/);
+  const enrollment = await addAuthenticator(password, totpCode(secret, now), options);
+
+  assert.equal(enrollment.secret, secret);
+  assert.match(enrollment.uri, new RegExp(`secret=${secret}`));
+  assert.equal(calls, 3);
 });

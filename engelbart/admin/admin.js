@@ -41,6 +41,14 @@
     byId("recovery-result").classList.toggle("hidden", !values.length);
     updateRecoverySummary(values.length);
   }
+  function closeAdditionalAuthenticator() {
+    byId("mfa-add-app-form").reset();
+    byId("mfa-add-app-form").classList.add("hidden");
+    byId("mfa-add-app-result").classList.add("hidden");
+    byId("mfa-add-app-secret").textContent = "";
+    byId("mfa-add-app-uri").href = "#";
+    byId("mfa-add-app-toggle").textContent = "Add another authenticator app";
+  }
 
   function renderPolicy() {
     var settings = state.settings;
@@ -178,6 +186,7 @@
     byId("admin-dashboard").classList.remove("hidden");
     byId("admin-logout").classList.remove("hidden");
     byId("mfa-begin").classList.toggle("hidden", enabled);
+    byId("mfa-add-app").classList.toggle("hidden", !enabled);
     byId("mfa-disable-form").classList.toggle("hidden", !enabled);
     byId("recovery-management").classList.toggle("hidden", !enabled);
     updateRecoverySummary(session.recoveryCodesRemaining);
@@ -302,6 +311,7 @@
       });
       byId("mfa-enrollment").classList.add("hidden");
       byId("mfa-begin").classList.add("hidden");
+      byId("mfa-add-app").classList.remove("hidden");
       byId("mfa-disable-form").classList.remove("hidden");
       byId("recovery-management").classList.remove("hidden");
       byId("mfa-description").textContent = "Two-factor authentication is required for every new admin session.";
@@ -330,6 +340,37 @@
     } catch (error) { setStatus("mfa-status", error.message, "error"); }
     setBusy(form, false);
   });
+  byId("mfa-add-app-toggle").addEventListener("click", function () {
+    var form = byId("mfa-add-app-form");
+    var result = byId("mfa-add-app-result");
+    if (!form.classList.contains("hidden") || !result.classList.contains("hidden")) {
+      closeAdditionalAuthenticator();
+      return;
+    }
+    form.classList.remove("hidden");
+    byId("mfa-add-app-toggle").textContent = "Cancel authenticator setup";
+    byId("mfa-add-app-password").focus();
+  });
+  byId("mfa-add-app-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var form = event.currentTarget;
+    var data = new FormData(form);
+    setBusy(form, true);
+    try {
+      var result = await api("/api/engelbart-admin-mfa", {
+        method: "POST",
+        body: body({ action: "addAuthenticator", password: data.get("password"), code: data.get("code") }),
+      });
+      form.reset();
+      form.classList.add("hidden");
+      byId("mfa-add-app-secret").textContent = result.value.secret;
+      byId("mfa-add-app-uri").href = result.value.uri;
+      byId("mfa-add-app-result").classList.remove("hidden");
+      byId("mfa-add-app-toggle").textContent = "Hide authenticator setup";
+      setStatus("mfa-status", "Authenticator setup unlocked. Add the secret to the additional app.", "success");
+    } catch (error) { setStatus("mfa-status", error.message, "error"); }
+    setBusy(form, false);
+  });
   byId("copy-recovery-codes").addEventListener("click", async function () {
     try {
       await navigator.clipboard.writeText(byId("recovery-codes").textContent);
@@ -348,6 +389,8 @@
         body: body({ action: "disable", password: data.get("password"), code: data.get("code") }),
       });
       form.reset();
+      closeAdditionalAuthenticator();
+      byId("mfa-add-app").classList.add("hidden");
       byId("mfa-disable-form").classList.add("hidden");
       byId("mfa-begin").classList.remove("hidden");
       byId("recovery-management").classList.add("hidden");

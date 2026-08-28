@@ -25,6 +25,10 @@ async function handler(req, res) {
       res.setHeader("Set-Cookie", Admin.sessionCookie(result.token));
       return sendJson(res, 200, { enabled: true, recoveryCodes: result.recoveryCodes });
     }
+    if (body.action === "addAuthenticator") {
+      const enrollment = await Admin.addAuthenticator(body.password, body.code);
+      return sendJson(res, 200, enrollment);
+    }
     if (body.action === "regenerateRecoveryCodes") {
       const result = await Admin.regenerateRecoveryCodes(body.password, body.code);
       res.setHeader("Set-Cookie", Admin.sessionCookie(result.token));

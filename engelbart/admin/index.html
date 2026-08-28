@@ -142,6 +142,28 @@
               <button class="button" type="submit">Verify and require 2FA</button>
             </form>
           </div>
+          <div id="mfa-add-app" class="stack hidden">
+            <button id="mfa-add-app-toggle" class="button secondary" type="button">Add another authenticator app</button>
+            <form id="mfa-add-app-form" class="stack hidden">
+              <p class="fine-print">Re-enter both factors before the existing authenticator secret is shown.</p>
+              <div class="field-grid">
+                <div class="field">
+                  <label for="mfa-add-app-password">Admin password</label>
+                  <input id="mfa-add-app-password" name="password" type="password" autocomplete="current-password" required>
+                </div>
+                <div class="field">
+                  <label for="mfa-add-app-code">Current authenticator code</label>
+                  <input id="mfa-add-app-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+                </div>
+              </div>
+              <button class="button" type="submit">Unlock authenticator setup</button>
+            </form>
+            <div id="mfa-add-app-result" class="stack hidden">
+              <p class="fine-print">Add this secret to the additional app. Both apps will generate the same codes and cannot be revoked separately.</p>
+              <code id="mfa-add-app-secret" class="code"></code>
+              <a id="mfa-add-app-uri" class="fine-print" href="#">Open in authenticator app</a>
+            </div>
+          </div>
           <div id="recovery-management" class="stack hidden">
             <p id="recovery-summary" class="fine-print"></p>
             <form id="recovery-regenerate-form" class="stack">

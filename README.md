@@ -57,7 +57,9 @@ Production and preview deployments require:
 
 The bootstrap admin code exists in the migration only as a salted scrypt
 digest. Reset it from `/engelbart/admin` after the first login, then enroll
-TOTP. Enrollment produces eight one-time recovery codes; only their SHA-256
+TOTP. After re-entering the password and a live TOTP code, the same encrypted
+seed can be added to another authenticator app; those apps produce identical
+codes and cannot be revoked independently. Enrollment produces eight one-time recovery codes; only their SHA-256
 digests are stored, and redemption is serialized in Postgres. A password reset,
 MFA enrollment, recovery-code replacement, or recovery-code use increments the
 session generation and revokes every older admin cookie.
@@ -68,13 +70,14 @@ healthy LiteLLM proxy, and add all server secrets before enabling
 
 ## Source of truth
 
-Compiled by hand from the Claude Design project *Mathetic landing page design*:
+The static pages began as hand-flattened exports from the Claude Design project *Mathetic landing page design*:
 
 - `index.html` ← `Mathetic Landing.dc.html`
-- `engelbart/index.html` + `engelbart/demo.js` ← `Mathetic Demo.dc.html`
+- `engelbart/index.html` + `engelbart/styles.css` ← `Mathetic Demo.dc.html`
+- `engelbart/demo.js` ← the ten-scene `engelbart-demo.jsx` product walkthrough, ported to native DOM animation
 
 The design-canvas runtime (`support.js`, `image-slot.js`, React/Babel from unpkg) is not shipped; the
-`<x-dc>` template, `style-hover`, and `DCLogic` component were flattened into plain HTML/CSS/JS.
+`<x-dc>` template, `style-hover` rules, and composition were flattened into plain HTML/CSS/JS.
 To update copy or layout, edit those files directly (or re-export from the design and re-flatten).
 
 Shipping the runtime instead was rejected on the Engelbart CSP: `support.js` compiles the
