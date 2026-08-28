@@ -73,5 +73,17 @@
       "source": "/engelbart/admin",
       "destination": "/engelbart/admin/index.html"
     }
+  ],
+  "redirects": [
+    {
+      "source": "/engelbart/install.sh",
+      "destination": "https://github.com/divadbaroon/claude-plugins/releases/latest/download/install.sh",
+      "permanent": false
+    },
+    {
+      "source": "/engelbart/install",
+      "destination": "https://github.com/divadbaroon/claude-plugins/releases/latest/download/install.sh",
+      "permanent": false
+    }
   ]
 }
