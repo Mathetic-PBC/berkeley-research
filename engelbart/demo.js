@@ -3,6 +3,8 @@
 
   var copyButton = document.getElementById("copy-cmd");
   var copyIcon = document.getElementById("copy-cmd-icon");
+  var commandText = document.getElementById("install-command");
+  var installTabs = document.querySelectorAll(".dm-install-tab[data-install-mode]");
   var stage = document.getElementById("demo");
   var canvas = document.getElementById("demo-canvas");
   var toggle = document.getElementById("demo-toggle");
@@ -22,13 +24,46 @@
     document.body.removeChild(field);
   }
 
-  if (copyButton && copyIcon) {
+  if (copyButton && copyIcon && commandText) {
+    var commands = {
+      standard: "curl -fsSL https://berkeley.mathetic.com/engelbart/install.sh | sh",
+      developer: "npx engelbart-cli"
+    };
+    var installMode = "standard";
     var copyTimer = null;
-    copyButton.addEventListener("click", function () {
-      copyText("npx engelbart-cli");
+
+    function flashCopied() {
       clearTimeout(copyTimer);
       copyIcon.classList.add("copied");
       copyTimer = setTimeout(function () { copyIcon.classList.remove("copied"); }, 1600);
+    }
+
+    function copyCommand(command) {
+      copyText(command);
+      flashCopied();
+    }
+
+    function selectInstallMode(next, copyDestination) {
+      if (!commands[next]) return;
+      installMode = next;
+      commandText.textContent = commands[next];
+      Array.prototype.forEach.call(installTabs, function (tab) {
+        var selected = tab.getAttribute("data-install-mode") === next;
+        tab.classList.toggle("is-on", selected);
+        tab.setAttribute("aria-pressed", selected ? "true" : "false");
+      });
+      if (copyDestination) copyCommand(commands[next]);
+    }
+
+    copyButton.addEventListener("click", function () {
+      copyCommand(commands[installMode]);
+    });
+
+    Array.prototype.forEach.call(installTabs, function (tab) {
+      if (!tab.classList.contains("dm-install-tab")) return;
+      tab.addEventListener("click", function () {
+        selectInstallMode(tab.getAttribute("data-install-mode"), true);
+      });
     });
   }
 

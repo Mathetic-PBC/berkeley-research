@@ -471,32 +471,60 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 600; }
   line-height: 1.4;
 }
 
-.dm-cmd {
-  display: inline-flex;
-  align-items: center;
-  gap: 16px;
+.dm-install {
+  width: 100%;
   max-width: 100%;
   margin-top: 18px;
-  padding: 18px 28px;
+  overflow: hidden;
   border: 1px solid var(--ink);
   border-radius: 11px;
   background: var(--field);
   box-shadow: 6px 6px 0 #ebe8dd;
+}
+
+.dm-cmd {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 18px 28px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--field);
   color: var(--ink);
   font-family: var(--mono);
   font-size: clamp(20px, 2.25vw, 29px);
   line-height: 1.25;
-  white-space: nowrap;
+  text-align: left;
   cursor: pointer;
-  transition: border-color .2s, box-shadow .2s, transform .2s;
+  transition: background .2s;
 }
 
-.dm-cmd:hover { border-color: var(--accent); color: var(--ink); }
-.dm-cmd:active { box-shadow: 3px 3px 0 #ebe8dd; transform: translate(3px, 3px); }
+.dm-cmd:hover { background: var(--wash); color: var(--ink); }
 .dm-cmd-prompt { color: var(--hint); }
+.dm-cmd-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; white-space: nowrap; }
 
 .dm-cmd svg { width: 22px; height: 22px; flex: 0 0 auto; color: var(--hint); transition: color .2s; }
 .dm-cmd svg.copied { color: #4a7c4e; }
+
+.dm-install-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dm-install-tab {
+  padding: 13px 18px;
+  border: 0;
+  background: var(--field);
+  color: var(--hint);
+  font-family: var(--mono);
+  font-size: 15px;
+  letter-spacing: .08em;
+  cursor: pointer;
+  transition: background .2s, color .2s;
+}
+.dm-install-tab + .dm-install-tab { border-left: 1px solid var(--line); }
+.dm-install-tab:hover { color: var(--ink); }
+.dm-install-tab.is-on { background: var(--wash); color: var(--ink); }
 
 .dm-demo {
   position: relative;
@@ -1093,8 +1121,11 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 600; }
   .landing { padding: 44px 24px 70px; gap: 34px; }
   .landing-bar { width: min(100% - 32px, 1280px); }
   .dm-panel { box-shadow: 5px 5px 0 #efede4; }
-  .dm-cmd { gap: 11px; margin-top: 12px; padding: 15px 18px; font-size: clamp(16px, 5vw, 21px); }
+  .dm-install { margin-top: 12px; }
+  .dm-cmd { gap: 11px; padding: 15px 18px; font-size: clamp(16px, 5vw, 21px); }
+  .dm-cmd-text { white-space: normal; }
   .dm-cmd svg { width: 18px; height: 18px; }
+  .dm-install-tab { padding: 11px 12px; font-size: 13px; }
 }
 
 /* The key, the meter, and the one command a student has to run. */

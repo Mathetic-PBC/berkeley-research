@@ -23,11 +23,17 @@
     <header class="dm-hero">
       <h1 class="dm-title">Engelbart</h1>
       <p class="dm-tagline">Keep your goals, plans, and problems in context while building.</p>
-      <button id="copy-cmd" class="dm-cmd" type="button" title="Copy install command">
-        <span class="dm-cmd-prompt" aria-hidden="true">$</span>
-        <span>npx engelbart-cli</span>
-        <svg id="copy-cmd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="12" height="12" rx="1.5"></rect><path d="M9 6.5 V4.5 A1.5 1.5 0 0 1 10.5 3 H19.5 A1.5 1.5 0 0 1 21 4.5 V13.5 A1.5 1.5 0 0 1 19.5 15 H17.5"></path></svg>
-      </button>
+      <div class="dm-install">
+        <button id="copy-cmd" class="dm-cmd" type="button" title="Copy install command">
+          <span class="dm-cmd-prompt" aria-hidden="true">$</span>
+          <span id="install-command" class="dm-cmd-text">curl -fsSL https://berkeley.mathetic.com/engelbart/install.sh | sh</span>
+          <svg id="copy-cmd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="12" height="12" rx="1.5"></rect><path d="M9 6.5 V4.5 A1.5 1.5 0 0 1 10.5 3 H19.5 A1.5 1.5 0 0 1 21 4.5 V13.5 A1.5 1.5 0 0 1 19.5 15 H17.5"></path></svg>
+        </button>
+        <div class="dm-install-tabs" role="group" aria-label="Install method">
+          <button class="dm-install-tab is-on" type="button" data-install-mode="standard" aria-pressed="true">Standard</button>
+          <button class="dm-install-tab" type="button" data-install-mode="developer" aria-pressed="false">Developer</button>
+        </div>
+      </div>
     </header>
 
     <div id="demo" class="dm-demo">
