@@ -125,7 +125,7 @@ test("a pairing reroute lands a signed-out visitor on the signup view", async ()
 
   assert.equal(
     page.elements.get("page-def").textContent,
-    "Your invite code reserves one account, and one Claude credit.",
+    "Create an account; your invite code unlocks its Claude credit.",
   );
 });
 
