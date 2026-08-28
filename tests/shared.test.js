@@ -22,3 +22,14 @@ test("maps expected auth failures without echoing arbitrary backend details", ()
   );
   assert.equal(shared.safeMessage({ message: "database exploded" }, "Could not sign in."), "Could not sign in.");
 });
+
+test("keeps recoverable signup failures actionable without exposing backend details", () => {
+  assert.equal(
+    shared.safeMessage({ message: "Email rate limit exceeded" }, "Could not create the account."),
+    "Confirmation email limit reached. Your invite is still reserved; try again later."
+  );
+  assert.equal(
+    shared.safeMessage({ message: "Database error saving new user" }, "Could not create the account."),
+    "Account setup failed. Your invite is still reserved; try again."
+  );
+});

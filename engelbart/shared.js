@@ -44,6 +44,15 @@
     if (/invalid login credentials/i.test(message)) return "Email or password is incorrect.";
     if (/email not confirmed/i.test(message)) return "Confirm your email before signing in.";
     if (/user already registered/i.test(message)) return "That email already has an account. Sign in instead.";
+    if (/email rate limit|over_email_send_rate_limit/i.test(message)) {
+      return "Confirmation email limit reached. Your invite is still reserved; try again later.";
+    }
+    if (/error sending confirmation email/i.test(message)) {
+      return "Confirmation email could not be sent. Your invite is still reserved; try again.";
+    }
+    if (/database error (saving|creating) new user/i.test(message)) {
+      return "Account setup failed. Your invite is still reserved; try again.";
+    }
     if (/engelbart invite/i.test(message)) return message;
     return fallback;
   }
