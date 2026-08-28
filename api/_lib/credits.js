@@ -181,6 +181,30 @@ async function credentialsFor(user, options = {}) {
   };
 }
 
+// The meter polls this every few seconds while a member works, so unlike
+// credentialsFor it never provisions and never returns the key: the account
+// either has an active credit to report on or the poll has nothing to say.
+async function balanceFor(user, options = {}) {
+  let row = await selectOne(
+    "engelbart_credit_accounts",
+    `user_id=eq.${encodeURIComponent(user.id)}&select=*`,
+    options,
+  );
+  if (!row || row.status !== "ready" || row.blocked) {
+    const error = new Error(row && row.blocked
+      ? "This Engelbart credit key is paused" : "Credits are not ready");
+    error.statusCode = 409;
+    throw error;
+  }
+  try {
+    row = await refreshSpend(row, options);
+  } catch (error) { /* keep the stored figure */ }
+  return {
+    budgetUsd: Number(row.budget_usd),
+    spendUsd: Number(row.spend_usd),
+  };
+}
+
 async function updateDefaults(input, options = {}) {
   const values = {
     pool_budget_usd: positiveMoney(input.poolBudgetUsd, "Pool budget"),
@@ -362,6 +386,7 @@ module.exports = {
   ALL_PROXY_MODELS,
   adminState,
   allocatedBudget,
+  balanceFor,
   blockAccount,
   claimAccount,
   credentialsFor,

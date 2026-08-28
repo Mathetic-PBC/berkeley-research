@@ -185,6 +185,48 @@
     el.keyBlock.classList.remove("hidden");
   }
 
+  // The meter stays live only while this account is running on an Engelbart
+  // credit: polling starts when our key has been minted and shown, and stops
+  // the moment the account is paused or signed out. A member on their own
+  // Anthropic key never gets credentials here, so they are never polled.
+  var BALANCE_POLL_MS = 15000;
+  var balanceTimer = null;
+
+  async function refreshBalance() {
+    if (!credentials || !currentSession || document.hidden) return;
+    try {
+      var response = await fetch("/api/engelbart-credentials?balance=1", {
+        headers: {
+          Accept: "application/json",
+          Authorization: "Bearer " + currentSession.access_token,
+        },
+      });
+      // 409 means paused or no longer ready; 401/403 means this session no
+      // longer speaks for the account. Either way the meter has nothing left
+      // to watch. Any other failure is transient: keep the last figure.
+      if ([401, 403, 409].indexOf(response.status) !== -1) return stopBalancePolling();
+      if (!response.ok) return;
+      var value = await response.json();
+      credentials.budgetUsd = value.budgetUsd;
+      credentials.spendUsd = value.spendUsd;
+      renderCredentials();
+    } catch (_error) { /* transient - keep the last figure */ }
+  }
+
+  function startBalancePolling() {
+    stopBalancePolling();
+    balanceTimer = setInterval(refreshBalance, BALANCE_POLL_MS);
+  }
+
+  function stopBalancePolling() {
+    if (balanceTimer) clearInterval(balanceTimer);
+    balanceTimer = null;
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refreshBalance();
+  });
+
   async function resolvePairing(approve) {
     if (!currentSession || !pendingCode) return;
     var code = pendingCode;
@@ -246,9 +288,11 @@
       if (!read.ok) throw new Error(value.error || "Could not read your key");
       credentials = value;
       renderCredentials();
+      startBalancePolling();
     } catch (error) {
       provisionedUser = "";
       credentials = null;
+      stopBalancePolling();
       el.keyBlock.classList.add("hidden");
       el.creditMeter.classList.add("hidden");
       setStatus(el.creditStatus, error.message || "Claude credit allocation is unavailable.", "error");
@@ -383,6 +427,7 @@
     await client.auth.signOut();
     pairingResolved = false;
     credentials = null;
+    stopBalancePolling();
     keyVisible = false;
     provisionedUser = "";
     el.keyBlock.classList.add("hidden");

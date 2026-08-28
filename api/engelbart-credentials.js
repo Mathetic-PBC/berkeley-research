@@ -16,6 +16,8 @@ async function handler(req, res) {
         models: row.models,
       });
     }
+    const wantsBalance = new URL(req.url, "http://localhost").searchParams.has("balance");
+    if (wantsBalance) return sendJson(res, 200, await Credits.balanceFor(user));
     return sendJson(res, 200, await Credits.credentialsFor(user));
   } catch (error) {
     const failure = publicError(error);
