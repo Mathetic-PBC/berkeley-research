@@ -40,7 +40,7 @@ async function flush() {
   }
 }
 
-function pairingPage() {
+function pairingPage(options = {}) {
   const elements = new Map();
   const requests = [];
   const document = {
@@ -54,14 +54,14 @@ function pairingPage() {
       return elements.get(id);
     },
   };
-  const session = {
+  const session = options.signedIn === false ? null : {
     access_token: "browser-jwt",
     user: { id: "member-id", email: "member@example.com" },
   };
   const window = {
     EngelbartShared: shared,
     history: { replaceState() {} },
-    location: { hash: "", pathname: "/engelbart/signin", search: "?code=ABCD-EFGH" },
+    location: { hash: "", pathname: "/engelbart/signin", search: options.search || "?code=ABCD-EFGH" },
     supabase: {
       createClient() {
         return {
@@ -117,4 +117,24 @@ test("the server, not a second browser regex, decides whether a credit invite is
   assert.ok(creditRequest, "the invite must reach the authoritative server check");
   assert.deepEqual(JSON.parse(creditRequest.init.body), { inviteCode: "EGB-NOTH-EX" });
   assert.ok(page.requests.some((request) => request.url === "/api/engelbart-device"));
+});
+
+test("a pairing reroute lands a signed-out visitor on the signup view", async () => {
+  const page = pairingPage({ signedIn: false });
+  await flush();
+
+  assert.equal(
+    page.elements.get("page-def").textContent,
+    "Your invite code reserves one account, and one Claude credit.",
+  );
+});
+
+test("an explicit mode=login beats the pairing code's signup default", async () => {
+  const page = pairingPage({ signedIn: false, search: "?code=ABCD-EFGH&mode=login" });
+  await flush();
+
+  assert.equal(
+    page.elements.get("page-def").textContent,
+    "Sign in to connect Engelbart.",
+  );
 });

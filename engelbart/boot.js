@@ -10,7 +10,10 @@
 
   var params = new URLSearchParams(window.location.search);
   var asked = params.get("mode") || window.location.hash.replace("#", "");
-  if (asked === "signup") root.setAttribute("data-auth-mode", "signup");
+  // A pairing reroute (?code=...) opens on signup too — mirror app.js initialMode.
+  if (asked === "signup" || (asked !== "login" && params.get("code"))) {
+    root.setAttribute("data-auth-mode", "signup");
+  }
 
   // Supabase persists its session under sb-<project-ref>-auth-token. Its mere
   // presence is not proof the session is valid, so this only suppresses the

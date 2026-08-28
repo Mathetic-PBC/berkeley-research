@@ -483,10 +483,14 @@
   });
 
   // "Create account" on the landing page, and `bart auth --signup`, deep-link here.
+  // A pairing reroute (?code=...) mostly reaches people who have no account yet,
+  // so it opens on signup too; the tabs still offer sign-in, and ?mode=login wins.
   function initialMode() {
     var params = new URLSearchParams(window.location.search);
     var asked = params.get("mode") || window.location.hash.replace("#", "");
-    return asked === "signup" ? "signup" : "login";
+    if (asked === "signup") return "signup";
+    if (asked !== "login" && pendingCode) return "signup";
+    return "login";
   }
 
   async function boot() {
