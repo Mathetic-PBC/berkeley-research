@@ -160,3 +160,70 @@ test("a revoked or unknown CLI token is rejected, not treated as anonymous", asy
     (error) => error.statusCode === 401,
   );
 });
+
+// --- web-first setup codes ---------------------------------------------------
+
+test("setup codes are longer than approval codes and share the safe alphabet", () => {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const code = CliAuth.newSetupCode();
+    assert.match(code, /^[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}$/);
+    assert.equal(CliAuth.isPlausibleSetupCode(code), true);
+  }
+  // An approval code pasted into a --code flag reads as implausible: the
+  // redeem path never accepts the device flow's shorter shape.
+  assert.equal(CliAuth.isPlausibleSetupCode("WXYZ-1234"), false);
+  assert.equal(CliAuth.normalizeSetupCode("abcd 2345 wxyz"), "ABCD-2345-WXYZ");
+});
+
+test("issuing a setup code stores only its digest with the member's id", async () => {
+  const calls = [];
+  const result = await CliAuth.issueSetupCode({ id: "user-uuid" }, {
+    env: SUPABASE_ENV,
+    fetchImpl: respondWith("2026-08-29T13:00:00Z", calls),
+  });
+  assert.match(calls[0].url, /rpc\/engelbart_issue_setup_code$/);
+  assert.equal(calls[0].body.p_user_id, "user-uuid");
+  assert.equal(Object.values(calls[0].body).includes(result.code), false);
+  assert.equal(calls[0].body.p_code_hash, CliAuth.hashSecret(result.code));
+  assert.equal(result.expiresInSeconds, CliAuth.SETUP_CODE_TTL_SECONDS);
+});
+
+test("redeeming a setup code mints a token and sends only digests", async () => {
+  const calls = [];
+  const result = await CliAuth.redeemSetupCode("abcd-2345-wxyz", "laptop.local", {
+    env: SUPABASE_ENV,
+    fetchImpl: respondWith({ status: "ready", email: "member@example.com" }, calls),
+  });
+  assert.match(calls[0].url, /rpc\/engelbart_redeem_setup_code$/);
+  assert.equal(calls[0].body.p_code_hash, CliAuth.hashSecret("ABCD-2345-WXYZ"));
+  assert.equal(calls[0].body.p_label, "laptop.local");
+  assert.ok(result.token.startsWith(CliAuth.TOKEN_PREFIX));
+  assert.equal(Object.values(calls[0].body).includes(result.token), false);
+  assert.equal(calls[0].body.p_token_hash, CliAuth.hashSecret(result.token));
+  assert.equal(result.email, "member@example.com");
+});
+
+test("a spent, foreign, or malformed setup code is refused with its own status", async () => {
+  await assert.rejects(
+    CliAuth.redeemSetupCode("ABCD-2345-WXYZ", "", {
+      env: SUPABASE_ENV, fetchImpl: respondWith({ status: "used" }),
+    }),
+    (error) => error.statusCode === 409 && /already used/.test(error.message),
+  );
+  await assert.rejects(
+    CliAuth.redeemSetupCode("ABCD-2345-WXYZ", "", {
+      env: SUPABASE_ENV, fetchImpl: respondWith({ status: "denied" }),
+    }),
+    (error) => error.statusCode === 403,
+  );
+  await assert.rejects(
+    CliAuth.redeemSetupCode("ABCD-2345-WXYZ", "", {
+      env: SUPABASE_ENV, fetchImpl: respondWith({ status: "invalid" }),
+    }),
+    (error) => error.statusCode === 404 && /expired or unknown/.test(error.message),
+  );
+  await assert.rejects(
+    CliAuth.redeemSetupCode("nope", "", { env: SUPABASE_ENV, fetchImpl: respondWith({}) }),
+    (error) => error.statusCode === 400,
+  );
+});

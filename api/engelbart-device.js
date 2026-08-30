@@ -35,6 +35,20 @@ async function handler(req, res) {
       return sendJson(res, 200, { ...result, email: user.email });
     }
 
+    // The web-first pair of the flow above: the browser issues a setup code
+    // (a member is on screen to ask for it -- a CLI token is refused here for
+    // the same reason it is refused on approve), and the installer redeems
+    // it for a token with no second browser trip. The code is the only
+    // secret, which is why it is longer, short-lived, and spent on redeem.
+    if (action === "issue") {
+      const user = await verifyUser(bearerToken(req));
+      return sendJson(res, 200, await CliAuth.issueSetupCode(user));
+    }
+
+    if (action === "redeem") {
+      return sendJson(res, 200, await CliAuth.redeemSetupCode(body.code, body.label));
+    }
+
     if (action === "whoami") {
       const user = await CliAuth.verifyPrincipal(bearerToken(req));
       return sendJson(res, 200, { email: user.email });

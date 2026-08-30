@@ -13,6 +13,14 @@ const DEVICE_CODE_PREFIX = "egbd_";
 const TOKEN_PREFIX = "egb_";
 const MAX_LABEL_LENGTH = 100;
 
+// Setup codes are longer than approval codes on purpose: they are the only
+// secret (the browser that issued one holds no device code), and they are
+// pasted inside an install command rather than typed, so the extra length is
+// free. The distinct 12-char shape also means one pasted into the approval
+// box is rejected instead of half-matching.
+const SETUP_CODE_LENGTH = 12;
+const SETUP_CODE_TTL_SECONDS = 15 * 60;
+
 function hashSecret(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest("base64url");
 }
@@ -40,6 +48,25 @@ function normalizeUserCode(value) {
 
 function isPlausibleUserCode(value) {
   return /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalizeUserCode(value));
+}
+
+function newSetupCode(randomInt = crypto.randomInt) {
+  let code = "";
+  for (let index = 0; index < SETUP_CODE_LENGTH; index += 1) {
+    code += USER_CODE_ALPHABET[randomInt(USER_CODE_ALPHABET.length)];
+  }
+  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8)}`;
+}
+
+function normalizeSetupCode(value) {
+  const compact = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, SETUP_CODE_LENGTH);
+  if (compact.length <= 4) return compact;
+  if (compact.length <= 8) return `${compact.slice(0, 4)}-${compact.slice(4)}`;
+  return `${compact.slice(0, 4)}-${compact.slice(4, 8)}-${compact.slice(8)}`;
+}
+
+function isPlausibleSetupCode(value) {
+  return /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalizeSetupCode(value));
 }
 
 function cleanLabel(value) {
@@ -130,6 +157,47 @@ async function pollSession(deviceCode, options = {}) {
   return { status, intervalSeconds: POLL_INTERVAL_SECONDS };
 }
 
+// The browser half of web-first onboarding: the member who just approved a
+// setup asks for the code the install command will carry. The caller has
+// already been verified as a member.
+async function issueSetupCode(user, options = {}) {
+  const code = newSetupCode(options.randomInt);
+  await rpc("engelbart_issue_setup_code", {
+    p_user_id: user.id,
+    p_code_hash: hashSecret(code),
+    p_ttl_seconds: SETUP_CODE_TTL_SECONDS,
+  }, options);
+  return { code, expiresInSeconds: SETUP_CODE_TTL_SECONDS };
+}
+
+// The CLI half: the code is swapped for a machine token in one transaction,
+// so a replayed code reads as used rather than minting twice.
+async function redeemSetupCode(code, label, options = {}) {
+  if (!isPlausibleSetupCode(code)) {
+    const error = new Error("That setup code is not valid");
+    error.statusCode = 400;
+    throw error;
+  }
+  const token = newSecret(TOKEN_PREFIX);
+  const result = await rpc("engelbart_redeem_setup_code", {
+    p_code_hash: hashSecret(normalizeSetupCode(code)),
+    p_token_hash: hashSecret(token),
+    p_label: cleanLabel(label),
+  }, options);
+  const value = Array.isArray(result) ? result[0] : result;
+  const status = (value && value.status) || "invalid";
+  if (status === "ready") {
+    return { token, email: String(value.email || "") };
+  }
+  const error = new Error(status === "used"
+    ? "That setup code was already used"
+    : status === "denied"
+      ? "That account is not an Engelbart member"
+      : "That setup code is expired or unknown");
+  error.statusCode = status === "used" ? 409 : status === "denied" ? 403 : 404;
+  throw error;
+}
+
 async function verifyCliToken(token, options = {}) {
   const secret = requireSecret(token, TOKEN_PREFIX, "Engelbart CLI token");
   const result = await rpc("engelbart_touch_cli_token", {
@@ -163,14 +231,21 @@ module.exports = {
   DEVICE_CODE_PREFIX,
   POLL_INTERVAL_SECONDS,
   SESSION_TTL_SECONDS,
+  SETUP_CODE_LENGTH,
+  SETUP_CODE_TTL_SECONDS,
   TOKEN_PREFIX,
   USER_CODE_ALPHABET,
   cleanLabel,
   hashSecret,
+  isPlausibleSetupCode,
   isPlausibleUserCode,
+  issueSetupCode,
+  newSetupCode,
   newUserCode,
+  normalizeSetupCode,
   normalizeUserCode,
   pollSession,
+  redeemSetupCode,
   requireSecret,
   resolveSession,
   revokeToken,
