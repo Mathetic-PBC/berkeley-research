@@ -8,69 +8,11 @@
   <meta name="robots" content="noindex, nofollow">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/engelbart/styles.css">
-  <script src="/engelbart/boot.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/engelbart/setup/setup.css">
 </head>
-<body class="centered">
-  <nav class="landing-bar" aria-label="Primary">
-    <a class="wordmark" href="/engelbart">Engelbart</a>
-    <div id="nav-session" class="nav-actions hidden">
-      <span class="session-line"><span class="dot" aria-hidden="true"></span><span id="session-email"></span></span>
-      <button id="sign-out" class="pill" type="button">Sign out</button>
-    </div>
-  </nav>
-
-  <main class="shell">
-    <header class="masthead">
-      <h1>Set up your first project</h1>
-      <p class="def" id="page-def">Tell me what you're working on in your own words. I'll ask a few
-        questions, then write up a plan for you to approve. Nothing is saved
-        until you approve it.</p>
-    </header>
-
-    <section id="loading-panel" class="panel">
-      <p class="status">Loading…</p>
-    </section>
-
-    <section id="signin-panel" class="panel hidden">
-      <div class="stack">
-        <p>Setting a project up starts with your Engelbart account.</p>
-        <a class="button" href="/engelbart/signin">Sign in, then come back here</a>
-      </div>
-    </section>
-
-    <section id="chat-panel" class="panel hidden">
-      <div id="chat-log" class="setup-log" aria-live="polite"></div>
-      <div id="card-slot"></div>
-      <form id="say-form" class="setup-say">
-        <textarea id="say-input" rows="3" placeholder="Tell me what you're working on…"></textarea>
-        <div class="button-row">
-          <button id="say-send" class="button" type="submit">Send</button>
-        </div>
-      </form>
-      <p id="chat-status" class="status" role="status"></p>
-    </section>
-
-    <section id="done-panel" class="panel hidden">
-      <div class="stack">
-        <h2 id="done-title">Your project is ready to install</h2>
-        <p>Paste this in a terminal on the machine you build on. It installs
-          Engelbart, connects this account, and opens your project — no second
-          sign-in needed.</p>
-        <div class="code setup-command"><code id="install-cmd"></code></div>
-        <div class="button-row">
-          <button id="copy-cmd" class="button" type="button">Copy command</button>
-          <button id="new-code" class="button secondary" type="button">Get a new code</button>
-        </div>
-        <p class="status" id="done-status"></p>
-        <p class="setup-note" id="code-note"></p>
-        <p class="setup-note">Once the install finishes, your project opens in
-          the local workspace.</p>
-      </div>
-    </section>
-  </main>
-
+<body>
+  <div class="hc" id="app"></div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js" integrity="sha384-yiVMs0R/Jyz7OhoXa/DsEMUSBLjEhr/QJta2ONO+zB6I8/GmNg/7AUFrZmAJV7KV" crossorigin="anonymous"></script>
   <script src="/engelbart/setup/setup.js"></script>
 </body>
