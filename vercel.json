@@ -70,10 +70,19 @@
       "destination": "/engelbart/signin/index.html"
     },
     {
+      "source": "/engelbart/setup",
+      "destination": "/engelbart/setup/index.html"
+    },
+    {
       "source": "/engelbart/admin",
       "destination": "/engelbart/admin/index.html"
     }
   ],
+  "functions": {
+    "api/engelbart-setup.js": {
+      "maxDuration": 120
+    }
+  },
   "redirects": [
     {
       "source": "/engelbart/install.sh",

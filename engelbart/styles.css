@@ -1272,3 +1272,56 @@ body.connecting .landing-bar .nav-actions { display: none; }
   line-height: 1.55;
   text-wrap: balance;
 }
+
+/* The web setup conversation (/engelbart/setup). One column: the turns so
+   far, the card the model just put down, and the box to answer in. */
+.setup-log { display: grid; gap: 14px; margin-bottom: 18px; }
+.setup-turn { display: grid; gap: 3px; }
+.setup-turn-who {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+.setup-turn[data-role="you"] .setup-turn-who { color: var(--accent); }
+.setup-turn-text { color: var(--ink-soft); line-height: 1.55; white-space: pre-wrap; }
+.setup-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--wash);
+  padding: 18px 20px;
+  margin-bottom: 18px;
+}
+.setup-card p { margin: 0 0 10px; line-height: 1.55; }
+.setup-eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.setup-note { color: var(--muted); font-size: 14px; margin: 0; }
+.setup-unsure { margin: 0 0 10px; padding-left: 20px; color: var(--ink-soft); }
+.setup-unsure li { margin: 3px 0; }
+.setup-option {
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+  padding: 4px 0;
+  cursor: pointer;
+  line-height: 1.45;
+}
+.setup-option input { flex: none; }
+.setup-todo, .setup-card input:not([type="radio"]):not([type="checkbox"]),
+.setup-card textarea, .setup-say textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--field);
+  color: var(--ink);
+  padding: 9px 11px;
+}
+.setup-todo + .setup-todo { margin-top: 7px; }
+.setup-say { display: grid; gap: 10px; }
+.setup-command { overflow-x: auto; }
