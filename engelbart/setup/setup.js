@@ -40,7 +40,21 @@
     pieces: [],          // ...or the pieces of the chosen goal, with rows
     name: "",            // the project's name, typed while the rest arrives
     made: null,          // { code, expiresInSeconds } once the code is issued
-    saving: false        // the button is mid-request
+    saving: false,       // the button is mid-request
+    installKind: "curl"  // which install command the done screen shows
+  };
+
+  // The two ways in, and what each is worth saying. curl is first because it
+  // is the one that needs nothing already on the machine -- no Node, no npm;
+  // npx is there for someone who would rather use the tool they know.
+  var INSTALL = {
+    curl: { tab: "curl", note: "No Node, npm, or Python needed.",
+      command: function (code) {
+        return "curl -fsSL https://berkeley.mathetic.com/engelbart/install.sh"
+          + " | sh -s -- --code " + code;
+      } },
+    npx: { tab: "npx", note: "Uses Node, which you already have if you run npx.",
+      command: function (code) { return "npx engelbart-cli --code " + code; } }
   };
 
   var OPEN = "Tell me what you're working on in your own words."
@@ -777,10 +791,29 @@
       "Run this in a terminal on the machine you build on. It installs"
       + " Engelbart, connects this account, and opens your project — no"
       + " second sign-in."));
-    body.appendChild(commandRow("npx engelbart-cli --code " + st.made.code));
+
+    // The switch between the two commands. Toggled in place -- the whole
+    // done screen is cheap to redraw, and st.made survives it.
+    var seg = el("div", "seg");
+    Object.keys(INSTALL).forEach(function (kind) {
+      var on = st.installKind === kind;
+      var tab = el("button", "seg-btn" + (on ? " seg-on" : ""),
+                   INSTALL[kind].tab);
+      if (!on) {
+        tab.addEventListener("click", function () {
+          st.installKind = kind;
+          draw();
+        });
+      }
+      seg.appendChild(tab);
+    });
+    body.appendChild(seg);
+
+    var chosen = INSTALL[st.installKind] || INSTALL.curl;
+    body.appendChild(commandRow(chosen.command(st.made.code)));
     var mins = Math.round((st.made.expiresInSeconds || 900) / 60);
     body.appendChild(el("div", "hint",
-      "The code works once and expires in " + mins
+      chosen.note + " The code works once and expires in " + mins
       + (mins === 1 ? " minute." : " minutes.")));
     var acts = el("div", "acts");
     acts.appendChild(btn("Get a new code", "", function () {
