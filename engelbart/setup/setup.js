@@ -762,6 +762,9 @@
       stage.appendChild(acts);
     }
     errorNode(stage);
+    // A lab that fits none of these areas is still addable right here -- the
+    // participant should never have to guess which area hides the door.
+    if (!st.thinking) labAddSection(stage);
   }
 
   // --- lab ------------------------------------------------------------------
