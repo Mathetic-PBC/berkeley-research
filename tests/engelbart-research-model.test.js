@@ -17,6 +17,10 @@ const LAB = {
     { id: "pr1", title: "Mirai", description: "Breast-cancer risk model.", status: "active" },
     { id: "pr2", title: "Pillar-0", description: "Medical imaging foundation model.", status: "active" },
   ],
+  papers: [
+    { id: "pa1", title: "Deep mammographic risk", year: 2021, venue: "Radiology" },
+    { id: "pa2", title: "Imaging foundation models", year: 2023, venue: "NeurIPS" },
+  ],
 };
 
 // Fake LiteLLM proxy: replays a canned model reply in Anthropic Messages shape,
@@ -37,12 +41,34 @@ function modelHttpError(status) {
   };
 }
 
-test("labContext grounds the prompt in the lab's real name, PI, and projects", () => {
+test("labContext grounds the prompt in the lab's real name, PI, projects, and papers", () => {
   const ctx = RM.labContext(LAB);
   assert.match(ctx, /Yala Lab/);
   assert.match(ctx, /Adam Yala/);
   assert.match(ctx, /Mirai/);
   assert.match(ctx, /Pillar-0/);
+  // real papers are now part of the grounding, not only Understand
+  assert.match(ctx, /Relevant papers from this lab/);
+  assert.match(ctx, /Deep mammographic risk/);
+});
+
+test("labContext bounds the paper set and keeps the caller's order (curated first)", () => {
+  const many = Array.from({ length: 10 }, (_, i) => ({ id: `x${i}`, title: `Paper ${i}` }));
+  const ctx = RM.labContext({ ...LAB, papers: many });
+  assert.match(ctx, /Paper 0/);
+  assert.match(ctx, /Paper 5/);          // within the bound
+  assert.doesNotMatch(ctx, /Paper 6/);   // MAX_CONTEXT_PAPERS = 6, rest dropped
+});
+
+test("generateIdeas grounds ideas in the lab's real papers, not just projects", async () => {
+  const calls = [];
+  await RM.generateIdeas({ lab: LAB, interest: "clinical ml" }, CREDS, {
+    fetchImpl: modelReturning(
+      { ideas: [{ title: "T", what: "w", why: "y", inspired: "Deep mammographic risk" }] }, calls),
+  });
+  const prompt = calls[0].body.messages[0].content;
+  assert.match(prompt, /Relevant papers from this lab/);
+  assert.match(prompt, /Deep mammographic risk/);          // the real paper reached the prompt
 });
 
 // The retrieval rows clusterAreas groups over (the shape lab_matches returns).

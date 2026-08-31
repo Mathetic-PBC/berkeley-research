@@ -41,16 +41,51 @@ function publicLab(row) {
   };
 }
 
+// When the signed-in participant has a curated selection of papers for this lab,
+// narrow (and order) the lab's paper pool to that selection: the curated papers
+// become the highest-priority paper context for ideas AND the allowed pool for
+// Understand. No selection -> the full canonical PI paper set, untouched. The
+// bundle stores only references, so this reorders canonical rows, never copies.
+async function applyCuratedPapers(lab, user, piId) {
+  if (!lab || !user || !Array.isArray(lab.papers) || !lab.papers.length) return lab;
+  try {
+    const sel = await Curated.labSelectionForUser(user, piId);
+    if (sel && sel.paper_ids.length) lab.papers = Curated.selectPapers(lab.papers, sel.paper_ids);
+  } catch { /* a curated selection is best-effort; keep the full set on any miss */ }
+  return lab;
+}
+
 // A lab refetched from the database for grounding a model call, or a 404 that
-// the browser turns into "that lab is no longer available".
-async function groundingLab(piId) {
+// the browser turns into "that lab is no longer available". Curated paper
+// selection (when the participant has one) is applied to the paper pool.
+async function groundingLab(piId, user) {
   const lab = await Research.lab(piId);
   if (!lab) {
     const error = new Error("Lab not found");
     error.statusCode = 404;
     throw error;
   }
+  await applyCuratedPapers(lab, user, piId);
   return lab;
+}
+
+// The generic, interest-driven discovery step: retrieve real labs for an
+// interest, drop any already in `exclude` (a curated set), and cluster the rest
+// into areas. Each area is marked `discovered` so the UI can show it after a
+// participant's curated pool. Returns [] when nothing new matches.
+async function discoverAreas(interest, credentials, exclude) {
+  const labs = (await Research.labMatches(interest)).filter((row) => !exclude.has(row.pi_id));
+  if (!labs.length) return [];
+  const byId = new Map(labs.map((row) => [row.pi_id, row]));
+  const clustered = await ResearchModel.clusterAreas({ interest, labs }, credentials);
+  return clustered
+    .map((area) => ({
+      label: area.label,
+      summary: area.summary,
+      labs: area.pi_ids.map((id) => byId.get(id)).filter(Boolean).map(publicLab),
+      discovered: true,
+    }))
+    .filter((area) => area.labs.length);
 }
 
 // The web setup conversation. `turn` and `save` are the browser's, behind the
@@ -118,15 +153,34 @@ async function handler(req, res) {
     // labs beneath it, rehydrated here from the retrieval set so the model can
     // never surface a lab that isn't real. Member-billed like every model call.
     if (action === "areas") {
-      // Prefer a participant's hand-curated landscape when one exists: it is
-      // returned verbatim, in the curator's order, with no model call or credit
-      // spend. Only when there is no curated bundle do we fall back to the
-      // model-clustered interest retrieval that everyone else gets.
+      // Curated-first, then contextual expansion. A participant's hand-curated
+      // landscape leads -- returned verbatim, in the curator's order, always,
+      // with no credit spend. The generic interest retrieval STILL runs on top
+      // (best effort) and appends additional real labs the curator did not
+      // preselect, de-duplicated against the curated set, so curation improves
+      // reliability without disabling discovery. An uncurated participant gets
+      // the generic interest retrieval alone, exactly as before.
       const user = await verifyUser(bearerToken(req));
+      const interest = body.interest;
+      const hasInterest = String(interest == null ? "" : interest).trim().length > 0;
       const curated = await Curated.loadForUser(user);
+
       if (curated) {
-        return sendJson(res, 200, { areas: Curated.toAreas(curated.bundle), curated: true });
+        const curatedAreas = Curated.toAreas(curated.bundle);
+        const exclude = new Set();
+        curatedAreas.forEach((area) => area.labs.forEach((lab) => exclude.add(lab.piId)));
+        let discovered = [];
+        if (hasInterest) {
+          try {
+            const credentials = await Credits.credentialsFor(user);
+            if (credentials.status !== "exhausted" && credentials.status !== "blocked") {
+              discovered = await discoverAreas(interest, credentials, exclude);
+            }
+          } catch { discovered = []; }   // curated labs are guaranteed; discovery is a bonus
+        }
+        return sendJson(res, 200, { areas: [...curatedAreas, ...discovered], curated: true });
       }
+
       const credentials = await Credits.credentialsFor(user);
       if (credentials.status === "exhausted" || credentials.status === "blocked") {
         const error = new Error("Your Engelbart Claude credit is used up, so setup"
@@ -134,18 +188,7 @@ async function handler(req, res) {
         error.statusCode = 409;
         throw error;
       }
-      const labs = await Research.labMatches(body.interest);
-      if (!labs.length) return sendJson(res, 200, { areas: [] });
-      const byId = new Map(labs.map((row) => [row.pi_id, row]));
-      const clustered = await ResearchModel.clusterAreas(
-        { interest: body.interest, labs }, credentials);
-      const areas = clustered
-        .map((area) => ({
-          label: area.label,
-          summary: area.summary,
-          labs: area.pi_ids.map((id) => byId.get(id)).filter(Boolean).map(publicLab),
-        }))
-        .filter((area) => area.labs.length);
+      const areas = await discoverAreas(interest, credentials, new Set());
       return sendJson(res, 200, { areas });
     }
 
@@ -153,23 +196,23 @@ async function handler(req, res) {
     // in a lab refetched here (authoritative real data), never in context the
     // browser supplies.
     if (action === "ideas") {
-      const { credentials } = await memberCredentials(req);
-      const lab = await groundingLab(body.piId);
+      const { user, credentials } = await memberCredentials(req);
+      const lab = await groundingLab(body.piId, user);
       return sendJson(res, 200, {
         ideas: await ResearchModel.generateIdeas({ lab, interest: body.interest }, credentials),
       });
     }
 
     if (action === "refine") {
-      const { credentials } = await memberCredentials(req);
-      const lab = await groundingLab(body.piId);
+      const { user, credentials } = await memberCredentials(req);
+      const lab = await groundingLab(body.piId, user);
       return sendJson(res, 200, await ResearchModel.refineIdea(
         { lab, idea: body.idea, note: body.note }, credentials));
     }
 
     if (action === "path") {
-      const { credentials } = await memberCredentials(req);
-      const lab = await groundingLab(body.piId);
+      const { user, credentials } = await memberCredentials(req);
+      const lab = await groundingLab(body.piId, user);
       return sendJson(res, 200, await ResearchModel.generatePath(
         { lab, idea: body.idea, interest: body.interest }, credentials));
     }
@@ -186,7 +229,14 @@ async function handler(req, res) {
     // hard-fails on the last step.
     if (action === "save_path") {
       const user = await verifyUser(bearerToken(req));
-      const lab = body.piId ? await Research.lab(body.piId) : null;
+      // The lab for grounding: canonical data, with the participant's curated
+      // paper selection (when any) narrowing the pool the generator may cite --
+      // the same preferred/allowed papers the earlier idea step saw.
+      let lab = null;
+      if (body.piId) {
+        lab = await Research.lab(body.piId);
+        await applyCuratedPapers(lab, user, body.piId);
+      }
       const idea = body.idea && typeof body.idea === "object" ? body.idea : {};
       const interest = String(body.interest || "");
       const pi = lab && lab.pi ? lab.pi : null;

@@ -181,7 +181,10 @@
     // each area already carries the real labs beneath it.
     setup("areas", { interest: interest }).then(function (out) {
       st.thinking = false;
-      st.areas = (out.areas || []).slice(0, 3);
+      // Curated areas lead (the backend returns them first); interest-discovered
+      // areas follow. Keep a few of each so a curated participant still sees
+      // discovery beyond what was hand-picked, rather than only their curation.
+      st.areas = (out.areas || []).slice(0, 6);
       if (!st.areas.length) {
         st.error = "Nothing matched that yet — try describing it a little differently.";
         draw();
