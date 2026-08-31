@@ -370,15 +370,20 @@ function fallbackDoc(ctx) {
   return [
     `# Shaping: ${t}`,
     "",
-    `A few things to decide before building${lab ? ` (inspired by ${lab})` : ""}:`,
+    "A few questions to figure out what you actually want to build"
+      + `${lab ? ` (with ${lab}'s work as the backdrop)` : ""}:`,
     "",
-    `- What should the final version of "${t}" actually do?`,
-    "- What question are you trying to answer with it?",
-    "- What would make the result interesting or useful?",
-    "- What assumptions are you making right now?",
-    "- What is the smallest first version worth building?",
-    "- What result would genuinely surprise you?",
-    "- What would make you change direction?",
+    `- What part of "${t}" sounds most interesting to you?`,
+    "- What would you be excited to have working at the end — something you"
+      + " could see, run, or play with?",
+    "- What would you be curious to change, just to see what happens?",
+    lab
+      ? `- Would you rather recreate something ${lab} has already done, or try`
+        + " your own variation on it?"
+      : "- Would you rather recreate something from the research, or try your"
+        + " own variation on it?",
+    "- How small could the first version be and still feel real to you?",
+    "- If it works, what would make you want to keep exploring?",
   ].join("\n");
 }
 
@@ -475,6 +480,28 @@ async function generateProject(input, credentials, options = {}) {
       + " example, see SOMETHING work. Rigor (baselines, metrics, validation)"
       + " comes in later goals only.",
     "",
+    "The brainstorm \"document_md\" is genuine brainstorming, never a requirements"
+      + " interview. Its job is to help the student DISCOVER what they want to"
+      + " build -- do not assume they already know the technical shape. It reads"
+      + " like two people sitting together figuring out what would be interesting"
+      + " to build: a short heading, then 5-6 questions, nothing else.",
+    "The questions progress roughly like this, each carrying ONE idea:",
+    "1. which part of this idea actually interests them;",
+    "2. what they would be excited to have working, see, or interact with;",
+    "3. what they are curious to change or experiment with, just to see what happens;",
+    "4. whether they would rather recreate/extend the lab's research or try their own variation;",
+    "5. how small or ambitious the first version should be;",
+    "6. what result or next step would make them want to keep going.",
+    "Every question must be answerable by a beginner who does not know the field"
+      + " yet, and tailored to THIS idea, lab, papers, and the student's stated"
+      + " interest -- specific, never boilerplate, and never copied mechanically"
+      + " from the progression above. A short example inside a question is fine"
+      + " when it clarifies; a menu of options is not.",
+    "NEVER lead with technical decisions the plan can propose later: algorithm or"
+      + " controller choices, simulators or libraries, evaluation metrics, numeric"
+      + " thresholds, hardware specs, safety limits, deployment formats, benchmark"
+      + " design. Nothing that reads like filling out a technical specification.",
+    "",
     labContext(lab),
     "",
     papers.length
@@ -496,12 +523,9 @@ async function generateProject(input, credentials, options = {}) {
     "Reply with ONE JSON object of exactly this shape:",
     "{",
     '  "brainstorm": {"description": "one line: what \\"Shape the project\\" means'
-      + ' here", "purpose": "why shaping it first matters", "document_md": "a SHORT'
-      + ' markdown doc of 5-8 project-SPECIFIC questions that help THIS student'
-      + ' shape THIS project -- what the final thing should do, the question it'
-      + ' answers, the smallest first version, current assumptions, what result'
-      + ' would surprise them, what would change their direction -- tailored to the'
-      + ' idea/lab/papers, never generic boilerplate"},',
+      + ' here", "purpose": "why shaping it first matters", "document_md": "the'
+      + ' brainstorming page described above: a short heading, then 5-6 tailored'
+      + ' questions, nothing else"},',
     '  "understand": [{"paper": <number from the list above>, "description": "what'
       + ' this paper covers that matters here", "purpose": "why understanding it'
       + ' matters for THIS project", "todos": ["read the relevant sections",'
