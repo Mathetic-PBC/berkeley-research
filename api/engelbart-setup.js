@@ -2,6 +2,7 @@
 
 const CliAuth = require("./_lib/cli-auth");
 const Credits = require("./_lib/credits");
+const Curated = require("./_lib/curated");
 const SetupChat = require("./_lib/setup-chat");
 const Research = require("./_lib/research");
 const ResearchModel = require("./_lib/research-model");
@@ -117,7 +118,22 @@ async function handler(req, res) {
     // labs beneath it, rehydrated here from the retrieval set so the model can
     // never surface a lab that isn't real. Member-billed like every model call.
     if (action === "areas") {
-      const { credentials } = await memberCredentials(req);
+      // Prefer a participant's hand-curated landscape when one exists: it is
+      // returned verbatim, in the curator's order, with no model call or credit
+      // spend. Only when there is no curated bundle do we fall back to the
+      // model-clustered interest retrieval that everyone else gets.
+      const user = await verifyUser(bearerToken(req));
+      const curated = await Curated.loadForUser(user);
+      if (curated) {
+        return sendJson(res, 200, { areas: Curated.toAreas(curated.bundle), curated: true });
+      }
+      const credentials = await Credits.credentialsFor(user);
+      if (credentials.status === "exhausted" || credentials.status === "blocked") {
+        const error = new Error("Your Engelbart Claude credit is used up, so setup"
+          + " cannot run right now. Reach out to us to top it up.");
+        error.statusCode = 409;
+        throw error;
+      }
       const labs = await Research.labMatches(body.interest);
       if (!labs.length) return sendJson(res, 200, { areas: [] });
       const byId = new Map(labs.map((row) => [row.pi_id, row]));
@@ -158,24 +174,68 @@ async function handler(req, res) {
         { lab, idea: body.idea, interest: body.interest }, credentials));
     }
 
-    // The exploration's commit. The browser sends its (edited) name + idea +
-    // four-lane path; the lab is refetched for authoritative provenance; the
-    // whole thing is mapped into the classic setup payload and bounded, so it
-    // rides the same pending-setup carrier and install code as a conversation
-    // project, with no change on the hc import side.
+    // The final "Generate project". The browser sends its (edited) name +
+    // idea + four rough lanes; the lab is refetched for authoritative canonical
+    // data (papers, people, projects), and a single structured model call turns
+    // it into the workspace's real shape -- phase-tagged GOALS, each with its
+    // own description/purpose/todos and a goal-level resource (a Brainstorm
+    // document, or an Understand goal bound to a REAL canonical paper) -- plus
+    // structured provenance. It rides the same pending-setup carrier and import
+    // code as any project. If the model call fails (spent credit, a gateway
+    // hiccup) it degrades to the classic flat-lane payload, so Generate never
+    // hard-fails on the last step.
     if (action === "save_path") {
       const user = await verifyUser(bearerToken(req));
       const lab = body.piId ? await Research.lab(body.piId) : null;
-      const provenance = lab && lab.pi
-        ? { lab_name: lab.pi.lab_name, pi_name: lab.pi.name, department: lab.pi.department }
-        : {};
-      const payload = SetupChat.normalizePayload(ResearchModel.explorationToPayload({
-        name: body.name,
-        objective: body.objective,
-        idea: body.idea,
-        lanes: body.lanes,
-        lab: provenance,
-      }));
+      const idea = body.idea && typeof body.idea === "object" ? body.idea : {};
+      const interest = String(body.interest || "");
+      const pi = lab && lab.pi ? lab.pi : null;
+
+      // Structured provenance -- stable canonical ids, kept as data. The papers
+      // are filled in from whichever canonical papers the generator selected.
+      const provenance = {
+        interest,
+        lab: pi ? { pi_id: body.piId, lab_name: pi.lab_name } : undefined,
+        pi: pi ? { id: body.piId, name: pi.name } : undefined,
+        students: (lab && Array.isArray(lab.members) ? lab.members : [])
+          .map((m) => ({ id: m.id, name: m.name })),
+        projects: (lab && Array.isArray(lab.projects) ? lab.projects : [])
+          .map((p) => ({ id: p.id, title: p.title })),
+        idea: { title: idea.title || idea.name || "", inspired: idea.inspired || "" },
+      };
+      const provenanceProse = [
+        pi && pi.lab_name
+          ? `Based on ${pi.lab_name}${pi.name ? `, led by ${pi.name}` : ""}.` : "",
+        idea.inspired ? `Inspired by ${idea.inspired}.` : "",
+      ].filter(Boolean).join(" ");
+
+      let payload;
+      try {
+        // The structured generator is grounded in the refetched lab and billed
+        // to the member's key; a lab of null still generates (empty Understand).
+        const credentials = await Credits.credentialsFor(user);
+        const project = await ResearchModel.generateProject(
+          { interest, idea, lab: lab || {}, lanes: body.lanes }, credentials);
+        provenance.papers = project.understand.map(
+          (u) => ({ paper_id: u.paper.paper_id, title: u.paper.title }));
+        payload = SetupChat.normalizePayload(ResearchModel.structuredToPayload(project, {
+          name: body.name || idea.title || idea.name,
+          objective: body.objective || idea.description,
+          provenance, provenanceProse,
+        }));
+      } catch (modelError) {
+        // Degrade to the classic flat-lane payload, keeping the structured
+        // provenance so the fallback project is still related to the research.
+        payload = SetupChat.normalizePayload(ResearchModel.explorationToPayload({
+          name: body.name,
+          objective: body.objective,
+          idea,
+          lanes: body.lanes,
+          lab: pi ? { lab_name: pi.lab_name, pi_name: pi.name, department: pi.department } : {},
+        }));
+        const prov = SetupChat.normalizeProvenance(provenance);
+        if (prov) payload.provenance = prov;
+      }
       if (!payload.name) {
         const error = new Error("Name this project first");
         error.statusCode = 400;

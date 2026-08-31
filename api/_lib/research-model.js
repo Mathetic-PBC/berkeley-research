@@ -290,6 +290,241 @@ const LANE_LABEL = {
   apply: "Apply",
 };
 
+// --- the structured project generator (the final "Generate project") --------
+//
+// Unlike generatePath (flat rows per lane), this produces the workspace's real
+// shape: phase-tagged GOALS, each with its own description, purpose and TODOs,
+// plus goal-level resources -- a persisted Brainstorm document, and Understand
+// goals bound to REAL canonical papers. Papers are chosen ONLY from the lab's
+// own paper list, by number, and mapped back to canonical ids server-side, so
+// the model can never invent a paper, an id, or an authorship. When the model
+// call fails the caller falls back to explorationToPayload's flat lanes.
+
+const MAX_UNDERSTAND = 3;      // key papers to read -- quality over quantity
+const MAX_IMPLEMENT = 3;
+const MAX_APPLY = 2;
+const MAX_GOAL_TODOS = 5;
+const MAX_DOC = 6000;
+
+// The lab's real papers as a numbered menu; the model picks by number, exactly
+// as labMenu lets it pick labs by index for clusterAreas.
+function paperMenu(papers) {
+  return papers.map((p, i) =>
+    `[${i}] ${one(p.title, MAX_TITLE) || "(untitled)"}`
+    + `${p.year ? ` (${p.year})` : ""}${p.venue ? `, ${one(p.venue, 80)}` : ""}`
+  ).join("\n");
+}
+
+function boundDoc(value) {
+  return String(value == null ? "" : value).replace(/\r/g, "").slice(0, MAX_DOC).trim();
+}
+
+// A project-SPECIFIC brainstorming document, used only when the model returns
+// none. It interpolates the real idea and lab, so it is never the same boiler-
+// plate for two projects -- the model normally supplies the tailored version.
+function fallbackDoc(ctx) {
+  const t = one(ctx.idea && (ctx.idea.title || ctx.idea.name), MAX_TITLE) || "this project";
+  const lab = one(ctx.lab && ctx.lab.pi && ctx.lab.pi.lab_name, MAX_TITLE);
+  return [
+    `# Shaping: ${t}`,
+    "",
+    `A few things to decide before building${lab ? ` (inspired by ${lab})` : ""}:`,
+    "",
+    `- What should the final version of "${t}" actually do?`,
+    "- What question are you trying to answer with it?",
+    "- What would make the result interesting or useful?",
+    "- What assumptions are you making right now?",
+    "- What is the smallest first version worth building?",
+    "- What result would genuinely surprise you?",
+    "- What would make you change direction?",
+  ].join("\n");
+}
+
+// One todo line, main clause only (a generated goal's rows are single lines).
+function todoLines(value) {
+  return rows(value).map((r) => one(r.split("\n")[0], MAX_ROW)).filter(Boolean)
+    .slice(0, MAX_GOAL_TODOS);
+}
+
+// Keep the model's project inside a known shape, grounded in canonical data:
+// Understand entries are mapped from paper NUMBERS back to real papers and
+// deduplicated; anything that is not a real paper of this lab is dropped.
+function normalizeProject(raw, ctx) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const papers = Array.isArray(ctx.lab && ctx.lab.papers) ? ctx.lab.papers : [];
+
+  const b = src.brainstorm && typeof src.brainstorm === "object" ? src.brainstorm : {};
+  const brainstorm = {
+    description: one(b.description, MAX_TEXT),
+    purpose: one(b.purpose, MAX_TEXT),
+    document_md: boundDoc(b.document_md) || fallbackDoc(ctx),
+  };
+
+  const seen = new Set();
+  const understand = [];
+  for (const u of Array.isArray(src.understand) ? src.understand : []) {
+    if (!u || typeof u !== "object") continue;
+    const idx = Number(u.paper);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= papers.length) continue;
+    const p = papers[idx];
+    if (!p || !p.id || seen.has(p.id)) continue;
+    seen.add(p.id);
+    understand.push({
+      paper: {
+        paper_id: p.id,
+        title: one(p.title, MAX_TITLE),
+        url: one(p.doi_url || p.url, MAX_ROW),
+      },
+      description: one(u.description, MAX_TEXT),
+      purpose: one(u.purpose, MAX_TEXT),
+      todos: todoLines(u.todos),
+    });
+    if (understand.length >= MAX_UNDERSTAND) break;
+  }
+
+  const goalList = (arr, cap) => {
+    const out = [];
+    for (const g of Array.isArray(arr) ? arr : []) {
+      if (!g || typeof g !== "object") continue;
+      const title = one(g.title, MAX_TITLE);
+      if (!title) continue;
+      out.push({
+        title,
+        description: one(g.description, MAX_TEXT),
+        purpose: one(g.purpose, MAX_TEXT),
+        todos: todoLines(g.todos),
+      });
+      if (out.length >= cap) break;
+    }
+    return out;
+  };
+
+  return {
+    brainstorm,
+    understand,
+    implement: goalList(src.implement, MAX_IMPLEMENT),
+    apply: goalList(src.apply, MAX_APPLY),
+  };
+}
+
+async function generateProject(input, credentials, options = {}) {
+  const lab = input.lab || {};
+  const idea = input.idea || {};
+  const interest = one(input.interest, 400);
+  const papers = Array.isArray(lab.papers) ? lab.papers.slice(0, 20) : [];
+  const hints = input.lanes && typeof input.lanes === "object" ? input.lanes : {};
+  const hintLines = LANES.map((lane) => {
+    const rs = rows(hints[lane]).map((r) => one(r.split("\n")[0], MAX_ROW)).filter(Boolean);
+    return rs.length ? `- ${LANE_LABEL[lane]}: ${rs.join("; ")}` : "";
+  }).filter(Boolean);
+
+  const prompt = [
+    "Turn a chosen research project idea into a COMPLETE structured project for a"
+      + " student, grounded ONLY in the real lab data below.",
+    "The project has four phases; give concrete GOALS for each (not a flat list).",
+    "",
+    labContext(lab),
+    "",
+    papers.length
+      ? "Real papers from this lab. Choose Understand papers ONLY from these, by"
+        + " their number; NEVER invent a paper, a title, or an id:"
+      : "This lab has no papers on record -- return an empty \"understand\" list;"
+        + " do not invent papers.",
+    papers.length ? paperMenu(papers) : "",
+    "",
+    `Chosen idea: ${one(idea.title || idea.name, MAX_TITLE)} -- `
+      + `${one(idea.description || idea.what, MAX_TEXT)}`,
+    idea.inspired ? `It builds on: ${one(idea.inspired, MAX_TITLE)}.` : "",
+    interest ? `Student's stated interest: "${interest}".` : "",
+    hintLines.length
+      ? "\nThe student sketched these rough directions; use them as hints and refine:"
+      : "",
+    ...hintLines,
+    "",
+    "Reply with ONE JSON object of exactly this shape:",
+    "{",
+    '  "brainstorm": {"description": "one line: what \\"Shape the project\\" means'
+      + ' here", "purpose": "why shaping it first matters", "document_md": "a SHORT'
+      + ' markdown doc of 5-8 project-SPECIFIC questions that help THIS student'
+      + ' shape THIS project -- what the final thing should do, the question it'
+      + ' answers, the smallest first version, current assumptions, what result'
+      + ' would surprise them, what would change their direction -- tailored to the'
+      + ' idea/lab/papers, never generic boilerplate"},',
+    '  "understand": [{"paper": <number from the list above>, "description": "what'
+      + ' this paper covers that matters here", "purpose": "why understanding it'
+      + ' matters for THIS project", "todos": ["read the relevant sections",'
+      + ' "identify the core method", "note the finding most relevant to the'
+      + ' project"]}],',
+    '  "implement": [{"title": "a concrete build/experiment goal for THIS project",'
+      + ' "description": "what it produces", "purpose": "why it matters", "todos":'
+      + ' ["..."]}],',
+    '  "apply": [{"title": "a packaging/outreach goal", "description": "...",'
+      + ' "purpose": "...", "todos": ["..."]}]',
+    "}",
+    `Choose at most ${MAX_UNDERSTAND} of the MOST relevant papers, at most `
+      + `${MAX_IMPLEMENT} implement goals, at most ${MAX_APPLY} apply goals. Keep`
+      + ` todos few and concrete. ${JSON_ONLY}`,
+  ].filter(Boolean).join("\n") + "\n";
+
+  const raw = await callModel(prompt, credentials, options);
+  return normalizeProject(raw, { lab, idea, interest });
+}
+
+// The structured project as the pending-setup payload the CLI already imports:
+// one phase-tagged subgoal per goal, each carrying its own why/description/todos
+// and its goal-level resource (a Brainstorm document, or an Understand paper).
+// SetupChat.normalizePayload bounds every field before it is stored.
+function structuredToPayload(project, meta) {
+  const name = one(meta.name, 80);
+  const objective = one(meta.objective, MAX_TEXT);
+  const subgoals = [];
+
+  subgoals.push({
+    label: "Shape the project",
+    phase: "brainstorm",
+    why: project.brainstorm.purpose,
+    description: project.brainstorm.description,
+    document: {
+      title: name ? `Shaping: ${name}` : "Shape the project",
+      body_md: project.brainstorm.document_md,
+    },
+    todos: [],
+  });
+  for (const u of project.understand) {
+    subgoals.push({
+      label: `Read “${u.paper.title || "this paper"}”`,
+      phase: "understand",
+      why: u.purpose,
+      description: u.description,
+      paper: u.paper,
+      todos: u.todos,
+    });
+  }
+  for (const g of project.implement) {
+    subgoals.push({ label: g.title, phase: "implement", why: g.purpose,
+      description: g.description, todos: g.todos });
+  }
+  for (const g of project.apply) {
+    subgoals.push({ label: g.title, phase: "apply", why: g.purpose,
+      description: g.description, todos: g.todos });
+  }
+
+  const description = [objective, one(meta.provenanceProse, MAX_TEXT)]
+    .filter(Boolean).join("\n\n");
+  const payload = {
+    name,
+    plan: { description, unsure: [] },
+    goals: name ? [{ label: name, why: objective }] : [],
+    chosen: name,
+    todos: [],
+    subgoals,
+  };
+  if (meta.provenance && typeof meta.provenance === "object") {
+    payload.provenance = meta.provenance;
+  }
+  return payload;
+}
+
 // The whole point of P3: an exploration result (a named idea + the four-lane
 // path, as edited in the browser) mapped into the SAME payload vocabulary the
 // setup conversation produces -- name / plan / goals / chosen / subgoals -- so
@@ -321,7 +556,7 @@ function explorationToPayload(input) {
     }))
     .filter((subgoal) => subgoal.todos.length);
 
-  return {
+  const payload = {
     name,
     plan: { description, unsure: [] },
     goals: name ? [{ label: name, why: objective }] : [],
@@ -329,6 +564,11 @@ function explorationToPayload(input) {
     todos: [],
     subgoals,
   };
+  // The canonical paper the chosen goal reads against, when the caller resolved
+  // one from the grounding lab. Passed through as-is; SetupChat.normalizePayload
+  // validates the id and bounds the text before it is stored.
+  if (source.paper && typeof source.paper === "object") payload.paper = source.paper;
+  return payload;
 }
 
 module.exports = {
@@ -336,6 +576,8 @@ module.exports = {
   generateIdeas,
   refineIdea,
   generatePath,
+  generateProject,
+  structuredToPayload,
   explorationToPayload,
   // exported for tests
   labContext,
@@ -343,8 +585,10 @@ module.exports = {
   normalizeIdeas,
   normalizeRefine,
   normalizePath,
+  normalizeProject,
   LANES,
   MAX_AREAS,
   MAX_IDEAS,
   MAX_ROWS,
+  MAX_UNDERSTAND,
 };
