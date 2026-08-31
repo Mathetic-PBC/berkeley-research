@@ -20,6 +20,10 @@ const MAX_ROW = 240;
 const MAX_IDEAS = 6;
 const MAX_ROWS = 6;
 const MAX_AREAS = 4;
+// A small, bounded set of the lab's real papers to ground idea/path generation
+// (not the whole corpus). The caller orders lab.papers so the highest-priority
+// papers -- a curated participant's selection -- come first.
+const MAX_CONTEXT_PAPERS = 6;
 const LANES = ["brainstorm", "understand", "implement", "apply"];
 
 function one(value, cap) {
@@ -89,6 +93,10 @@ function labContext(lab) {
   const pi = (lab && lab.pi) || {};
   const projects = Array.isArray(lab && lab.projects) ? lab.projects.slice(0, 8) : [];
   const members = Array.isArray(lab && lab.members) ? lab.members.slice(0, 12) : [];
+  // A bounded set of the lab's real papers, in the order the caller supplied
+  // (curated selection first, when a participant has one). These are real work
+  // the model may build ideas on -- never a licence to invent a paper.
+  const papers = Array.isArray(lab && lab.papers) ? lab.papers.slice(0, MAX_CONTEXT_PAPERS) : [];
   const lines = [
     `Lab: ${one(pi.lab_name, MAX_TITLE) || "(unnamed lab)"}`,
     `Principal investigator: ${one(pi.name, MAX_TITLE)}${pi.title ? ` (${one(pi.title, 80)})` : ""}`,
@@ -98,6 +106,9 @@ function labContext(lab) {
     one(pi.bio, MAX_TEXT) ? `About the PI: ${one(pi.bio, MAX_TEXT)}` : "",
     projects.length ? "Real projects in this lab:" : "",
     ...projects.map((p) => `- ${one(p.title, MAX_TITLE)}${p.description ? `: ${one(p.description, 200)}` : ""}`),
+    papers.length ? "Relevant papers from this lab (real work -- ground ideas in these; never invent a paper):" : "",
+    ...papers.map((p) => `- ${one(p.title, MAX_TITLE) || "(untitled)"}`
+      + `${p.year ? ` (${p.year})` : ""}${p.venue ? `, ${one(p.venue, 80)}` : ""}`),
     members.length ? `PhD researchers (names only; treat their focus as open): ${members.map((m) => one(m.name, 60)).filter(Boolean).join(", ")}` : "",
   ];
   return lines.filter(Boolean).join("\n");
@@ -188,7 +199,8 @@ async function generateIdeas(input, credentials, options = {}) {
   const interest = one(input.interest, 400);
   const prompt = [
     "You help an undergraduate find a concrete, buildable research project inside a specific Berkeley lab.",
-    "Ground every idea in the lab's REAL work below. Do not invent papers, results, or people.",
+    "Ground every idea in the lab's REAL work below -- its projects AND the papers listed. Let a"
+      + " relevant paper or project genuinely shape the idea. Do not invent papers, results, or people.",
     "Each idea is something a motivated student could genuinely start in about two weeks -- a tool,",
     "a visualization, a dataset, a reproduction, a small experiment -- that plausibly helps this lab.",
     "",
@@ -199,7 +211,7 @@ async function generateIdeas(input, credentials, options = {}) {
     `Propose ${MAX_IDEAS} ideas. ${JSON_ONLY}`,
     'Shape: {"ideas":[{"title": "...", "what": "one sentence on what to build",',
     '"why": "one sentence on why it helps / what the student gains",',
-    '"inspired": "which real project or theme above it builds on"}]}',
+    '"inspired": "the real project, paper, or theme above it builds on"}]}',
   ].filter((line) => line !== null).join("\n") + "\n";
   return normalizeIdeas(await callModel(prompt, credentials, options));
 }
@@ -255,7 +267,7 @@ async function generatePath(input, credentials, options = {}) {
     "Turn a chosen project idea into a four-lane path a student can actually follow.",
     "The lanes are fixed and mean:",
     "- brainstorm: open questions and directions to explore first (this can change as they learn).",
-    "- understand: what to read, learn, or reproduce -- reference the lab's REAL projects/PI where apt.",
+    "- understand: what to read, learn, or reproduce -- reference the lab's REAL papers, projects, or PI where apt.",
     "- implement: concrete build steps to a first working version.",
     "- apply: how to share it back with the lab / turn it into a result.",
     "",

@@ -64,6 +64,20 @@ function str(value, cap) {
   return cap ? text.slice(0, cap) : text;
 }
 
+// A lab's canonical papers narrowed and ordered to a curated selection of ids
+// (the curator's order). Ids no longer in the canonical set are dropped; an
+// empty selection -- or one that resolves to nothing -- leaves the papers as
+// they are. Returns canonical rows BY REFERENCE; the bundle never copies paper
+// data, so this reads references only.
+function selectPapers(papers, paperIds) {
+  const list = Array.isArray(papers) ? papers : [];
+  const ids = Array.isArray(paperIds) ? paperIds : [];
+  if (!ids.length) return list;
+  const byId = new Map(list.map((p) => [String(p.id), p]));
+  const picked = ids.map((id) => byId.get(String(id))).filter(Boolean);
+  return picked.length ? picked : list;
+}
+
 function labSnapshot(value) {
   if (!value || typeof value !== "object") return undefined;
   const snap = {
@@ -230,6 +244,25 @@ async function loadForUser(user) {
   return { participantKey: row.participant_key, bundle };
 }
 
+// The curator's selection for one lab in a signed-in user's bundle: the chosen
+// (and ordered) student / project / paper ids, or null when the user has no
+// curated landscape or that lab isn't in it. Generation uses paper_ids as the
+// preferred/allowed paper pool for the lab; nothing here is a copy of canonical
+// data -- only references + order.
+async function labSelectionForUser(user, piId) {
+  const id = optUuid(piId);
+  if (!id) return null;
+  const curated = await loadForUser(user);
+  if (!curated) return null;
+  const ref = findLabRef(curated.bundle, id);
+  if (!ref) return null;
+  return {
+    paper_ids: Array.isArray(ref.paper_ids) ? ref.paper_ids : [],
+    project_ids: Array.isArray(ref.project_ids) ? ref.project_ids : [],
+    student_ids: Array.isArray(ref.student_ids) ? ref.student_ids : [],
+  };
+}
+
 // The bundle as the onboarding "areas" shape, preserving the curator's order.
 // Built from each lab's snapshot so it is one row read and deterministic; a lab
 // with no snapshot still appears with its id so detail can hydrate it live.
@@ -334,6 +367,8 @@ module.exports = {
   remove,
   paperPdfUrl,
   loadForUser,
+  labSelectionForUser,
+  selectPapers,
   toAreas,
   toLabDetail,
   preview,
