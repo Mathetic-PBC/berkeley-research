@@ -203,10 +203,70 @@ async function generatePath(input, credentials, options = {}) {
   return normalizePath(await callModel(prompt, credentials, options), idea);
 }
 
+// One row as a single persisted todo line: the quiet second line folds in with
+// an em dash, since a stored todo is one line and hc's importer keeps it so.
+function flattenRow(value) {
+  const text = String(value == null ? "" : value);
+  const [main, ...rest] = text.split("\n");
+  const cleanMain = one(main, MAX_ROW);
+  if (!cleanMain) return "";
+  const sub = one(rest.join(" "), MAX_ROW);
+  return sub ? `${cleanMain} — ${sub}` : cleanMain;
+}
+
+const LANE_LABEL = {
+  brainstorm: "Brainstorm",
+  understand: "Understand",
+  implement: "Implement",
+  apply: "Apply",
+};
+
+// The whole point of P3: an exploration result (a named idea + the four-lane
+// path, as edited in the browser) mapped into the SAME payload vocabulary the
+// setup conversation produces -- name / plan / goals / chosen / subgoals -- so
+// the install code carries it through hc's existing setup-import + commit with
+// no change on the CLI side. The four lanes become the project's four
+// subgoals; each lane's rows become that subgoal's todos. The caller should
+// still run the result through SetupChat.normalizePayload to bound it.
+function explorationToPayload(input) {
+  const source = input && typeof input === "object" ? input : {};
+  const idea = source.idea && typeof source.idea === "object" ? source.idea : {};
+  const lab = source.lab && typeof source.lab === "object" ? source.lab : {};
+  const lanes = source.lanes && typeof source.lanes === "object" ? source.lanes : {};
+
+  const name = one(source.name, 80) || one(idea.title || idea.name, 80);
+  const objective = one(source.objective, MAX_TEXT) || one(idea.description || idea.what, MAX_TEXT);
+
+  const provenance = [];
+  if (one(lab.lab_name, MAX_TITLE)) {
+    provenance.push(`Based on ${one(lab.lab_name, MAX_TITLE)}`
+      + (one(lab.pi_name, MAX_TITLE) ? `, led by ${one(lab.pi_name, MAX_TITLE)}` : "") + ".");
+  }
+  if (one(idea.inspired, MAX_TITLE)) provenance.push(`Inspired by ${one(idea.inspired, MAX_TITLE)}.`);
+  const description = [objective, provenance.join(" ")].filter(Boolean).join("\n\n");
+
+  const subgoals = LANES
+    .map((lane) => ({
+      label: LANE_LABEL[lane],
+      todos: rows(lanes[lane]).map(flattenRow).filter(Boolean),
+    }))
+    .filter((subgoal) => subgoal.todos.length);
+
+  return {
+    name,
+    plan: { description, unsure: [] },
+    goals: name ? [{ label: name, why: objective }] : [],
+    chosen: name,
+    todos: [],
+    subgoals,
+  };
+}
+
 module.exports = {
   generateIdeas,
   refineIdea,
   generatePath,
+  explorationToPayload,
   // exported for tests
   labContext,
   normalizeIdeas,

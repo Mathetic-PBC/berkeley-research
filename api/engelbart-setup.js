@@ -119,6 +119,38 @@ async function handler(req, res) {
         { lab, idea: body.idea, interest: body.interest }, credentials));
     }
 
+    // The exploration's commit. The browser sends its (edited) name + idea +
+    // four-lane path; the lab is refetched for authoritative provenance; the
+    // whole thing is mapped into the classic setup payload and bounded, so it
+    // rides the same pending-setup carrier and install code as a conversation
+    // project, with no change on the hc import side.
+    if (action === "save_path") {
+      const user = await verifyUser(bearerToken(req));
+      const lab = body.piId ? await Research.lab(body.piId) : null;
+      const provenance = lab && lab.pi
+        ? { lab_name: lab.pi.lab_name, pi_name: lab.pi.name, department: lab.pi.department }
+        : {};
+      const payload = SetupChat.normalizePayload(ResearchModel.explorationToPayload({
+        name: body.name,
+        objective: body.objective,
+        idea: body.idea,
+        lanes: body.lanes,
+        lab: provenance,
+      }));
+      if (!payload.name) {
+        const error = new Error("Name this project first");
+        error.statusCode = 400;
+        throw error;
+      }
+      if (!payload.subgoals.length && !payload.plan.description) {
+        const error = new Error("There is nothing to save yet");
+        error.statusCode = 400;
+        throw error;
+      }
+      await rpc("engelbart_save_pending_setup", { p_user_id: user.id, p_payload: payload });
+      return sendJson(res, 200, { saved: true });
+    }
+
     const error = new Error("Unknown Engelbart setup action");
     error.statusCode = 400;
     throw error;

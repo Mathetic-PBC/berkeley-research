@@ -127,3 +127,49 @@ test("a spent credit key surfaces as a 409, not a 502", async () => {
     (err) => err.statusCode === 409,
   );
 });
+
+test("explorationToPayload maps the four lanes into subgoals + todos", () => {
+  const payload = RM.explorationToPayload({
+    name: "Mirai mini",
+    objective: "Reproduce a slice of Mirai",
+    idea: { inspired: "Mirai" },
+    lab: { lab_name: "Yala Lab", pi_name: "Adam Yala", department: "CPH" },
+    lanes: {
+      brainstorm: ["Which subset?"],
+      understand: ["Read the paper\nfocus on the risk head"],
+      implement: ["", "Load the data"],   // blank dropped
+      apply: [],                           // empty lane -> no subgoal
+    },
+  });
+  assert.equal(payload.name, "Mirai mini");
+  assert.equal(payload.chosen, "Mirai mini");
+  assert.deepEqual(payload.goals, [{ label: "Mirai mini", why: "Reproduce a slice of Mirai" }]);
+  // provenance folded into the plan description
+  assert.match(payload.plan.description, /Based on Yala Lab, led by Adam Yala\./);
+  assert.match(payload.plan.description, /Inspired by Mirai\./);
+  // lanes -> subgoals, in order, empty lane dropped
+  assert.deepEqual(payload.subgoals.map((s) => s.label), ["Brainstorm", "Understand", "Implement"]);
+  // main\nsub folded to one line with an em dash
+  assert.equal(payload.subgoals[1].todos[0], "Read the paper — focus on the risk head");
+  assert.deepEqual(payload.subgoals[2].todos, ["Load the data"]);
+});
+
+test("explorationToPayload falls back to the idea for name and objective", () => {
+  const payload = RM.explorationToPayload({
+    idea: { title: "Fallback", what: "Do the thing", inspired: "" },
+    lanes: { brainstorm: ["a"] },
+  });
+  assert.equal(payload.name, "Fallback");
+  assert.equal(payload.plan.description, "Do the thing");
+  assert.equal(payload.chosen, "Fallback");
+});
+
+test("explorationToPayload survives SetupChat.normalizePayload unchanged in shape", () => {
+  const SetupChat = require("../api/_lib/setup-chat");
+  const bounded = SetupChat.normalizePayload(RM.explorationToPayload({
+    name: "P", objective: "O", lanes: { understand: ["read x"], apply: ["ship it"] },
+  }));
+  assert.equal(bounded.name, "P");
+  assert.deepEqual(bounded.subgoals.map((s) => s.label), ["Understand", "Apply"]);
+  assert.deepEqual(bounded.subgoals[0].todos, ["read x"]);
+});
