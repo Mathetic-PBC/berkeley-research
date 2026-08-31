@@ -116,6 +116,26 @@ function labContext(lab) {
 
 const JSON_ONLY = "Reply with ONE JSON object and nothing else -- no prose, no code fence.";
 
+// Every generator writes for the same reader: an undergraduate meeting research
+// for the first time, who has not used the lab's tools before. The failure mode
+// this guards against is real output like "Baseline Controller in Simulation --
+// a working trajectory-tracking controller (computed torque or PD+feedforward)
+// for a 6-DOF arm" -- accurate, and useless to that reader.
+const BEGINNER_RULES = [
+  "Write for an undergraduate doing research for the FIRST time, who has not used"
+    + " this lab's tools or methods before:",
+  "- Plain words. The first time a tool, method, or acronym appears, say in a few"
+    + " words what it is ('MuJoCo (a physics simulator)').",
+  "- A step is ONE concrete action with an obvious finish line -- 'Install MuJoCo"
+    + " and run its example simulation' -- never a research program disguised as a"
+    + " step ('Characterize sim-to-real mismatch').",
+  "- The FIRST step must be something they can do today, alone, with a laptop and"
+    + " free tools: install something, run an existing example, read one thing,"
+    + " reproduce the simplest known result.",
+  "- Build one small thing end-to-end before adding breadth or rigor. Ambition"
+    + " belongs at the end of the plan, not the start.",
+].join("\n");
+
 // The visible "research areas" are semantic clusters over the REAL labs an
 // interest retrieved -- never departments. The model only names and groups;
 // the labs beneath every area stay the authoritative rows the caller passed in.
@@ -204,6 +224,10 @@ async function generateIdeas(input, credentials, options = {}) {
     "Each idea is something a motivated student could genuinely start in about two weeks -- a tool,",
     "a visualization, a dataset, a reproduction, a small experiment -- that plausibly helps this lab.",
     "",
+    BEGINNER_RULES,
+    "Titles are plain English a first-year understands at a glance ('Teach a",
+    "simulated robot hand to hold an egg'), never method jargon.",
+    "",
     labContext(lab),
     "",
     interest ? `The student described their interest as: "${interest}". Favor ideas that connect to it.` : "",
@@ -239,6 +263,8 @@ async function refineIdea(input, credentials, options = {}) {
     "",
     `The student asked: "${note}". Fold that into the idea -- adjust scope, method, or framing as asked,`,
     "without drifting from what the lab actually does.",
+    "Keep the wording at the same level as the current idea: plain English an",
+    "undergraduate new to research understands, acronyms briefly explained.",
     "",
     `${JSON_ONLY}`,
     'Shape: {"title": "updated (or unchanged) title", "description": "updated description",',
@@ -270,6 +296,10 @@ async function generatePath(input, credentials, options = {}) {
     "- understand: what to read, learn, or reproduce -- reference the lab's REAL papers, projects, or PI where apt.",
     "- implement: concrete build steps to a first working version.",
     "- apply: how to share it back with the lab / turn it into a result.",
+    "",
+    BEGINNER_RULES,
+    'A row\'s optional quieter second line (after "\\n") is the place for the',
+    "how or the why -- use it to keep the first line a short plain action.",
     "",
     labContext(lab),
     "",
@@ -434,6 +464,16 @@ async function generateProject(input, credentials, options = {}) {
     "Turn a chosen research project idea into a COMPLETE structured project for a"
       + " student, grounded ONLY in the real lab data below.",
     "The project has four phases; give concrete GOALS for each (not a flat list).",
+    "",
+    BEGINNER_RULES,
+    "Goal titles are plain-English outcomes ('Get a robot arm moving in"
+      + " simulation'), never method names ('Baseline Controller in Simulation').",
+    "Each goal is about a week of a beginner's part-time effort; its todos are"
+      + " single sittings, ordered easiest first, each starting with a verb and"
+      + " naming its finish line.",
+    "The first implement goal is the on-ramp: install the tools, run an existing"
+      + " example, see SOMETHING work. Rigor (baselines, metrics, validation)"
+      + " comes in later goals only.",
     "",
     labContext(lab),
     "",
