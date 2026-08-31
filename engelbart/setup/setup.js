@@ -1,55 +1,98 @@
-/* The web setup conversation.
+/* The web onboarding: a research exploration.
  *
- * This is the local `hc setup-ui` page's conversation, wearing the same face
- * (see setup.css), moved to the browser and put behind an Engelbart account.
- * A member describes their first project, approves a plan, and leaves with
- * one command -- `npx engelbart-cli --code XXXX-XXXX-XXXX` -- that installs
- * on their machine and pulls this project down without a second sign-in.
+ * A member unfolds from their own interest out to a real Berkeley lab, shapes a
+ * concrete first project with the model, edits the four-lane path it proposes,
+ * and leaves with one command -- `npx engelbart-cli --code XXXX-XXXX-XXXX` --
+ * that installs Engelbart on their machine and pulls the project down without a
+ * second sign-in.
  *
- * The card contract is hc's setup_chat (the source of truth); this page only
- * draws what the server has already normalized. Nothing is written into the
- * member's account until they press the button at the end. The rendering is
- * kept deliberately in step with hc/.../trajectory/web/setup.js. */
+ * This is a vanilla-JS port of the "Engelbart Onboarding v3" design canvas: the
+ * same monospace, ink-on-white unfolding, the same black idea pills, tree
+ * lines, and entrance animations (see setup.css), translated out of the design
+ * runtime into the same plain el()/on()/btn() idiom the old setup page used.
+ * Where the reference simulated data with fixtures and setTimeout, this talks
+ * to the real endpoints:
+ *   /api/engelbart-research  areas | labs | lab      (read-only browsing)
+ *   /api/engelbart-setup     ideas | refine | path | save_path  (model-backed)
+ *   /api/engelbart-device    issue                   (the install code)
+ * The Supabase auth boot and the install-code handoff are carried over intact
+ * from the conversation page this replaces. */
 (function () {
   "use strict";
 
   var app = document.getElementById("app");
-  var STORE_KEY = "engelbart-web-setup-v1";
 
   var client = null;   // supabase client, once config is fetched
   var session = null;  // the member's session, once signed in
 
-  // `screen` is the only thing that decides what is drawn.
-  var st = {
-    screen: "loading",   // loading | signin | talk | done
-    msgs: [],
-    card: null,          // the last card the model named
-    answers: {},         // per question id, for the card on screen
-    shown: [],           // the cards drawn so far -- the step order is read
-                         // from this, and the server will not draw one out
-                         // of turn
-    thinking: false,
-    draft: "",
-    error: "",
-    plan: null,          // the plan they approved
-    goals: null,         // the goals they were offered
-    chosen: "",          // the one they picked
-    other: "",           // ...or the one they typed
-    goalNote: "",        // what else the rows should know about it
-    todos: [],           // rows, editable -- flat, when it did not break down
-    pieces: [],          // ...or the pieces of the chosen goal, with rows
-    name: "",            // the project's name, typed while the rest arrives
-    made: null,          // { code, expiresInSeconds } once the code is issued
-    saving: false        // the button is mid-request
+  // Progress rail: interest -> area -> lab -> project. Each phase sits at one
+  // of these depths; steps shallower than the current one are walkable back.
+  var RAIL = [
+    { label: "Interest", phase: "interest", depth: 0 },
+    { label: "Area", phase: "direction", depth: 1 },
+    { label: "Lab", phase: "lab", depth: 2 },
+    { label: "Project", phase: "project", depth: 3 }
+  ];
+  var DEPTH = {
+    interest: 0, direction: 1, lab: 2, explore: 2,
+    project: 3, generating: 3, path: 3, done: 3
   };
 
-  var OPEN = "Tell me what you're working on in your own words."
-    + " I'll ask a few questions, then write up a plan for you to approve.";
+  var LANES = ["brainstorm", "understand", "implement", "apply"];
+  var LANE_LABEL = {
+    brainstorm: "Brainstorm", understand: "Understand",
+    implement: "Implement", apply: "Apply"
+  };
+  var LANE_NOTE = {
+    brainstorm: "Open questions to explore first — these can change as you learn.",
+    understand: "What to read or reproduce, grounded in the lab's real work.",
+    implement: "Concrete steps to a first working version.",
+    apply: "How to share it back with the lab."
+  };
+
+  var CURL_INSTALL = "https://berkeley.mathetic.com/engelbart/install.sh";
+
+  // `screen` gates loading/sign-in; within `flow`, `phase` is what is drawn.
+  var st = {
+    screen: "loading",   // loading | signin | flow
+    phase: "interest",   // interest | direction | lab | explore | project | generating | path | done
+    thinking: false,     // a phase transition is in flight
+    error: "",
+    menu: false,         // account menu open
+
+    draft0: "",          // the interest textarea
+    interest: "",        // the submitted interest
+
+    areas: [],
+    areaIdx: -1,
+
+    labs: [],
+    labSel: null,        // chosen pi_id
+
+    lab: null,           // { pi, members, projects }
+    ideas: [],
+    ideasLoading: false,
+    ideasError: "",
+    hoverIdea: -1,
+
+    idea: null,          // the chosen, editable idea { title, description, why, inspired }
+
+    refMsgs: [],         // [{ who: 'you' | 'engelbart', text }]
+    refDraft: "",
+    refining: false,
+
+    path: null,          // { name, objective } as returned
+    lanes: null,         // editable { brainstorm: [{id,text}], ... }
+    name: "",
+    saving: false,
+
+    made: null,          // { name, code, expiresInSeconds }
+    installKind: "npx",  // npx | curl
+
+    profile: null        // the open researcher/lab modal, or null
+  };
 
   function dark() {
-    // Light unless the reader has asked for dark on this page: the first
-    // thing anybody sees of this tool should not depend on a system setting
-    // made for something else.
     try {
       return window.localStorage
         && window.localStorage.getItem("hc-setup-theme") === "dark";
@@ -64,69 +107,43 @@
     if (text != null) node.textContent = text;
     return node;
   }
-
   function on(node, event, fn) { node.addEventListener(event, fn); return node; }
+  function str(value) { return value == null ? "" : String(value); }
+  function fresh() { return "x" + Math.random().toString(36).slice(2, 8); }
+  function row(text) { return { id: fresh(), text: str(text) }; }
 
-  function btn(label, cls, fn, disabled) {
+  function btn(label, cls, fn, opts) {
+    opts = opts || {};
     var b = el("button", "btn " + (cls || ""));
     b.appendChild(el("span", "", label));
-    if ((cls || "").indexOf("btn-on") >= 0) b.appendChild(el("span", "go", "›"));
-    if (disabled) b.setAttribute("disabled", "disabled");
+    if (opts.arrow) b.appendChild(el("span", "go", "›"));
+    if (opts.disabled) b.setAttribute("disabled", "disabled");
     else on(b, "click", fn);
     return b;
   }
 
-  function str(value) { return value == null ? "" : String(value); }
-
-  function fresh() { return "x" + Math.random().toString(36).slice(2, 8); }
-
-  function row(text) { return { id: fresh(), text: str(text) }; }
-
-  // --- persistence ----------------------------------------------------------
-
-  function remember() {
-    try {
-      sessionStorage.setItem(STORE_KEY, JSON.stringify({
-        msgs: st.msgs, shown: st.shown, card: st.card,
-        plan: st.plan, goals: st.goals, chosen: st.chosen
-      }));
-    } catch (e) { /* private windows forget; the page still works */ }
+  function initials(name) {
+    var parts = str(name).trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "·";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
 
-  function restore() {
-    try {
-      var held = JSON.parse(sessionStorage.getItem(STORE_KEY) || "null");
-      if (!held || !Array.isArray(held.msgs) || !held.msgs.length) return;
-      st.msgs = held.msgs;
-      st.shown = Array.isArray(held.shown) ? held.shown : [];
-      st.card = held.card || null;
-      st.plan = held.plan || null;
-      st.goals = held.goals || null;
-      st.chosen = str(held.chosen);
-      if (st.card && st.card.card === "todos") {
-        st.todos = (st.card.todos || []).map(row);
-        st.pieces = (st.card.subgoals || []).map(function (g) {
-          return { id: fresh(), label: g.label,
-                   todos: (g.todos || []).map(row) };
-        });
-      }
-    } catch (e) { /* a torn record is a fresh start */ }
-  }
-
-  function forget() {
-    try { sessionStorage.removeItem(STORE_KEY); } catch (e) { /* fine */ }
+  function grow(area) {
+    area.style.height = "auto";
+    area.style.height = Math.min(area.scrollHeight, 260) + "px";
   }
 
   // --- the server -----------------------------------------------------------
 
-  function api(action, body) {
-    return fetch("/api/engelbart-setup", {
+  function post(path, body) {
+    return fetch(path, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: "Bearer " + (session && session.access_token)
       },
-      body: JSON.stringify(Object.assign({ action: action }, body || {}))
+      body: JSON.stringify(body || {})
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (value) {
         if (!r.ok) throw new Error(value.error || "the request failed");
@@ -134,85 +151,326 @@
       });
     });
   }
-
-  // --- the conversation -----------------------------------------------------
-
-  function say(role, text) {
-    if (!str(text)) return;
-    st.msgs.push({ role: role, text: str(text) });
+  function research(action, body) {
+    return post("/api/engelbart-research", Object.assign({ action: action }, body || {}));
+  }
+  function setup(action, body) {
+    return post("/api/engelbart-setup", Object.assign({ action: action }, body || {}));
+  }
+  function issueCode() {
+    return post("/api/engelbart-device", { action: "issue" });
   }
 
-  function round(extra) {
-    // One turn: the whole transcript out, one card back. The card the model
-    // named replaces whatever was on screen.
-    st.thinking = true;
-    st.error = "";
-    st.card = null;
-    st.answers = {};
-    remember();
+  // --- moving through the exploration --------------------------------------
+
+  function fail(error) {
+    st.thinking = false;
+    st.error = (error && error.message) || "something went wrong";
     draw();
-    api("turn", { transcript: st.msgs.concat(extra || []), shown: st.shown })
-      .then(function (out) {
-        st.thinking = false;
-        if (!out || !out.ok) {
-          st.error = (out && out.error) || "setup could not reach Claude";
-          draw();
-          return;
-        }
-        say("engelbart", out.say);
-        st.card = out;
-        if (out.card && out.card !== "none") st.shown.push(out.card);
-        if (out.card === "plan") st.plan = out.plan;
-        if (out.card === "goals") st.goals = out.goals;
-        if (out.card === "todos") {
-          st.todos = (out.todos || []).map(row);
-          st.pieces = (out.subgoals || []).map(function (g) {
-            return { id: fresh(), label: g.label,
-                     todos: (g.todos || []).map(row) };
-          });
-        }
-        remember();
+  }
+
+  function submitInterest() {
+    var interest = st.draft0.trim();
+    if (!interest || st.thinking) return;
+    st.interest = interest;
+    st.error = "";
+    st.thinking = true;
+    draw();
+    research("areas", { interest: interest }).then(function (out) {
+      st.thinking = false;
+      st.areas = (out.areas || []).slice(0, 3);
+      if (!st.areas.length) {
+        st.error = "Nothing matched that yet — try describing it a little differently.";
         draw();
-      })
-      .catch(function (error) {
-        st.thinking = false;
-        st.error = error.message || "setup could not reach Claude";
+        return;
+      }
+      st.phase = "direction";
+      draw();
+    }, fail);
+  }
+
+  function pickArea(i) {
+    if (st.thinking) return;
+    st.areaIdx = i;
+    st.error = "";
+    st.thinking = true;
+    draw();
+    research("labs", {
+      departmentId: st.areas[i].department_id, interest: st.interest
+    }).then(function (out) {
+      st.thinking = false;
+      st.labs = out.labs || [];
+      if (!st.labs.length) {
+        st.error = "No labs surfaced for that area — pick another.";
+        st.phase = "direction";
+        draw();
+        return;
+      }
+      st.phase = "lab";
+      draw();
+    }, fail);
+  }
+
+  function pickLab(piId) {
+    if (st.thinking) return;
+    st.labSel = piId;
+    st.error = "";
+    st.thinking = true;
+    draw();
+    research("lab", { piId: piId }).then(function (detail) {
+      st.thinking = false;
+      st.lab = detail;
+      st.phase = "explore";
+      st.hoverIdea = -1;
+      draw();
+      loadIdeas();
+    }, fail);
+  }
+
+  // Ideas are model-backed and billed to the member; a spent key is a friendly
+  // 409, so a failure here leaves the lab tree standing with a retry rather
+  // than throwing the whole screen away.
+  function loadIdeas() {
+    st.ideas = [];
+    st.ideasError = "";
+    st.ideasLoading = true;
+    draw();
+    setup("ideas", { piId: st.labSel, interest: st.interest }).then(function (out) {
+      st.ideasLoading = false;
+      st.ideas = out.ideas || [];
+      if (!st.ideas.length) st.ideasError = "No ideas came back — try again.";
+      draw();
+    }, function (error) {
+      st.ideasLoading = false;
+      st.ideasError = (error && error.message) || "could not reach Claude";
+      draw();
+    });
+  }
+
+  function pickIdea(i) {
+    var idea = st.ideas[i];
+    st.idea = {
+      title: str(idea.title),
+      description: str(idea.what),
+      why: str(idea.why),
+      inspired: str(idea.inspired)
+    };
+    st.refMsgs = [];
+    st.refDraft = "";
+    st.phase = "project";
+    draw();
+  }
+
+  function sendRefine() {
+    var note = st.refDraft.trim();
+    if (!note || st.refining) return;
+    st.refMsgs.push({ who: "you", text: note });
+    st.refDraft = "";
+    st.refining = true;
+    st.error = "";
+    draw();
+    setup("refine", {
+      piId: st.labSel,
+      idea: { title: st.idea.title, description: st.idea.description },
+      note: note
+    }).then(function (out) {
+      st.refining = false;
+      if (out.title) st.idea.title = out.title;
+      if (out.description) st.idea.description = out.description;
+      st.refMsgs.push({ who: "engelbart", text: out.say || "Updated the idea above." });
+      draw();
+    }, function (error) {
+      st.refining = false;
+      st.refMsgs.push({
+        who: "engelbart",
+        text: (error && error.message) || "I couldn't reach Claude just then."
+      });
+      draw();
+    });
+  }
+
+  function generatePath() {
+    if (st.thinking) return;
+    st.error = "";
+    st.thinking = true;
+    st.phase = "generating";
+    draw();
+    setup("path", {
+      piId: st.labSel,
+      idea: { title: st.idea.title, description: st.idea.description },
+      interest: st.interest
+    }).then(function (out) {
+      st.thinking = false;
+      st.path = { name: out.name || st.idea.title, objective: out.objective || st.idea.description };
+      st.lanes = {};
+      LANES.forEach(function (lane) {
+        st.lanes[lane] = ((out.lanes && out.lanes[lane]) || []).map(row);
+      });
+      st.name = st.path.name;
+      st.phase = "path";
+      draw();
+    }, function (error) {
+      st.thinking = false;
+      st.phase = "project";
+      st.error = (error && error.message) || "the path could not be charted";
+      draw();
+    });
+  }
+
+  // The one write: save the edited path, then mint the install code.
+  function createProject() {
+    if (!st.name.trim() || st.saving) return;
+    st.saving = true;
+    st.error = "";
+    draw();
+    var lanes = {};
+    LANES.forEach(function (lane) {
+      lanes[lane] = st.lanes[lane]
+        .map(function (r) { return r.text; })
+        .filter(function (t) { return t.trim(); });
+    });
+    setup("save_path", {
+      piId: st.labSel,
+      name: st.name,
+      objective: st.path.objective,
+      idea: {
+        title: st.idea.title,
+        description: st.idea.description,
+        inspired: st.idea.inspired
+      },
+      lanes: lanes
+    }).then(function () {
+      return issueCode();
+    }).then(function (issued) {
+      st.saving = false;
+      st.made = {
+        name: st.name.trim(),
+        code: issued.code,
+        expiresInSeconds: issued.expiresInSeconds
+      };
+      st.phase = "done";
+      draw();
+    }).catch(function (error) {
+      st.saving = false;
+      st.error = (error && error.message) || "the project could not be saved";
+      draw();
+    });
+  }
+
+  function goBackTo(phase) {
+    if (st.thinking) return;
+    st.error = "";
+    st.phase = phase;
+    st.menu = false;
+    draw();
+  }
+
+  function restart() {
+    st.phase = "interest";
+    st.draft0 = "";
+    st.interest = "";
+    st.areas = []; st.areaIdx = -1;
+    st.labs = []; st.labSel = null;
+    st.lab = null; st.ideas = []; st.ideasError = ""; st.hoverIdea = -1;
+    st.idea = null; st.refMsgs = []; st.refDraft = "";
+    st.path = null; st.lanes = null; st.name = "";
+    st.made = null; st.error = ""; st.profile = null;
+    draw();
+  }
+
+  // --- the modal: a researcher, or the lab -----------------------------------
+
+  function openPI() {
+    var pi = st.lab && st.lab.pi;
+    if (!pi) return;
+    st.profile = {
+      name: pi.name,
+      role: pi.title || "Principal investigator",
+      lab: [pi.lab_name, pi.department].filter(Boolean).join(" · "),
+      bio: pi.bio,
+      interests: pi.interests || [],
+      works: (st.lab.projects || []).slice(0, 6),
+      worksLabel: "The lab's work",
+      url: pi.url || pi.lab_url || ""
+    };
+    draw();
+  }
+
+  function openMember(m) {
+    var pi = (st.lab && st.lab.pi) || {};
+    st.profile = {
+      name: m.name,
+      role: m.title || "PhD researcher",
+      lab: [pi.lab_name, pi.name ? "advised by " + pi.name : ""].filter(Boolean).join(" · "),
+      bio: "",
+      interests: (m.interests && m.interests.length) ? m.interests : (pi.interests || []),
+      interestsNote: (m.interests && m.interests.length) ? "" : "Working within the lab's areas.",
+      works: [],
+      url: ""
+    };
+    draw();
+  }
+
+  function closeModal() { st.profile = null; draw(); }
+
+  // --- chrome ---------------------------------------------------------------
+
+  function brandNode() { app.appendChild(el("div", "brand", "Engelbart")); }
+
+  function acctNode() {
+    if (!session || !session.user) return;
+    var wrap = el("div", "acct-wrap");
+    var b = el("button", "acct", initials(session.user.email || "?"));
+    on(b, "click", function () { st.menu = !st.menu; draw(); });
+    wrap.appendChild(b);
+    if (st.menu) {
+      var menu = el("div", "menu");
+      menu.appendChild(el("div", "menu-email", session.user.email || "signed in"));
+      var theme = el("button", "menu-btn", dark() ? "Switch to light" : "Switch to dark");
+      on(theme, "click", function () {
+        try {
+          window.localStorage.setItem("hc-setup-theme", dark() ? "light" : "dark");
+        } catch (e) { /* private windows keep the default */ }
+        st.menu = false;
         draw();
       });
+      menu.appendChild(theme);
+      var out = el("button", "menu-btn", "Sign out");
+      on(out, "click", function () {
+        if (client) client.auth.signOut();
+        window.location.href = "/engelbart/signin";
+      });
+      menu.appendChild(out);
+      wrap.appendChild(menu);
+      var scrim = el("div", "scrim");
+      on(scrim, "click", function () { st.menu = false; draw(); });
+      app.appendChild(scrim);
+    }
+    app.appendChild(wrap);
   }
 
-  function send() {
-    var text = st.draft.trim();
-    if (!text || st.thinking) return;
-    say("you", text);
-    st.draft = "";
-    round();
-  }
-
-  // --- what the reader picked, as their turn --------------------------------
-
-  function answersAsSaid() {
-    var items = (st.card && st.card.questions && st.card.questions.items) || [];
-    var said = [];
-    items.forEach(function (q) {
-      var got = st.answers[q.id];
-      if (Array.isArray(got)) got = got.join(" · ");
-      got = str(got).trim();
-      if (got) said.push(q.title + ": " + got);
+  function railNode() {
+    var cur = DEPTH[st.phase];
+    var reachable = {
+      interest: true,
+      direction: st.areas.length > 0,
+      lab: st.labs.length > 0,
+      project: !!st.idea
+    };
+    var rail = el("div", "rail");
+    var inner = el("div", "rail-inner");
+    inner.appendChild(el("div", "rail-line"));
+    RAIL.forEach(function (stepDef) {
+      var back = stepDef.depth < cur && reachable[stepDef.phase];
+      var here = stepDef.depth === cur;
+      var stepEl = el("div", "rail-step" + (here ? " cur" : back ? " go" : ""));
+      stepEl.appendChild(el("span", "rail-dot"));
+      stepEl.appendChild(el("span", "rail-lbl", stepDef.label));
+      if (back) on(stepEl, "click", function () { goBackTo(stepDef.phase); });
+      inner.appendChild(stepEl);
     });
-    return said.join("\n");
-  }
-
-  function submitAnswers() {
-    var said = answersAsSaid();
-    if (!said) return;
-    say("you", said);
-    round();
-  }
-
-  function skipAnswers() {
-    say("you", "skip -- decide for me");
-    round();
+    rail.appendChild(inner);
+    app.appendChild(rail);
   }
 
   // --- drawing --------------------------------------------------------------
@@ -222,682 +480,605 @@
     app.textContent = "";
     if (st.screen === "loading") return drawLoading();
     if (st.screen === "signin") return drawSignin();
-    if (st.screen === "done") return drawDone();
-    drawTalk();
-  }
-
-  function column(parent) {
-    var wrap = el("div", "wrap");
-    var col = el("div", "col");
-    wrap.appendChild(col);
-    parent.appendChild(wrap);
-    return col;
-  }
-
-  function hero(col, note) {
-    var box = el("div", "hero rise");
-    box.appendChild(el("div", "hero-name", "Engelbart"));
-    if (note) box.appendChild(el("div", "hero-note", note));
-    col.appendChild(box);
-  }
-
-  function whoBar() {
-    if (!session || !session.user) return;
-    var bar = el("div", "who");
-    var line = el("span", "", session.user.email || "signed in");
-    var dot = el("span", "dot");
-    var out = el("button", "", "sign out");
-    on(out, "click", function () {
-      if (client) client.auth.signOut();
-      window.location.href = "/engelbart/signin";
-    });
-    bar.appendChild(dot);
-    bar.appendChild(line);
-    bar.appendChild(el("span", "", "·"));
-    bar.appendChild(out);
-    app.appendChild(bar);
+    brandNode();
+    acctNode();
+    if (st.phase === "done") { drawDone(); return; }
+    railNode();
+    drawFlow();
+    if (st.profile) drawModal();
   }
 
   function drawLoading() {
-    var col = column(app);
-    hero(col, st.error || "Waking up…");
+    var wrap = el("div", "wrap");
+    var box = el("div", "loading");
+    box.appendChild(el("div", "done-word", "Engelbart"));
+    box.appendChild(el("div", "done-note", st.error || "Waking up…"));
+    wrap.appendChild(box);
+    app.appendChild(wrap);
   }
 
-  // Signed out: setting a project up starts with an account, and the button
-  // is the whole of the screen.
   function drawSignin() {
-    var col = column(app);
-    hero(col, "");
-    var card = el("div", "card rise");
-    var body = el("div", "card-body");
-    body.appendChild(el("div", "card-title", "Set up your first project"));
-    body.appendChild(el("div", "card-lede",
-      "Describe the work, approve a plan, and leave with one command that"
-      + " installs Engelbart on your machine and opens the project. It starts"
-      + " with your Engelbart account."));
-    var acts = el("div", "acts");
-    var go = el("a", "btn btn-on");
+    brandNode();
+    var wrap = el("div", "wrap");
+    var gate = el("div", "gate in");
+    gate.appendChild(el("div", "gate-title", "Find your first research project"));
+    gate.appendChild(el("div", "gate-lede",
+      "Start from what you're curious about. Engelbart walks you out to a real"
+      + " Berkeley lab, shapes a concrete first project, and hands you one"
+      + " command to install it on your machine. It starts with your account."));
+    var go = el("a", "btn btn-dark gate-cta");
     go.setAttribute("href", "/engelbart/signin");
-    go.appendChild(el("span", "", "Sign in, then come back"));
+    go.appendChild(el("span", "", "Sign in to begin"));
     go.appendChild(el("span", "go", "›"));
-    acts.appendChild(go);
-    body.appendChild(acts);
-    card.appendChild(body);
-    col.appendChild(card);
+    gate.appendChild(go);
+    wrap.appendChild(gate);
+    app.appendChild(wrap);
   }
 
-  // The conversation.
-  function drawTalk() {
-    whoBar();
-    var col = column(app);
-    if (st.msgs.length <= 1 && !st.card) hero(col, "");
+  function drawFlow() {
+    var wrap = el("div", "wrap");
+    var stage = el("div", "stage");
+    wrap.appendChild(stage);
+    app.appendChild(wrap);
 
-    st.msgs.forEach(function (m, index) {
-      var cls = "msg rise " + (m.role === "you" ? "msg-you" : "msg-them");
-      if (index === 0 && m.role !== "you" && m.text === OPEN) cls += " msg-opening";
-      var box = el("div", cls);
-      box.appendChild(el("div", "lbl", m.role === "you" ? "you" : "engelbart"));
-      box.appendChild(el("div", "msg-body", m.text));
-      col.appendChild(box);
-    });
+    if (st.phase === "interest") { phaseInterest(stage); return; }
 
-    if (st.thinking) col.appendChild(generating());
-
-    if (st.error) {
-      var bad = el("div", "");
-      bad.appendChild(el("div", "err", st.error));
-      var again = el("div", "acts");
-      again.appendChild(btn("Try again", "btn-on", function () { round(); }));
-      bad.appendChild(again);
-      col.appendChild(bad);
-    }
-
-    var kind = st.card && st.card.card;
-    if (!st.thinking && kind === "questions") drawQuestions(col);
-    if (!st.thinking && kind === "plan") drawPlan(col);
-    if (!st.thinking && kind === "goals") drawGoals(col);
-    if (!st.thinking && kind === "todos") drawTodos(col);
-
-    drawComposer(app);
+    contextLine(stage);
+    if (st.phase === "direction") phaseDirection(stage);
+    else if (st.phase === "lab") phaseLab(stage);
+    else if (st.phase === "explore") phaseExplore(stage);
+    else if (st.phase === "project") phaseProject(stage);
+    else if (st.phase === "generating") phaseGenerating(stage);
+    else if (st.phase === "path") phasePath(stage);
   }
 
-  function generating() {
-    // Nine dots in a square, lit in turn: something is being made, which is
-    // what is actually happening.
-    var box = el("div", "think rise");
-    var grid = el("span", "dots");
+  function contextLine(stage) {
+    var wrap = el("div", "ctx-wrap");
+    var line = el("div", "ctx");
+    line.appendChild(el("span", "cap", "you"));
+    line.appendChild(el("span", "ctx-txt", st.interest));
+    on(line, "click", function () { goBackTo("interest"); });
+    wrap.appendChild(line);
+    var join = el("div", "ctx-join");
+    join.appendChild(el("i")); join.appendChild(el("b")); join.appendChild(el("i"));
+    wrap.appendChild(join);
+    stage.appendChild(wrap);
+  }
+
+  function generating(label) {
+    var box = el("div", "generating");
+    var dots = el("span", "dots");
     for (var i = 0; i < 9; i++) {
-      var dot = el("span", "dot");
-      dot.style.animationDelay = (i % 3 + Math.floor(i / 3)) * 90 + "ms";
-      grid.appendChild(dot);
+      var d = el("span");
+      d.style.animationDelay = (i % 3 + Math.floor(i / 3)) * 90 + "ms";
+      dots.appendChild(d);
     }
-    box.appendChild(grid);
-    box.appendChild(el("span", "", "generating"));
+    box.appendChild(dots);
+    box.appendChild(el("span", "", label || "thinking"));
     return box;
   }
 
-  function cardBox(col, eyebrow, right) {
-    var card = el("div", "card rise");
-    var head = el("div", "card-head");
-    var line = el("div", "");
-    line.style.display = "flex";
-    line.style.alignItems = "baseline";
-    line.appendChild(el("span", "lbl", eyebrow));
-    if (right) line.appendChild(el("span", "lbl right", right));
-    head.appendChild(line);
-    head.appendChild(el("div", "rule"));
-    card.appendChild(head);
-    var body = el("div", "card-body");
-    card.appendChild(body);
-    col.appendChild(card);
-    return body;
+  function errorNode(stage) {
+    if (st.error) stage.appendChild(el("div", "err center", st.error));
   }
 
-  // --- the question card, in its four shapes --------------------------------
+  // --- interest -------------------------------------------------------------
 
-  function drawQuestions(col) {
-    var set = st.card.questions;
-    var items = set.items || [];
-    var body = cardBox(col, set.eyebrow || "a few questions",
-                       items.length === 1 ? "1 question"
-                                          : items.length + " questions");
-    items.forEach(function (q) { body.appendChild(questionNode(q)); });
-
-    var acts = el("div", "acts");
-    var ready = items.some(function (q) {
-      var got = st.answers[q.id];
-      return Array.isArray(got) ? got.length : str(got).trim();
-    });
-    acts.appendChild(btn("Send answers", ready ? "btn-on" : "",
-                         submitAnswers, !ready));
-    acts.appendChild(btn("Skip", "", skipAnswers));
-    body.appendChild(acts);
-  }
-
-  function questionNode(q) {
-    var box = el("div", "q");
-    box.appendChild(el("div", "card-title", q.title));
-    if (q.subtitle) box.appendChild(el("div", "card-sub", q.subtitle));
-    else if (q.type === "select_all") {
-      box.appendChild(el("div", "card-sub", "select all that apply"));
-    }
-    if (q.type === "mcq" || q.type === "select_all") {
-      box.appendChild(optionList(q));
-    } else {
-      box.appendChild(writtenField(q));
-    }
-    return box;
-  }
-
-  function optionList(q) {
-    var many = q.type === "select_all";
-    var list = el("div", "");
-    (q.options || []).forEach(function (o) {
-      var picked = many
-        ? (st.answers[q.id] || []).indexOf(o.label) >= 0
-        : st.answers[q.id] === o.label;
-      var line = el("div", "opt");
-      line.setAttribute("data-on", picked ? "1" : "0");
-      var mark = el("span", "mark " + (many ? "mark-many" : "mark-one"),
-                    picked && many ? "✓" : "");
-      line.appendChild(mark);
-      var text = el("span", "opt-text");
-      text.appendChild(el("span", "opt-label", o.label));
-      if (o.why) text.appendChild(el("span", "opt-why", o.why));
-      line.appendChild(text);
-      on(line, "click", function () {
-        if (many) {
-          var held = (st.answers[q.id] || []).slice();
-          var at = held.indexOf(o.label);
-          if (at >= 0) held.splice(at, 1); else held.push(o.label);
-          st.answers[q.id] = held;
-        } else {
-          st.answers[q.id] = st.answers[q.id] === o.label ? "" : o.label;
-        }
-        draw();
-      });
-      list.appendChild(line);
-    });
-    return list;
-  }
-
-  function writtenField(q) {
-    var wrap = el("div", "field");
-    var long = q.type === "open";
-    var input = el(long ? "textarea" : "input", "f");
-    if (long) input.setAttribute("rows", "3");
-    else input.setAttribute("type", "text");
-    input.setAttribute("spellcheck", "false");
-    if (q.placeholder) input.setAttribute("placeholder", q.placeholder);
-    input.value = str(st.answers[q.id]);
-    on(input, "input", function () { st.answers[q.id] = input.value; });
-    on(input, "blur", draw);
-    wrap.appendChild(input);
-    return wrap;
-  }
-
-  // --- plan -----------------------------------------------------------------
-
-  function drawPlan(col) {
-    var plan = st.card.plan || {};
-    var body = cardBox(col, "plan");
-    body.appendChild(el("div", "card-title",
-                        "Here's what I think you're working on"));
-    str(plan.description).split("\n\n").forEach(function (para) {
-      if (!para.trim()) return;
-      body.appendChild(el("div", "prose", para.trim()));
-    });
-    if ((plan.unsure || []).length) {
-      var box = el("div", "inset");
-      box.appendChild(el("div", "lbl", "still unsure about"));
-      plan.unsure.forEach(function (line) {
-        var bul = el("div", "bullet");
-        bul.appendChild(el("span", "bullet-dot", "·"));
-        bul.appendChild(el("span", "", line));
-        box.appendChild(bul);
-      });
-      body.appendChild(box);
-    }
-    var ask = el("div", "card-title", "Is that basically right?");
-    ask.style.marginTop = "16px";
-    body.appendChild(ask);
-    var acts = el("div", "acts");
-    acts.appendChild(btn("Continue", "btn-on", function () {
-      st.plan = plan;
-      say("you", "Approved.");
-      round();
-    }));
-    acts.appendChild(btn("Add something", "", function () {
-      var field = document.querySelector(".composer .f");
-      if (field) field.focus();
-    }));
-    body.appendChild(acts);
-  }
-
-  // --- goals ----------------------------------------------------------------
-
-  function drawGoals(col) {
-    var goals = st.card.goals || [];
-    var typing = st.chosen === " other";
-    var label = typing ? st.other.trim() : st.chosen;
-    var body = cardBox(col, "goal");
-    body.appendChild(el("div", "card-title", "What should we focus on?"));
-
-    goals.forEach(function (g) {
-      var picked = st.chosen === g.label;
-      var line = el("div", "opt");
-      line.setAttribute("data-on", picked ? "1" : "0");
-      line.appendChild(el("span", "mark mark-one", ""));
-      var text = el("span", "opt-text");
-      text.appendChild(el("span", "opt-label", g.label));
-      if (g.why) text.appendChild(el("span", "opt-why", g.why));
-      line.appendChild(text);
-      on(line, "click", function () {
-        st.chosen = picked ? "" : g.label;
-        draw();
-      });
-      body.appendChild(line);
-    });
-
-    var mine = el("div", "opt");
-    mine.setAttribute("data-on", typing ? "1" : "0");
-    mine.appendChild(el("span", "mark mark-one", ""));
-    var mineText = el("span", "opt-text");
-    mineText.appendChild(el("span", "opt-label", "Something else"));
-    mineText.appendChild(el("span", "opt-why",
-      "tell it what to start on instead and it will use that"));
-    mine.appendChild(mineText);
-    on(mine, "click", function () {
-      st.chosen = typing ? "" : " other";
-      draw();
-    });
-    body.appendChild(mine);
-
-    if (typing) {
-      var wrap = el("div", "field");
-      var input = el("input", "f");
-      input.setAttribute("type", "text");
-      input.setAttribute("spellcheck", "false");
-      input.setAttribute("placeholder", "what to start on");
-      input.value = st.other;
-      on(input, "input", function () { st.other = input.value; });
-      on(input, "blur", draw);
-      wrap.appendChild(input);
-      body.appendChild(wrap);
-    }
-
-    if (label) {
-      var more = el("div", "rise");
-      more.style.marginTop = "14px";
-      more.appendChild(el("div", "lbl", "anything the rows should know"));
-      var box = el("div", "field");
-      var note = el("textarea", "f");
-      note.setAttribute("rows", "3");
-      note.setAttribute("spellcheck", "false");
-      note.setAttribute("placeholder",
-                        "constraints, what to leave alone, where to start…");
-      note.value = st.goalNote;
-      on(note, "input", function () { st.goalNote = note.value; });
-      box.appendChild(note);
-      more.appendChild(box);
-      body.appendChild(more);
-    }
-
-    var acts = el("div", "acts");
-    acts.appendChild(btn("Generate TODOs", label ? "btn-on" : "", function () {
-      st.goals = goals;
-      say("you", st.goalNote.trim()
-          ? label + "\n\n" + st.goalNote.trim() : label);
-      round();
-    }, !label));
-    body.appendChild(acts);
-  }
-
-  // --- todos, and the name ---------------------------------------------------
-
-  function drawTodos(col) {
-    var pieces = st.pieces;
-    var count = pieces.length
-      ? pieces.reduce(function (n, g) { return n + g.todos.length; }, 0)
-      : st.todos.length;
-    var body = cardBox(col, "todos",
-                       count === 1 ? "1 row" : count + " rows");
-
-    if (pieces.length) {
-      pieces.forEach(function (piece) {
-        var head = el("div", "piece");
-        var name = el("input", "f piece-name");
-        name.setAttribute("type", "text");
-        name.setAttribute("spellcheck", "false");
-        name.value = piece.label;
-        on(name, "input", function () { piece.label = name.value; });
-        head.appendChild(name);
-        var drop = el("button", "x", "×");
-        on(drop, "click", function () {
-          st.pieces = st.pieces.filter(function (g) { return g !== piece; });
-          draw();
-        });
-        head.appendChild(drop);
-        body.appendChild(head);
-        var kids = el("div", "kids");
-        piece.todos.forEach(function (t) {
-          kids.appendChild(todoRow(t, piece.todos, function () {
-            piece.todos = piece.todos.filter(function (r) { return r !== t; });
-          }));
-        });
-        kids.appendChild(adder(function (text) {
-          piece.todos.push(row(text));
-        }));
-        body.appendChild(kids);
-      });
-    } else {
-      st.todos.forEach(function (t) {
-        body.appendChild(todoRow(t, st.todos, function () {
-          st.todos = st.todos.filter(function (r) { return r !== t; });
-        }));
-      });
-      body.appendChild(adder(function (text) { st.todos.push(row(text)); }));
-    }
-
-    // The name, and the button that lives in it -- asked for here, by which
-    // point they have seen what the project is, so naming it is recognition
-    // rather than invention.
-    var nameWrap = el("div", "");
-    nameWrap.style.marginTop = "20px";
-    nameWrap.appendChild(el("div", "lbl", "name your project"));
-    var pill = el("div", "name-row");
-    var name = el("input", "f");
-    name.setAttribute("type", "text");
-    name.setAttribute("spellcheck", "false");
-    name.setAttribute("placeholder", "a short name");
-    name.value = st.name;
-    var go = btn(st.saving ? "Working…" : "Create project",
-                 st.name.trim() && !st.saving ? "btn-on" : "",
-                 complete, !st.name.trim() || st.saving);
-    on(name, "input", function () {
-      st.name = name.value;
-      if (st.name.trim() && !st.saving) {
-        go.removeAttribute("disabled");
-        go.className = "btn btn-on";
-        if (!go.querySelector(".go")) go.appendChild(el("span", "go", "›"));
-        go.onclick = complete;
-      } else {
-        go.setAttribute("disabled", "disabled");
-        go.className = "btn";
-        var chev = go.querySelector(".go");
-        if (chev) chev.remove();
+  function phaseInterest(stage) {
+    stage.appendChild(el("div", "spacer"));
+    stage.appendChild(el("div", "q0 in", "What are you interested in, and why?"));
+    var wrap = el("div", "field-wrap in");
+    var line = el("div", "eb-line");
+    var area = el("textarea", "eb-f eb-interest");
+    area.setAttribute("rows", "1");
+    area.setAttribute("spellcheck", "false");
+    area.setAttribute("placeholder",
+      "e.g. I like machine learning and medicine — using models to read scans…");
+    area.value = st.draft0;
+    on(area, "input", function () { st.draft0 = area.value; grow(area); });
+    on(area, "keydown", function (event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        submitInterest();
       }
     });
-    pill.appendChild(name);
-    pill.appendChild(go);
-    nameWrap.appendChild(pill);
-    body.appendChild(nameWrap);
-
-    if (st.error) body.appendChild(el("div", "err", st.error));
+    line.appendChild(area);
+    wrap.appendChild(line);
+    wrap.appendChild(el("div", "hint", st.draft0.trim() ? "Return to continue" : ""));
+    stage.appendChild(wrap);
+    if (st.thinking) stage.appendChild(generating("reading Berkeley"));
+    errorNode(stage);
+    focusInto(area);
   }
 
-  function todoRow(t, list, drop) {
-    var line = el("div", "row");
-    line.appendChild(el("span", "bullet-dot", "·"));
-    var input = el("input", "f");
-    input.setAttribute("type", "text");
+  // --- area -----------------------------------------------------------------
+
+  function phaseDirection(stage) {
+    stage.appendChild(el("div", "reveal-label in",
+      "That points toward a few research areas at Berkeley. Which pulls you most?"));
+    var grid = el("div", "area-grid");
+    st.areas.forEach(function (area, i) {
+      var col = el("div", "area-col in");
+      col.style.animationDelay = (i * 80) + "ms";
+      var node = el("button", "area-node", area.area);
+      on(node, "click", function () { pickArea(i); });
+      col.appendChild(node);
+      var n = area.n_labs || 0;
+      col.appendChild(el("div", "area-desc", n + (n === 1 ? " lab here" : " labs here")));
+      grid.appendChild(col);
+    });
+    stage.appendChild(grid);
+    if (st.thinking) stage.appendChild(generating("finding labs"));
+    errorNode(stage);
+  }
+
+  // --- lab ------------------------------------------------------------------
+
+  function phaseLab(stage) {
+    var area = st.areas[st.areaIdx];
+    stage.appendChild(el("div", "reveal-label in",
+      "In " + (area ? area.area : "that area")
+      + ", these labs work closest to what you described."));
+    var grid = el("div", "labs-grid");
+    st.labs.forEach(function (lab, i) {
+      var name = lab.lab_name || ((lab.pi_name || "") + " Lab");
+      var card = el("button", "lab-card in");
+      card.style.animationDelay = (i * 70) + "ms";
+      card.appendChild(el("div", "lab-logo", initials(name)));
+      card.appendChild(el("span", "lab-name", name));
+      var desc = lab.bio
+        ? clip(lab.bio, 96)
+        : (lab.interests || []).slice(0, 3).join(", ");
+      if (desc) card.appendChild(el("div", "lab-desc", desc));
+      var pi = lab.pi_name + (lab.title ? " · " + lab.title : "");
+      card.appendChild(el("div", "lab-pi", pi));
+      on(card, "click", function () { pickLab(lab.pi_id); });
+      grid.appendChild(card);
+    });
+    stage.appendChild(grid);
+    if (st.thinking) stage.appendChild(generating("opening the lab"));
+    errorNode(stage);
+  }
+
+  function clip(text, n) {
+    text = str(text).replace(/\s+/g, " ").trim();
+    return text.length > n ? text.slice(0, n - 1).trimEnd() + "…" : text;
+  }
+
+  // --- explore: the lab tree ------------------------------------------------
+
+  function phaseExplore(stage) {
+    var pi = (st.lab && st.lab.pi) || {};
+    var members = (st.lab && st.lab.members) || [];
+
+    stage.appendChild(el("div", "cap", "The lab"));
+    stage.appendChild(el("div", "stem draw", "")).style.height = "18px";
+
+    var piBtn = el("button", "node-pi in");
+    piBtn.appendChild(el("div", "avatar avatar-pi", initials(pi.name)));
+    var line = el("div", "person-line");
+    line.appendChild(el("span", "person-name", pi.name));
+    line.appendChild(el("span", "person-tag", "PI"));
+    piBtn.appendChild(line);
+    if (pi.lab_name) piBtn.appendChild(el("div", "person-focus", pi.lab_name));
+    on(piBtn, "click", openPI);
+    stage.appendChild(piBtn);
+
+    if (members.length) {
+      stage.appendChild(el("div", "members-label", "PhD researchers"));
+      var mrow = el("div", "members-row");
+      members.slice(0, 6).forEach(function (m, i) {
+        var mBtn = el("button", "member in");
+        mBtn.style.animationDelay = (i * 60) + "ms";
+        mBtn.appendChild(el("div", "avatar avatar-m", initials(m.name)));
+        var ml = el("div", "person-line");
+        ml.appendChild(el("span", "person-name", m.name));
+        mBtn.appendChild(ml);
+        var focus = (m.interests && m.interests.length)
+          ? m.interests.slice(0, 2).join(", ") : (m.title || "");
+        if (focus) mBtn.appendChild(el("div", "person-focus", clip(focus, 60)));
+        on(mBtn, "click", function () { openMember(m); });
+        mrow.appendChild(mBtn);
+      });
+      stage.appendChild(mrow);
+    }
+
+    stage.appendChild(el("div", "ideas-label", "Project ideas for this lab"));
+
+    if (st.ideasLoading) { stage.appendChild(generating("shaping ideas")); return; }
+    if (st.ideasError) {
+      stage.appendChild(el("div", "err center", st.ideasError));
+      var again = el("div", "actions");
+      again.style.justifyContent = "center";
+      again.appendChild(btn("Try again", "btn-ghost", loadIdeas));
+      stage.appendChild(again);
+      return;
+    }
+
+    var grid = el("div", "ideas-grid" + (st.hoverIdea >= 0 ? " hovering" : ""));
+    st.ideas.forEach(function (idea, i) {
+      var col = el("div", "idea-col in" + (st.hoverIdea === i ? " hot" : ""));
+      col.style.animationDelay = (i * 70) + "ms";
+      var pill = el("button", "idea-pill", idea.title);
+      on(pill, "click", function () { pickIdea(i); });
+      on(col, "mouseenter", function () { setHover(i); });
+      on(col, "mouseleave", function () { setHover(-1); });
+      col.appendChild(pill);
+      if (idea.what) col.appendChild(el("div", "idea-desc", idea.what));
+      grid.appendChild(col);
+    });
+    stage.appendChild(grid);
+  }
+
+  // Hover is a light touch: rerender only the ideas grid's hot/dim classes,
+  // not the whole tree, so pointing at a pill stays cheap.
+  function setHover(i) {
+    if (st.hoverIdea === i) return;
+    st.hoverIdea = i;
+    var grid = app.querySelector(".ideas-grid");
+    if (!grid) return;
+    grid.classList.toggle("hovering", i >= 0);
+    var cols = grid.querySelectorAll(".idea-col");
+    for (var k = 0; k < cols.length; k++) cols[k].classList.toggle("hot", k === i);
+  }
+
+  // --- project idea detail + inline refine ----------------------------------
+
+  function phaseProject(stage) {
+    var pi = (st.lab && st.lab.pi) || {};
+    var focus = el("div", "focus in");
+
+    focus.appendChild(el("div", "cap", "Your project"));
+
+    var titleLine = el("div", "focus-title-line");
+    var title = el("textarea", "eb-f focus-title");
+    title.setAttribute("rows", "1");
+    title.setAttribute("spellcheck", "false");
+    title.value = st.idea.title;
+    on(title, "input", function () { st.idea.title = title.value; grow(title); });
+    titleLine.appendChild(title);
+    focus.appendChild(titleLine);
+
+    var descLine = el("div", "focus-desc-line");
+    var desc = el("textarea", "eb-f focus-desc");
+    desc.setAttribute("rows", "2");
+    desc.setAttribute("spellcheck", "false");
+    desc.value = st.idea.description;
+    on(desc, "input", function () { st.idea.description = desc.value; grow(desc); });
+    descLine.appendChild(desc);
+    focus.appendChild(descLine);
+
+    if (st.idea.why) {
+      focus.appendChild(el("div", "cap focus-cap", "Why this project"));
+      focus.appendChild(el("div", "focus-why", st.idea.why));
+    }
+
+    focus.appendChild(el("div", "cap focus-cap", "Connected to"));
+    var meta = el("div", "focus-meta");
+    var link = el("button", "focus-link", pi.lab_name || ((pi.name || "the lab")));
+    on(link, "click", openPI);
+    meta.appendChild(link);
+    focus.appendChild(meta);
+    if (st.idea.inspired) {
+      focus.appendChild(el("div", "focus-sub", "Builds on " + st.idea.inspired + "."));
+    }
+
+    // Inline refine: a quiet conversation that edits the idea in place.
+    var refine = el("div", "ref-block");
+    st.refMsgs.forEach(function (m) {
+      var msg = el("div", "ref-msg");
+      msg.appendChild(el("div", "ref-who", m.who === "you" ? "you" : "engelbart"));
+      msg.appendChild(el("div", "ref-text " + m.who, m.text));
+      refine.appendChild(msg);
+    });
+    if (st.refining) refine.appendChild(generating("refining"));
+    var inputLine = el("div", "ref-input-line");
+    var input = el("textarea", "eb-f ref-input");
+    input.setAttribute("rows", "1");
     input.setAttribute("spellcheck", "false");
-    input.value = t.text;
-    on(input, "input", function () { t.text = input.value; });
-    line.appendChild(input);
-    var x = el("button", "x", "×");
-    on(x, "click", function () { drop(); draw(); });
+    input.setAttribute("placeholder", "Ask for a change — smaller scope, a different angle…");
+    input.value = st.refDraft;
+    on(input, "input", function () { st.refDraft = input.value; grow(input); });
+    on(input, "keydown", function (event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendRefine();
+      }
+    });
+    inputLine.appendChild(input);
+    refine.appendChild(inputLine);
+    focus.appendChild(refine);
+
+    var acts = el("div", "actions");
+    acts.appendChild(btn("Chart the path", "btn-dark", generatePath, { arrow: true }));
+    acts.appendChild(btn("Back to ideas", "btn-ghost", function () { goBackTo("explore"); }));
+    focus.appendChild(acts);
+
+    errorNode(focus);
+    stage.appendChild(focus);
+  }
+
+  // --- generating -----------------------------------------------------------
+
+  function phaseGenerating(stage) {
+    stage.appendChild(el("div", "focus in"))
+      .appendChild(el("div", "cap", "Your project"));
+    stage.appendChild(generating("charting a path through “" + clip(st.idea.title, 40) + "”"));
+  }
+
+  // --- the path -------------------------------------------------------------
+
+  function phasePath(stage) {
+    var path = el("div", "path");
+    path.appendChild(el("div", "path-head", "Your path"));
+    if (st.path.objective) {
+      path.appendChild(el("div", "path-target", "Toward: " + st.path.objective));
+    }
+
+    LANES.forEach(function (lane) {
+      var block = el("div", "lane");
+      block.appendChild(el("div", "lane-name", LANE_LABEL[lane]));
+      block.appendChild(el("div", "lane-note", LANE_NOTE[lane]));
+      var rows = el("div", "lane-rows");
+      st.lanes[lane].forEach(function (r) {
+        rows.appendChild(laneRow(lane, r));
+      });
+      rows.appendChild(laneAdder(lane));
+      block.appendChild(rows);
+      path.appendChild(block);
+    });
+
+    var namerow = el("div", "namerow");
+    var name = el("input", "eb-f");
+    name.setAttribute("type", "text");
+    name.setAttribute("spellcheck", "false");
+    name.setAttribute("placeholder", "name this project");
+    name.value = st.name;
+    on(name, "input", function () { st.name = name.value; syncCreate(); });
+    namerow.appendChild(name);
+    var create = btn(st.saving ? "Saving…" : "Create project",
+      st.name.trim() && !st.saving ? "btn-dark" : "btn-dark",
+      createProject, { arrow: true, disabled: !st.name.trim() || st.saving });
+    create.setAttribute("data-create", "1");
+    namerow.appendChild(create);
+    path.appendChild(namerow);
+
+    var acts = el("div", "actions");
+    acts.appendChild(btn("Back to the idea", "btn-ghost", function () { goBackTo("project"); }));
+    path.appendChild(acts);
+
+    errorNode(path);
+    stage.appendChild(path);
+  }
+
+  // Toggle the Create button without redrawing the whole path (which would
+  // blur the name field mid-type).
+  function syncCreate() {
+    var b = app.querySelector("[data-create]");
+    if (!b) return;
+    if (st.name.trim() && !st.saving) {
+      b.removeAttribute("disabled");
+      if (!b.querySelector(".go")) b.appendChild(el("span", "go", "›"));
+      b.onclick = createProject;
+    } else {
+      b.setAttribute("disabled", "disabled");
+      b.onclick = null;
+    }
+  }
+
+  function laneRow(lane, r) {
+    var line = el("div", "eb-row");
+    line.appendChild(el("span", "eb-row-dot", "·"));
+    var body = el("div", "eb-row-body");
+    var parts = str(r.text).split("\n");
+    body.appendChild(el("div", "eb-row-main", parts[0]));
+    if (parts.length > 1 && parts.slice(1).join(" ").trim()) {
+      body.appendChild(el("div", "eb-row-sub", parts.slice(1).join(" ")));
+    }
+    line.appendChild(body);
+    var x = el("button", "eb-x", "×");
+    on(x, "click", function () {
+      st.lanes[lane] = st.lanes[lane].filter(function (o) { return o !== r; });
+      draw();
+    });
     line.appendChild(x);
     return line;
   }
 
-  function adder(add) {
-    var line = el("div", "row");
-    line.appendChild(el("span", "bullet-dot", "·"));
-    var input = el("input", "f");
+  function laneAdder(lane) {
+    var line = el("div", "lane-add");
+    line.appendChild(el("span", "eb-row-dot", "·"));
+    var input = el("input", "eb-f");
     input.setAttribute("type", "text");
     input.setAttribute("spellcheck", "false");
-    input.setAttribute("placeholder", "add a row…");
+    input.setAttribute("placeholder", "add a step…");
     on(input, "keydown", function (event) {
       if (event.key !== "Enter") return;
       event.preventDefault();
       var text = input.value.trim();
       if (!text) return;
-      add(text);
+      st.lanes[lane].push(row(text));
       draw();
     });
     line.appendChild(input);
     return line;
   }
 
-  // The one write. Save the approved project, then mint the install code, and
-  // move to the screen that hands it over.
-  function complete() {
-    if (!st.name.trim() || st.saving) return;
-    st.saving = true;
-    st.error = "";
-    draw();
-    var payload = {
-      name: st.name,
-      plan: st.plan || { description: "", unsure: [] },
-      goals: st.goals || [],
-      chosen: st.chosen === " other" ? st.other : st.chosen,
-      todos: st.todos.map(function (t) { return t.text; }),
-      subgoals: st.pieces.map(function (g) {
-        return { label: g.label,
-                 todos: g.todos.map(function (t) { return t.text; }) };
-      })
-    };
-    api("save", { payload: payload })
-      .then(function () { return issueCode(); })
-      .then(function (issued) {
-        forget();
-        st.saving = false;
-        st.made = { name: st.name.trim(), code: issued.code,
-                    expiresInSeconds: issued.expiresInSeconds };
-        st.screen = "done";
-        draw();
-      })
-      .catch(function (error) {
-        st.saving = false;
-        st.error = error.message || "the project could not be saved";
-        draw();
-      });
-  }
+  // --- the researcher / lab modal -------------------------------------------
 
-  function issueCode() {
-    return fetch("/api/engelbart-device", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + (session && session.access_token)
-      },
-      body: JSON.stringify({ action: "issue" })
-    }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (value) {
-        if (!r.ok) throw new Error(value.error || "could not issue a setup code");
-        return value;
-      });
+  function drawModal() {
+    var p = st.profile;
+    var overlay = el("div", "overlay");
+    on(overlay, "click", function (event) {
+      if (event.target === overlay) closeModal();
     });
+    var modal = el("div", "modal");
+    var close = el("button", "modal-close", "×");
+    on(close, "click", closeModal);
+    modal.appendChild(close);
+
+    modal.appendChild(el("div", "modal-av", initials(p.name)));
+    modal.appendChild(el("div", "modal-name", p.name));
+    if (p.role) modal.appendChild(el("div", "modal-role", p.role));
+    if (p.lab) modal.appendChild(el("div", "modal-lab", p.lab));
+
+    if (p.bio) {
+      var s1 = el("div", "modal-sec");
+      s1.appendChild(el("div", "modal-cap", "About"));
+      s1.appendChild(el("div", "modal-bio", p.bio));
+      modal.appendChild(s1);
+    }
+    if (p.interests && p.interests.length) {
+      var s2 = el("div", "modal-sec");
+      s2.appendChild(el("div", "modal-cap", "Interests"));
+      s2.appendChild(el("div", "modal-interests", p.interests.join(" · ")));
+      if (p.interestsNote) s2.appendChild(el("div", "modal-lab", p.interestsNote));
+      modal.appendChild(s2);
+    }
+    if (p.works && p.works.length) {
+      var s3 = el("div", "modal-sec");
+      s3.appendChild(el("div", "modal-cap", p.worksLabel || "Selected work"));
+      p.works.forEach(function (w) {
+        var item = el("div", "modal-work");
+        item.appendChild(el("div", "modal-work-t", w.title));
+        if (w.description) item.appendChild(el("div", "modal-work-v", clip(w.description, 130)));
+        s3.appendChild(item);
+      });
+      modal.appendChild(s3);
+    }
+    if (p.url) {
+      var link = el("a", "modal-link", "Visit site");
+      link.setAttribute("href", p.url);
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener noreferrer");
+      modal.appendChild(link);
+    }
+
+    overlay.appendChild(modal);
+    app.appendChild(overlay);
   }
 
-  // The command, copyable -- a command someone retypes is a command someone
-  // mistypes.
-  function commandRow(command) {
+  // --- done: the install code -----------------------------------------------
+
+  function command() {
+    if (st.installKind === "curl") {
+      return "curl -fsSL " + CURL_INSTALL + " | sh -s -- --code " + st.made.code;
+    }
+    return "npx engelbart-cli --code " + st.made.code;
+  }
+
+  function commandRow() {
+    var cmd = command();
     var line = el("div", "cmd");
-    line.appendChild(el("span", "cmd-text", command));
+    line.appendChild(el("span", "cmd-text", cmd));
     var copy = el("button", "cmd-copy", "copy");
     on(copy, "click", function () {
       var done = function () {
         copy.textContent = "copied";
         setTimeout(function () { copy.textContent = "copy"; }, 1400);
       };
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(command).then(done, fallback);
-        } else fallback();
-      } catch (e) { fallback(); }
-      function fallback() {
+      var fallback = function () {
         var probe = document.createElement("textarea");
-        probe.value = command;
+        probe.value = cmd;
         document.body.appendChild(probe);
         probe.select();
         try { document.execCommand("copy"); done(); }
         catch (e2) { copy.textContent = "select it"; }
         document.body.removeChild(probe);
-      }
+      };
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(cmd).then(done, fallback);
+        } else fallback();
+      } catch (e) { fallback(); }
     });
     line.appendChild(copy);
     return line;
   }
 
-  function step(parent, n, text) {
-    var line = el("div", "step");
-    line.appendChild(el("div", "step-n", n));
-    var body = el("div", "step-b");
-    body.appendChild(el("div", "step-t", text));
-    line.appendChild(body);
-    parent.appendChild(line);
-  }
-
-  // The last screen: the project is saved to the account, and the command is
-  // the whole of what is left to do.
   function drawDone() {
-    whoBar();
-    var col = column(app);
-    hero(col, "“" + str(st.made.name) + "” is ready to install.");
+    var wrap = el("div", "wrap");
+    var done = el("div", "done");
 
-    var card = el("div", "card rise");
+    var heroBox = el("div", "done-hero");
+    heroBox.appendChild(el("div", "done-word", "Ready."));
+    heroBox.appendChild(el("div", "done-note",
+      "“" + str(st.made.name) + "” is saved to your account."));
+    done.appendChild(heroBox);
+
+    var card = el("div", "card");
     var head = el("div", "card-head");
-    head.appendChild(el("span", "lbl", "install it"));
-    head.appendChild(el("div", "rule"));
+    head.appendChild(el("div", "cap cap-l", "Install it"));
+    head.appendChild(el("div", "card-rule"));
     card.appendChild(head);
     var body = el("div", "card-body");
     body.appendChild(el("div", "card-lede",
       "Run this in a terminal on the machine you build on. It installs"
       + " Engelbart, connects this account, and opens your project — no"
       + " second sign-in."));
-    body.appendChild(commandRow("npx engelbart-cli --code " + st.made.code));
+    body.appendChild(commandRow());
+
+    var seg = el("div", "seg-row");
+    ["npx", "curl"].forEach(function (kind) {
+      var b = el("button", "seg " + (st.installKind === kind ? "on" : "off"),
+        kind === "npx" ? "npx" : "curl");
+      on(b, "click", function () { st.installKind = kind; draw(); });
+      seg.appendChild(b);
+    });
+    body.appendChild(seg);
+
     var mins = Math.round((st.made.expiresInSeconds || 900) / 60);
-    body.appendChild(el("div", "hint",
+    body.appendChild(el("div", "step-t",
       "The code works once and expires in " + mins
       + (mins === 1 ? " minute." : " minutes.")));
-    var acts = el("div", "acts");
-    acts.appendChild(btn("Get a new code", "", function () {
+
+    var acts = el("div", "actions");
+    acts.appendChild(btn("Get a new code", "btn-ghost", function () {
       issueCode().then(function (issued) {
         st.made.code = issued.code;
         st.made.expiresInSeconds = issued.expiresInSeconds;
         draw();
-      }).catch(function (error) {
-        st.error = error.message;
-        draw();
-      });
+      }).catch(function (error) { st.error = error.message; draw(); });
     }));
-    acts.appendChild(btn("Set up another", "", function () {
-      reset();
-      st.screen = "talk";
-      say("engelbart", OPEN);
-      draw();
-    }));
+    acts.appendChild(btn("Explore another", "btn-ghost", restart));
     body.appendChild(acts);
     if (st.error) body.appendChild(el("div", "err", st.error));
     card.appendChild(body);
-    col.appendChild(card);
+    done.appendChild(card);
 
-    var next = el("div", "card rise");
+    var next = el("div", "card");
     var nhead = el("div", "card-head");
-    nhead.appendChild(el("span", "lbl", "then, on your machine"));
-    nhead.appendChild(el("div", "rule"));
+    nhead.appendChild(el("div", "cap cap-l", "Then, on your machine"));
+    nhead.appendChild(el("div", "card-rule"));
     next.appendChild(nhead);
     var nbody = el("div", "card-body");
-    step(nbody, "1", "Run the command above. Engelbart installs and connects"
-      + " this account.");
-    step(nbody, "2", "Your project opens in the local workspace, its goals"
-      + " and rows already there.");
+    stepNode(nbody, "1", "Run the command above. Engelbart installs and connects this account.");
+    stepNode(nbody, "2", "Your project opens in the local workspace — its path already there.");
     next.appendChild(nbody);
-    col.appendChild(next);
+    done.appendChild(next);
+
+    wrap.appendChild(done);
+    app.appendChild(wrap);
   }
 
-  function reset() {
-    st.msgs = [];
-    st.card = null;
-    st.answers = {};
-    st.shown = [];
-    st.plan = null;
-    st.goals = null;
-    st.chosen = "";
-    st.other = "";
-    st.goalNote = "";
-    st.todos = [];
-    st.pieces = [];
-    st.name = "";
-    st.made = null;
-    st.error = "";
-    forget();
+  function stepNode(parent, n, text) {
+    var line = el("div", "step");
+    line.appendChild(el("div", "step-n", n));
+    line.appendChild(el("div", "step-t", text));
+    parent.appendChild(line);
   }
 
-  // --- the composer ---------------------------------------------------------
-
-  function drawComposer(parent) {
-    var foot = el("div", "foot");
-    var col = el("div", "col");
-    var first = st.msgs.length <= 1;
-    var box = el("div", "composer" + (first ? " composer-first" : ""));
-    var field = el("textarea", "f");
-    field.setAttribute("rows", "1");
-    field.setAttribute("spellcheck", "false");
-    field.setAttribute("aria-label", first
-      ? "What are you working on?" : "Message Engelbart");
-    field.setAttribute("placeholder", first
-      ? "What are you working on? Describe it however it comes out…"
-      : "or just talk — the card above still works");
-    field.value = st.draft;
-    on(field, "input", function () {
-      st.draft = field.value;
-      field.style.height = "auto";
-      field.style.height = Math.min(field.scrollHeight, 160) + "px";
-      var button = box.querySelector(".send");
-      if (!button) return;
-      if (st.draft.trim() && !st.thinking) {
-        button.removeAttribute("disabled");
-        button.className = "send send-on";
-      } else {
-        button.setAttribute("disabled", "disabled");
-        button.className = "send";
-      }
-    });
-    on(field, "keydown", function (event) {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        send();
-      }
-    });
-    box.appendChild(field);
-
-    var ready = !!st.draft.trim() && !st.thinking;
-    var button = el("button", "send" + (ready ? " send-on" : ""));
-    if (!ready) button.setAttribute("disabled", "disabled");
-    button.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24"'
-      + ' fill="none" stroke="currentColor" stroke-width="1.6"'
-      + ' stroke-linejoin="round"><path d="M3 20 L21 11 L4 4 L7 11 Z"></path>'
-      + '<path d="M7 11 L21 11"></path></svg>';
-    button.style.color = ready ? "var(--acc)" : "var(--fnt)";
-    on(button, "click", send);
-    box.appendChild(button);
-
-    col.appendChild(box);
-    foot.appendChild(col);
-    parent.appendChild(foot);
-
+  // Focus a freshly-drawn field only if nothing else is focused, so a redraw
+  // never steals the caret mid-type.
+  function focusInto(node) {
     if (document.activeElement === document.body) {
-      try { field.focus(); } catch (e) { /* not focusable yet */ }
+      try { node.focus(); } catch (e) { /* not focusable yet */ }
     }
   }
 
   try {
     if (window.matchMedia) {
-      window.matchMedia("(prefers-color-scheme: dark)")
-        .addEventListener("change", draw);
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
     }
   } catch (e) { /* an old browser keeps the theme it opened with */ }
 
@@ -910,10 +1091,9 @@
       draw();
       return;
     }
-    restore();
     if (st.screen === "loading" || st.screen === "signin") {
-      st.screen = "talk";
-      if (!st.msgs.length) say("engelbart", OPEN);
+      st.screen = "flow";
+      st.phase = "interest";
     }
     draw();
   }
@@ -928,8 +1108,7 @@
       .then(function (config) {
         client = window.supabase.createClient(
           config.supabaseUrl, config.supabaseAnonKey,
-          { auth: { persistSession: true, autoRefreshToken: true,
-                    detectSessionInUrl: true } });
+          { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
         client.auth.onAuthStateChange(function (_event, next) { enter(next); });
         return client.auth.getSession();
       })
