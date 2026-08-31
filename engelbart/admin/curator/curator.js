@@ -475,7 +475,25 @@
     selected.forEach((m, i) => wrap.appendChild(memberRow(lab, m, true, i)));
     rest.forEach((m) => wrap.appendChild(memberRow(lab, m, false, -1)));
     if (!detail.members || !detail.members.length) wrap.appendChild(el("p", { class: "muted" }, "No students on record."));
+    wrap.appendChild(el("button", { class: "mini", type: "button",
+      onclick: () => addStudent(lab, detail) }, "+ Add PhD student"));
     return wrap;
+  }
+
+  // Create a PhD student under this PI: a phd_student person advised by the PI,
+  // joined to the shared graph and selected for the participant. Rename/retitle
+  // it inline afterwards (the row's Edit patches name/title like any person).
+  async function addStudent(lab, detail) {
+    try {
+      const row = await act("create_person", {
+        patch: { name: "New student", kind: "phd_student", advisor_id: detail.pi.id },
+      });
+      detail.members.push({
+        id: row.id, name: row.name, title: row.title || "", image_url: row.image_url || "",
+      });
+      lab.student_ids.push(row.id);
+      renderAreas();
+    } catch (error) { flash(error.message, "error"); }
   }
 
   function memberRow(lab, m, on, i) {
