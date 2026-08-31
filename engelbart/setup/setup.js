@@ -77,6 +77,12 @@
 
     idea: null,          // the chosen, editable idea { title, description, why, inspired }
 
+    labAddOpen: false,   // the "add a lab by link" form, expanded
+    labAddUrl: "",
+    labAddHint: "",
+    labAddBusy: false,   // fetching + extracting + creating the lab
+    labAddError: "",
+
     ownOpen: false,      // the "bring your own project" form, expanded
     ownDraft: null,      // the form's fields while drafting
     own: null,           // committed { information, paper: {id,title,url} | null } or null
@@ -223,6 +229,35 @@
     }
     st.phase = "lab";
     draw();
+  }
+
+  // "Add a lab by link": the server fetches the pasted page, extracts what it
+  // states, creates the canonical rows, and hands back the new lab's id -- then
+  // the normal pickLab flow opens it like any other lab.
+  function addLab() {
+    var u = str(st.labAddUrl).trim();
+    if (st.labAddBusy) return;
+    if (!u) {
+      st.labAddError = "Paste the lab page's link first.";
+      draw();
+      return;
+    }
+    st.labAddBusy = true;
+    st.labAddError = "";
+    draw();
+    setup("add_lab", { url: u, hint: st.labAddHint }).then(function (out) {
+      st.labAddBusy = false;
+      st.labAddOpen = false;
+      st.labAddUrl = "";
+      st.labAddHint = "";
+      // Walking back to this step should still show the lab that was added.
+      st.labs.push({ piId: out.piId, piName: "", labName: out.labName, interests: [] });
+      pickLab(out.piId);
+    }, function (error) {
+      st.labAddBusy = false;
+      st.labAddError = (error && error.message) || "the lab could not be added";
+      draw();
+    });
   }
 
   function pickLab(piId) {
@@ -473,6 +508,8 @@
     st.idea = null; st.refMsgs = []; st.refDraft = "";
     st.own = null; st.ownDraft = null; st.ownOpen = false;
     st.ownBusy = false; st.ownError = "";
+    st.labAddOpen = false; st.labAddUrl = ""; st.labAddHint = "";
+    st.labAddBusy = false; st.labAddError = "";
     st.path = null; st.lanes = null; st.name = "";
     st.made = null; st.error = ""; st.profile = null;
     draw();
@@ -753,6 +790,59 @@
     stage.appendChild(grid);
     if (st.thinking) stage.appendChild(generating("opening the lab"));
     errorNode(stage);
+    if (!st.thinking) labAddSection(stage);
+  }
+
+  // "Don't see the lab you mean?": paste the lab's own web page and it becomes
+  // a real lab option -- the server reads the page, extracts the PI, students,
+  // projects, and papers it states, and opens the new lab like any other.
+  function labAddSection(stage) {
+    stage.appendChild(el("div", "ideas-label", "Don't see the lab you mean?"));
+
+    if (!st.labAddOpen) {
+      var openRow = el("div", "actions");
+      openRow.style.justifyContent = "center";
+      openRow.appendChild(btn("Add a lab by link", "btn-ghost", function () {
+        st.labAddOpen = true;
+        draw();
+      }));
+      stage.appendChild(openRow);
+      return;
+    }
+
+    var card = el("div", "own-card in");
+    card.appendChild(el("div", "cap own-cap", "The lab's web page"));
+
+    function field(cls, placeholder, value, set) {
+      var t = el("textarea", "eb-f own-field " + cls);
+      t.setAttribute("rows", "1");
+      t.setAttribute("spellcheck", "false");
+      t.setAttribute("placeholder", placeholder);
+      t.value = value;
+      on(t, "input", function () { set(t.value); grow(t); });
+      return t;
+    }
+
+    card.appendChild(field("labadd-url", "https:// — the lab's site, or its PI's page",
+      st.labAddUrl, function (v) { st.labAddUrl = v; }));
+    card.appendChild(field("labadd-hint", "What is it? e.g. \"Prof Lee's soft robotics lab\" (optional)",
+      st.labAddHint, function (v) { st.labAddHint = v; }));
+
+    if (st.labAddBusy) {
+      card.appendChild(generating("reading the lab's page"));
+    } else {
+      var acts = el("div", "actions own-acts");
+      acts.appendChild(btn("Add this lab", "btn-dark", addLab, { arrow: true }));
+      acts.appendChild(btn("Never mind", "btn-ghost", function () {
+        st.labAddOpen = false;
+        st.labAddError = "";
+        draw();
+      }));
+      card.appendChild(acts);
+    }
+    if (st.labAddError) card.appendChild(el("div", "err", st.labAddError));
+
+    stage.appendChild(card);
   }
 
   function clip(text, n) {

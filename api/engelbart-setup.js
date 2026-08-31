@@ -9,6 +9,7 @@ const SetupChat = require("./_lib/setup-chat");
 const Research = require("./_lib/research");
 const ResearchModel = require("./_lib/research-model");
 const Storage = require("./_lib/storage");
+const PageFetch = require("./_lib/page-fetch");
 const { encryptionKey, supabaseConfig } = require("./_lib/config");
 const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("./_lib/http");
 const { rpc, verifyUser } = require("./_lib/supabase");
@@ -245,6 +246,71 @@ async function handler(req, res) {
       return sendJson(res, 200, await ResearchModel.generatePath(
         { lab, idea: body.idea, interest: body.interest, own: ownContext(body.own) },
         credentials));
+    }
+
+    // "Add a lab by link": a lab the graph doesn't have yet. The participant
+    // pastes the lab's public web page; the page's text is fetched HERE (never
+    // trusted from the browser), the model extracts only what the page states,
+    // and the extraction becomes real canonical rows through the same
+    // service-role curator RPCs the admin uses -- a PI, their students, their
+    // projects, and their papers (authored to the PI, so lab views carry them).
+    // Model-billed to the member, like every generation step.
+    if (action === "add_lab") {
+      const { credentials } = await memberCredentials(req);
+      const pageUrl = PageFetch.safeHttpUrl(body.url);
+      const text = await PageFetch.fetchPageText(pageUrl);
+      const found = await ResearchModel.extractLab(
+        { url: pageUrl, text, hint: body.hint }, credentials);
+      if (!found.pi.name) {
+        const error = new Error("That page does not read as a lab -- try the"
+          + " lab's main page, or its PI's page");
+        error.statusCode = 422;
+        throw error;
+      }
+      const pi = await rpc("engelbart_curator_create_person", {
+        p_patch: {
+          kind: "professor",
+          name: found.pi.name,
+          title: found.pi.title,
+          bio: found.pi.bio,
+          interests: found.pi.interests,
+          url: pageUrl,
+          lab_name: found.lab_name || `${found.pi.name} Lab`,
+          lab_url: pageUrl,
+          lab_description: found.lab_description,
+        },
+      });
+      if (!pi || !pi.id) {
+        const error = new Error("The lab could not be created");
+        error.statusCode = 502;
+        throw error;
+      }
+      // Students, projects, papers are each best-effort: one bad row must not
+      // lose the lab that was already created.
+      for (const s of found.students) {
+        await rpc("engelbart_curator_create_person", {
+          p_patch: { kind: "phd_student", name: s.name, title: s.title,
+            advisor_id: pi.id },
+        }).catch(() => {});
+      }
+      for (const p of found.projects) {
+        await rpc("engelbart_curator_upsert_project", {
+          p_id: null, p_person_id: pi.id,
+          p_patch: { title: p.title, description: p.description, url: p.url },
+        }).catch(() => {});
+      }
+      for (const p of found.papers) {
+        const paper = await rpc("engelbart_curator_upsert_paper", {
+          p_id: null,
+          p_patch: { title: p.title, year: p.year, venue: p.venue, url: p.url },
+        }).catch(() => null);
+        if (paper && paper.id) {
+          await rpc("engelbart_curator_set_paper_authors", {
+            p_id: paper.id, p_person_ids: [pi.id],
+          }).catch(() => {});
+        }
+      }
+      return sendJson(res, 200, { piId: pi.id, labName: pi.lab_name });
     }
 
     // "Bring your own project": the participant attaches their own paper. The
