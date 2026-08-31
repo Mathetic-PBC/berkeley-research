@@ -418,3 +418,29 @@ textarea.own-desc { font-size: 14px; }
 .own-card .err { text-align: left; margin-top: 10px; }
 .own-paper-link { color: var(--acc); text-decoration: none; overflow-wrap: anywhere; }
 .own-paper-link:hover { text-decoration: underline; }
+
+/* --- lab tree connectors -------------------------------------------------- */
+/* A connector row mirrors the row beneath it: each .tie is one column's width
+   plus its column gap, so the centered tick lands exactly on that column's
+   center; .rail halves join adjacent ticks into one horizontal line between the
+   outermost columns. .down = split (rail on top), .up = merge (rail at bottom). */
+.tie-row { display: flex; justify-content: center; height: 16px; }
+.tie-row.in { animation: v2-in 400ms cubic-bezier(.25,.1,.25,1) both; }
+.tie { position: relative; flex: none; }
+.tie .tick { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--hair2); }
+.tie .rail { position: absolute; height: 1px; background: var(--hair2); width: 50%; }
+.tie .rail-l { left: 0; }
+.tie .rail-r { right: 0; }
+.tie-row.down .rail { top: 0; }
+.tie-row.up .rail { bottom: 0; }
+
+.tie-row + .members-row { margin-top: 0; }
+.members-row + .tie-row { margin-top: 12px; }
+.stem + .ideas-label { margin-top: 10px; }
+.tie-row + .ideas-grid { margin-top: 6px; }
+
+/* On narrow screens the rows wrap, so the mirrored geometry no longer lines
+   up -- drop the connectors and let the tiers stack plainly. */
+@media (max-width: 760px) {
+  .tie-row { display: none; }
+}
