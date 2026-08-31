@@ -402,20 +402,21 @@
 
   function openMember(m) {
     var pi = (st.lab && st.lab.pi) || {};
-    // Students are thin records that inherit the PI's interests, not their own
-    // stated focus, so we show only verified fields (name, role, who advises
-    // them) and never present a fabricated personal research area. Project ideas
-    // attach to the lab and its PI instead.
+    // Scraped students are thin records that inherit the PI's interests, not
+    // their own stated focus, so interests stay empty and we never present a
+    // fabricated personal research area. Bio, site, and the "why" note appear
+    // only when a curator wrote them for this student.
     st.profile = {
       name: m.name,
       role: m.title || "PhD researcher",
       lab: [pi.lab_name, pi.name ? "advised by " + pi.name : ""].filter(Boolean).join(" · "),
-      bio: "",
+      bio: m.bio || "",
+      why: m.why || "",
       interests: [],
-      interestsNote: "Advised in " + (pi.lab_name || "this lab")
+      interestsNote: m.bio ? "" : "Advised in " + (pi.lab_name || "this lab")
         + ". We shape project ideas around the lab's work, not a student's individual focus.",
       works: [],
-      url: ""
+      url: m.url || ""
     };
     draw();
   }
@@ -939,6 +940,12 @@
       s1.appendChild(el("div", "modal-cap", "About"));
       s1.appendChild(el("div", "modal-bio", p.bio));
       modal.appendChild(s1);
+    }
+    if (p.why) {
+      var sw = el("div", "modal-sec");
+      sw.appendChild(el("div", "modal-cap", "Why this person"));
+      sw.appendChild(el("div", "modal-bio", p.why));
+      modal.appendChild(sw);
     }
     if (p.interests && p.interests.length) {
       var s2 = el("div", "modal-sec");

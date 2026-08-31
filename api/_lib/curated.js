@@ -95,6 +95,21 @@ function labSnapshot(value) {
   return any ? snap : undefined;
 }
 
+// Participant-specific per-student notes ("why this person is especially
+// useful for you"), keyed by the student's canonical person id. Curation
+// commentary, never a canonical fact, so it lives in the bundle.
+function studentNoteMap(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const notes = {};
+  for (const key of Object.keys(value).slice(0, MAX_IDS)) {
+    const id = optUuid(key);
+    if (!id) continue;
+    const text = str(value[key], 2000);
+    if (text.trim()) notes[id] = text;
+  }
+  return Object.keys(notes).length ? notes : undefined;
+}
+
 // Bound the bundle to a known, minimal shape. References + ordering + optional
 // overrides/notes + optional snapshot; nothing else is persisted.
 function normalizeBundle(value) {
@@ -114,6 +129,8 @@ function normalizeBundle(value) {
       };
       const note = str(lab.note, 2000);
       if (note.trim()) row.note = note;
+      const studentNotes = studentNoteMap(lab.student_notes);
+      if (studentNotes) row.student_notes = studentNotes;
       const overrideSummary = lab.overrides && typeof lab.overrides === "object"
         ? str(lab.overrides.summary, 2000) : "";
       if (overrideSummary.trim()) row.overrides = { summary: overrideSummary };
@@ -330,9 +347,11 @@ async function toLabDetail(bundle, piId) {
     const byId = new Map(list.map((it) => [String(it.id), it]));
     return ids.map((x) => byId.get(String(x))).filter(Boolean);
   };
+  const studentNotes = ref.student_notes || {};
   return {
     pi: detail.pi,
-    members: order(detail.members, ref.student_ids),
+    members: order(detail.members, ref.student_ids).map((m) =>
+      studentNotes[m.id] ? Object.assign({}, m, { why: studentNotes[m.id] }) : m),
     projects: order(detail.projects, ref.project_ids),
     papers: order(detail.papers, ref.paper_ids),
     curated: true,
