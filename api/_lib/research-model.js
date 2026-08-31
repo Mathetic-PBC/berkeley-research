@@ -397,9 +397,6 @@ function fallbackDoc(ctx) {
   return [
     `# Shaping: ${t}`,
     "",
-    "A few questions to figure out what you actually want to build"
-      + `${lab ? ` (with ${lab}'s work as the backdrop)` : ""}:`,
-    "",
     `- What part of "${t}" sounds most interesting to you?`,
     "- What would you be excited to have working at the end — something you"
       + " could see, run, or play with?",
@@ -412,6 +409,30 @@ function fallbackDoc(ctx) {
     "- How small could the first version be and still feel real to you?",
     "- If it works, what would make you want to keep exploring?",
   ].join("\n");
+}
+
+// The Shape document is a heading plus the questions themselves -- NOTHING
+// else. Whatever prose the model wrapped around them (an intro paragraph, bold
+// labels, "for instance..." menus trailing each question), keep the heading and
+// cut every question at its first question mark. Too few real questions means
+// the shape is unusable; return "" so the caller's fallbackDoc takes over.
+const MAX_DOC_QUESTIONS = 6;
+
+function questionsOnly(doc) {
+  const lines = String(doc || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const heading = lines.find((l) => l.startsWith("#"));
+  const questions = [];
+  for (const line of lines) {
+    if (line.startsWith("#")) continue;
+    const text = line.replace(/^[-*+]\s+|^\d+[.)]\s+/, "").replace(/\*\*/g, "").trim();
+    const mark = text.indexOf("?");
+    if (mark < 8) continue;                       // no question, or a stub
+    questions.push(`- ${one(text.slice(0, mark + 1), 220)}`);
+    if (questions.length >= MAX_DOC_QUESTIONS) break;
+  }
+  if (questions.length < 3) return "";
+  return [heading ? one(heading, MAX_TITLE) : "# Shaping the project", "", ...questions]
+    .join("\n");
 }
 
 // One todo line, main clause only (a generated goal's rows are single lines).
@@ -431,7 +452,7 @@ function normalizeProject(raw, ctx) {
   const brainstorm = {
     description: one(b.description, MAX_TEXT),
     purpose: one(b.purpose, MAX_TEXT),
-    document_md: boundDoc(b.document_md) || fallbackDoc(ctx),
+    document_md: questionsOnly(boundDoc(b.document_md)) || fallbackDoc(ctx),
   };
 
   const seen = new Set();
@@ -536,10 +557,16 @@ async function generateProject(input, credentials, options = {}) {
     "",
     "The brainstorm \"document_md\" is genuine brainstorming, never a requirements"
       + " interview. Its job is to help the student DISCOVER what they want to"
-      + " build -- do not assume they already know the technical shape. It reads"
-      + " like two people sitting together figuring out what would be interesting"
-      + " to build: a short heading, then 5-6 questions, nothing else.",
-    "The questions progress roughly like this, each carrying ONE idea:",
+      + " build -- do not assume they already know the technical shape.",
+    "Its format is strict: a short markdown heading, then EXACTLY 6 questions as"
+      + " a plain list -- nothing else. No introduction, no closing line, no bold"
+      + " labels, no text after any question.",
+    "Each question is ONE short sentence ending in a single question mark, at"
+      + " most ~22 words, carrying ONE idea -- high-level, about what to build and"
+      + " why. Never follow a question with examples, 'for instance...', or a menu"
+      + " of options; if a question needs examples to be understood, it is the"
+      + " wrong question.",
+    "The six progress roughly like this:",
     "1. which part of this idea actually interests them;",
     "2. what they would be excited to have working, see, or interact with;",
     "3. what they are curious to change or experiment with, just to see what happens;",
@@ -549,8 +576,7 @@ async function generateProject(input, credentials, options = {}) {
     "Every question must be answerable by a beginner who does not know the field"
       + " yet, and tailored to THIS idea, lab, papers, and the student's stated"
       + " interest -- specific, never boilerplate, and never copied mechanically"
-      + " from the progression above. A short example inside a question is fine"
-      + " when it clarifies; a menu of options is not.",
+      + " from the progression above.",
     "NEVER lead with technical decisions the plan can propose later: algorithm or"
       + " controller choices, simulators or libraries, evaluation metrics, numeric"
       + " thresholds, hardware specs, safety limits, deployment formats, benchmark"
@@ -583,8 +609,8 @@ async function generateProject(input, credentials, options = {}) {
     "{",
     '  "brainstorm": {"description": "one line: what \\"Shape the project\\" means'
       + ' here", "purpose": "why shaping it first matters", "document_md": "the'
-      + ' brainstorming page described above: a short heading, then 5-6 tailored'
-      + ' questions, nothing else"},',
+      + ' brainstorming page described above: a short heading, then exactly 6'
+      + ' one-line questions, nothing else"},',
     '  "understand": [{"paper": <number from the list above>, "description": "what'
       + ' this paper covers that matters here", "purpose": "why understanding it'
       + ' matters for THIS project", "todos": ["read the relevant sections",'
@@ -827,6 +853,7 @@ module.exports = {
   normalizePath,
   normalizeProject,
   normalizeLabExtract,
+  questionsOnly,
   LANES,
   MAX_AREAS,
   MAX_IDEAS,

@@ -39,7 +39,9 @@ function modelSaying(reply) {
 
 const REPLY = {
   brainstorm: { description: "Shape it", purpose: "so the scope is right",
-                document_md: "# Shaping\n- what should it do?" },
+                document_md: "# Shaping\n- What part interests you most?\n"
+                  + "- What would you love to see working?\n"
+                  + "- How small could the first version be?" },
   understand: [
     { paper: 0, description: "covers A", purpose: "grounds the method", todos: ["read intro", "find method"] },
     { paper: 1, description: "covers B", purpose: "the baseline", todos: ["read results"] },
@@ -71,6 +73,63 @@ test("generateProject invents no papers when the lab has none", async () => {
     CREDS, { fetchImpl: modelSaying(REPLY) });
   assert.equal(project.understand.length, 0);
   assert.ok(project.brainstorm.document_md.length > 0);        // fallback doc still project-specific
+});
+
+test("questionsOnly reduces a heavy Shape document to its heading and bare questions", () => {
+  // The real failure this guards: an intro paragraph, bolded questions, and a
+  // trail of "For instance..." menus behind every one of them.
+  const heavy = [
+    "# Visualizing How AI Reads Emotion in Movie Reviews",
+    "",
+    "You want to build something that shows which words drive a sentiment"
+      + " classifier's predictions. Before jumping into code, let's figure out"
+      + " what would make this personally interesting:",
+    "",
+    "**What kind of emotional misreading by AI would surprise you most?** For"
+      + " instance, would you be more curious if the AI ignores obvious emotional"
+      + " words like 'terrible' and focuses on something subtle like 'unfortunately,'"
+      + " or if it gets confused by sarcasm?",
+    "",
+    "**When you imagine showing this tool to a friend, what's the one thing you'd"
+      + " want them to see happen?** Is it typing in their own review and watching"
+      + " words light up? Something else that would make them go 'whoa'?",
+    "",
+    "**How minimal should the first version be?** One review hard-coded, or a web"
+      + " page where you can type anything?",
+  ].join("\n");
+  const doc = RM.questionsOnly(heavy);
+  const lines = doc.split("\n").filter(Boolean);
+  assert.equal(lines[0], "# Visualizing How AI Reads Emotion in Movie Reviews");
+  assert.equal(lines.length, 4);                              // heading + 3 questions
+  assert.equal(lines[1],
+    "- What kind of emotional misreading by AI would surprise you most?");
+  assert.equal(lines[2],
+    "- When you imagine showing this tool to a friend, what's the one thing you'd"
+    + " want them to see happen?");
+  assert.equal(lines[3], "- How minimal should the first version be?");
+  assert.ok(!doc.includes("For instance"));                   // menus gone
+  assert.ok(!doc.includes("**"));                             // bold gone
+  assert.ok(!doc.includes("Before jumping into code"));       // intro gone
+});
+
+test("questionsOnly keeps at most six questions and rejects an unusable shape", () => {
+  const many = "# H\n" + Array.from({ length: 9 },
+    (x, i) => `- Question number ${i} about the project, yes?`).join("\n");
+  assert.equal(RM.questionsOnly(many).split("\n").filter((l) => l.startsWith("-")).length, 6);
+  assert.equal(RM.questionsOnly("# H\njust prose, no questions at all"), "");
+  assert.equal(RM.questionsOnly("# H\n- Only one real question here, right?"), "");
+});
+
+test("normalizeProject swaps a questionless Shape document for the tailored fallback", () => {
+  const project = RM.normalizeProject({
+    brainstorm: { description: "d", purpose: "p",
+      document_md: "A plan overview with milestones and deliverables. No questions." },
+    understand: [], implement: [], apply: [],
+  }, { lab: LAB, idea: { title: "My Idea" } });
+  assert.match(project.brainstorm.document_md, /# Shaping: My Idea/);
+  const qs = project.brainstorm.document_md.split("\n").filter((l) => l.startsWith("-"));
+  assert.equal(qs.length, 6);
+  assert.ok(qs.every((q) => q.trim().endsWith("?")));
 });
 
 test("normalizeProject caps counts and dedups papers", () => {
