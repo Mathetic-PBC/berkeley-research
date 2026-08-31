@@ -67,10 +67,10 @@ async function callModel(prompt, credentials, options = {}) {
     },
     body: JSON.stringify({
       model: pickModel(credentials.models),
-      max_tokens: MAX_REPLY_TOKENS,
+      max_tokens: options.maxTokens || MAX_REPLY_TOKENS,
       messages: [{ role: "user", content: prompt }],
     }),
-    signal: options.signal || AbortSignal.timeout(MODEL_TIMEOUT_MS),
+    signal: options.signal || AbortSignal.timeout(options.timeoutMs || MODEL_TIMEOUT_MS),
   });
   const value = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -478,7 +478,20 @@ async function generateProject(input, credentials, options = {}) {
       + ` todos few and concrete. ${JSON_ONLY}`,
   ].filter(Boolean).join("\n") + "\n";
 
-  const raw = await callModel(prompt, credentials, options);
+  // The reply is the flow's largest by far (a full project with a markdown
+  // document): give it token and time headroom the smaller calls don't need,
+  // still inside engelbart-setup's 120s maxDuration.
+  const raw = await callModel(prompt, credentials, Object.assign(
+    { maxTokens: 8192, timeoutMs: 100 * 1000 }, options));
+  if (!raw) {
+    // A truncated or unparseable reply used to slip through as a near-empty
+    // "structured" project (one Shape goal, nothing else). Throwing instead
+    // lets the caller degrade to the flat-lane payload, which at least keeps
+    // everything the student drafted.
+    const error = new Error("The generator's reply was not usable JSON");
+    error.statusCode = 502;
+    throw error;
+  }
   return normalizeProject(raw, { lab, idea, interest });
 }
 
