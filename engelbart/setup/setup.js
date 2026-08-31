@@ -12,8 +12,8 @@
  * runtime into the same plain el()/on()/btn() idiom the old setup page used.
  * Where the reference simulated data with fixtures and setTimeout, this talks
  * to the real endpoints:
- *   /api/engelbart-research  areas | labs | lab      (read-only browsing)
- *   /api/engelbart-setup     ideas | refine | path | save_path  (model-backed)
+ *   /api/engelbart-research  lab                      (read-only browsing)
+ *   /api/engelbart-setup     areas | ideas | refine | path | save_path  (model-backed)
  *   /api/engelbart-device    issue                   (the install code)
  * The Supabase auth boot and the install-code handoff are carried over intact
  * from the conversation page this replaces. */
@@ -176,7 +176,10 @@
     st.error = "";
     st.thinking = true;
     draw();
-    research("areas", { interest: interest }).then(function (out) {
+    // The areas are semantic clusters the model draws over the real labs the
+    // interest retrieved -- a model-backed setup call, not a plain read -- and
+    // each area already carries the real labs beneath it.
+    setup("areas", { interest: interest }).then(function (out) {
       st.thinking = false;
       st.areas = (out.areas || []).slice(0, 3);
       if (!st.areas.length) {
@@ -191,24 +194,19 @@
 
   function pickArea(i) {
     if (st.thinking) return;
+    var area = st.areas[i];
+    if (!area) return;
     st.areaIdx = i;
     st.error = "";
-    st.thinking = true;
-    draw();
-    research("labs", {
-      departmentId: st.areas[i].department_id, interest: st.interest
-    }).then(function (out) {
-      st.thinking = false;
-      st.labs = out.labs || [];
-      if (!st.labs.length) {
-        st.error = "No labs surfaced for that area — pick another.";
-        st.phase = "direction";
-        draw();
-        return;
-      }
-      st.phase = "lab";
+    // The labs are already embedded in the chosen area -- no second round-trip.
+    st.labs = area.labs || [];
+    if (!st.labs.length) {
+      st.error = "No labs surfaced for that area — pick another.";
       draw();
-    }, fail);
+      return;
+    }
+    st.phase = "lab";
+    draw();
   }
 
   function pickLab(piId) {
@@ -398,13 +396,18 @@
 
   function openMember(m) {
     var pi = (st.lab && st.lab.pi) || {};
+    // Students are thin records that inherit the PI's interests, not their own
+    // stated focus, so we show only verified fields (name, role, who advises
+    // them) and never present a fabricated personal research area. Project ideas
+    // attach to the lab and its PI instead.
     st.profile = {
       name: m.name,
       role: m.title || "PhD researcher",
       lab: [pi.lab_name, pi.name ? "advised by " + pi.name : ""].filter(Boolean).join(" · "),
       bio: "",
-      interests: (m.interests && m.interests.length) ? m.interests : (pi.interests || []),
-      interestsNote: (m.interests && m.interests.length) ? "" : "Working within the lab's areas.",
+      interests: [],
+      interestsNote: "Advised in " + (pi.lab_name || "this lab")
+        + ". We shape project ideas around the lab's work, not a student's individual focus.",
       works: [],
       url: ""
     };
@@ -600,11 +603,14 @@
     st.areas.forEach(function (area, i) {
       var col = el("div", "area-col in");
       col.style.animationDelay = (i * 80) + "ms";
-      var node = el("button", "area-node", area.area);
+      var node = el("button", "area-node", area.label);
       on(node, "click", function () { pickArea(i); });
       col.appendChild(node);
-      var n = area.n_labs || 0;
-      col.appendChild(el("div", "area-desc", n + (n === 1 ? " lab here" : " labs here")));
+      var n = (area.labs || []).length;
+      var desc = area.summary
+        ? clip(area.summary, 90)
+        : n + (n === 1 ? " lab" : " labs");
+      col.appendChild(el("div", "area-desc", desc));
       grid.appendChild(col);
     });
     stage.appendChild(grid);
@@ -617,11 +623,11 @@
   function phaseLab(stage) {
     var area = st.areas[st.areaIdx];
     stage.appendChild(el("div", "reveal-label in",
-      "In " + (area ? area.area : "that area")
+      "In " + (area ? area.label : "that area")
       + ", these labs work closest to what you described."));
     var grid = el("div", "labs-grid");
     st.labs.forEach(function (lab, i) {
-      var name = lab.lab_name || ((lab.pi_name || "") + " Lab");
+      var name = lab.labName || ((lab.piName || "") + " Lab");
       var card = el("button", "lab-card in");
       card.style.animationDelay = (i * 70) + "ms";
       card.appendChild(el("div", "lab-logo", initials(name)));
@@ -630,9 +636,9 @@
         ? clip(lab.bio, 96)
         : (lab.interests || []).slice(0, 3).join(", ");
       if (desc) card.appendChild(el("div", "lab-desc", desc));
-      var pi = lab.pi_name + (lab.title ? " · " + lab.title : "");
+      var pi = (lab.piName || "") + (lab.title ? " · " + lab.title : "");
       card.appendChild(el("div", "lab-pi", pi));
-      on(card, "click", function () { pickLab(lab.pi_id); });
+      on(card, "click", function () { pickLab(lab.piId); });
       grid.appendChild(card);
     });
     stage.appendChild(grid);
@@ -674,9 +680,9 @@
         var ml = el("div", "person-line");
         ml.appendChild(el("span", "person-name", m.name));
         mBtn.appendChild(ml);
-        var focus = (m.interests && m.interests.length)
-          ? m.interests.slice(0, 2).join(", ") : (m.title || "");
-        if (focus) mBtn.appendChild(el("div", "person-focus", clip(focus, 60)));
+        // Verified role only -- students inherit the PI's interests in the data,
+        // so we never render those as a personal research focus.
+        if (m.title) mBtn.appendChild(el("div", "person-focus", clip(m.title, 60)));
         on(mBtn, "click", function () { openMember(m); });
         mrow.appendChild(mBtn);
       });
@@ -934,6 +940,11 @@
       s2.appendChild(el("div", "modal-interests", p.interests.join(" · ")));
       if (p.interestsNote) s2.appendChild(el("div", "modal-lab", p.interestsNote));
       modal.appendChild(s2);
+    } else if (p.interestsNote) {
+      var s2b = el("div", "modal-sec");
+      s2b.appendChild(el("div", "modal-cap", "Focus"));
+      s2b.appendChild(el("div", "modal-lab", p.interestsNote));
+      modal.appendChild(s2b);
     }
     if (p.works && p.works.length) {
       var s3 = el("div", "modal-sec");

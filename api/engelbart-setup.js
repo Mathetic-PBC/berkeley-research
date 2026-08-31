@@ -23,6 +23,23 @@ async function memberCredentials(req) {
   return { user, credentials };
 }
 
+// One retrieved lab row, mapped to the shape the browser renders in a research
+// area. The PI's own interests are real and stay; students are not touched here
+// (they only appear in the lab-detail view, by verified fields).
+function publicLab(row) {
+  return {
+    piId: row.pi_id,
+    piName: row.pi_name,
+    title: row.title,
+    labName: row.lab_name,
+    department: row.department,
+    bio: row.bio,
+    interests: Array.isArray(row.interests) ? row.interests : [],
+    nMembers: row.n_members,
+    nProjects: row.n_projects,
+  };
+}
+
 // A lab refetched from the database for grounding a model call, or a 404 that
 // the browser turns into "that lab is no longer available".
 async function groundingLab(piId) {
@@ -92,6 +109,28 @@ async function handler(req, res) {
       return sendJson(res, 200, {
         payload: value && value.found ? value.payload : null,
       });
+    }
+
+    // The exploration's opening step: an interest to a few research areas. The
+    // areas are semantic clusters the model draws over the REAL labs retrieved
+    // for the interest -- not departments -- and each area carries the actual
+    // labs beneath it, rehydrated here from the retrieval set so the model can
+    // never surface a lab that isn't real. Member-billed like every model call.
+    if (action === "areas") {
+      const { credentials } = await memberCredentials(req);
+      const labs = await Research.labMatches(body.interest);
+      if (!labs.length) return sendJson(res, 200, { areas: [] });
+      const byId = new Map(labs.map((row) => [row.pi_id, row]));
+      const clustered = await ResearchModel.clusterAreas(
+        { interest: body.interest, labs }, credentials);
+      const areas = clustered
+        .map((area) => ({
+          label: area.label,
+          summary: area.summary,
+          labs: area.pi_ids.map((id) => byId.get(id)).filter(Boolean).map(publicLab),
+        }))
+        .filter((area) => area.labs.length);
+      return sendJson(res, 200, { areas });
     }
 
     // The exploration, model-backed and member-billed. Each grounds generation

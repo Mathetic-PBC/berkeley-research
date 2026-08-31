@@ -45,6 +45,50 @@ test("labContext grounds the prompt in the lab's real name, PI, and projects", (
   assert.match(ctx, /Pillar-0/);
 });
 
+// The retrieval rows clusterAreas groups over (the shape lab_matches returns).
+const MATCHES = [
+  { pi_id: "a1", pi_name: "Preeya Khanna", lab_name: "Sensorimotor Neural Engineering Lab", department: "Neuroscience", interests: ["motor control", "BCI"] },
+  { pi_id: "a2", pi_name: "Gopala Anumanchipalli", lab_name: "Berkeley Speech Group", department: "EECS", interests: ["speech neuroprosthesis"] },
+  { pi_id: "a3", pi_name: "Amy Pavel", lab_name: "Pavel Research Group", department: "EECS", interests: ["accessibility", "assistive tech"] },
+];
+
+test("clusterAreas maps model indices back to real pi_ids and keeps only real labs", async () => {
+  const calls = [];
+  const out = await RM.clusterAreas(
+    { interest: "brain computer interfaces", labs: MATCHES },
+    CREDS,
+    { fetchImpl: modelReturning({ areas: [
+      { label: "Neural interfaces", summary: "decoding movement and speech", labs: [0, 1, 1, 99] },
+      { label: "Assistive technology", summary: "tools for access", labs: [2] },
+      { label: "Empty", summary: "no real labs", labs: [42] },   // dropped: no valid labs
+    ] }, calls) },
+  );
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0], { label: "Neural interfaces", summary: "decoding movement and speech", pi_ids: ["a1", "a2"] });
+  assert.deepEqual(out[1].pi_ids, ["a3"]);
+  // the prompt listed the real labs by index for grounding
+  assert.match(calls[0].body.messages[0].content, /\[0\] Sensorimotor Neural Engineering Lab/);
+  assert.match(calls[0].body.messages[0].content, /brain computer interfaces/);
+});
+
+test("clusterAreas returns [] for no matched labs, without calling the model", async () => {
+  const calls = [];
+  const out = await RM.clusterAreas({ interest: "x", labs: [] }, CREDS, { fetchImpl: modelReturning({}, calls) });
+  assert.deepEqual(out, []);
+  assert.equal(calls.length, 0);
+});
+
+test("clusterAreas falls back to one area over all labs when the model gives nothing usable", async () => {
+  const out = await RM.clusterAreas(
+    { interest: "x", labs: MATCHES },
+    CREDS,
+    { fetchImpl: modelReturning({ areas: [] }) },
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].label, "Related work");
+  assert.deepEqual(out[0].pi_ids, ["a1", "a2", "a3"]);
+});
+
 test("generateIdeas normalizes, filters incomplete, and caps to MAX_IDEAS", async () => {
   const calls = [];
   const many = Array.from({ length: 10 }, (_, i) => ({

@@ -19,6 +19,7 @@ const MAX_TEXT = 600;
 const MAX_ROW = 240;
 const MAX_IDEAS = 6;
 const MAX_ROWS = 6;
+const MAX_AREAS = 4;
 const LANES = ["brainstorm", "understand", "implement", "apply"];
 
 function one(value, cap) {
@@ -103,6 +104,74 @@ function labContext(lab) {
 }
 
 const JSON_ONLY = "Reply with ONE JSON object and nothing else -- no prose, no code fence.";
+
+// The visible "research areas" are semantic clusters over the REAL labs an
+// interest retrieved -- never departments. The model only names and groups;
+// the labs beneath every area stay the authoritative rows the caller passed in.
+// Labs are referenced by list index (short, hard to mangle) and mapped back to
+// their real pi_id server-side, so the model can never invent a lab that isn't
+// in the retrieval set.
+function labMenu(labs) {
+  return labs.map((lab, i) => {
+    const interests = Array.isArray(lab.interests)
+      ? lab.interests.map((x) => one(x, 50)).filter(Boolean).slice(0, 5).join(", ") : "";
+    return `[${i}] ${one(lab.lab_name, MAX_TITLE) || "(unnamed lab)"}`
+      + ` -- ${one(lab.pi_name, 80)}${lab.department ? `, ${one(lab.department, 80)}` : ""}`
+      + (interests ? ` (${interests})` : "");
+  }).join("\n");
+}
+
+// Keep only areas that name at least one real lab from the retrieval set; map
+// the model's indices back to real pi_ids, de-duplicated and in range.
+function normalizeAreas(raw, labs) {
+  const list = raw && Array.isArray(raw.areas) ? raw.areas : [];
+  return list.map((area) => {
+    const seen = new Set();
+    const piIds = (Array.isArray(area && area.labs) ? area.labs : [])
+      .map((n) => labs[Number(n)])
+      .filter((lab) => lab && lab.pi_id && !seen.has(lab.pi_id) && seen.add(lab.pi_id))
+      .map((lab) => lab.pi_id);
+    return {
+      label: one(area && area.label, 60),
+      summary: one(area && area.summary, 200),
+      pi_ids: piIds,
+    };
+  }).filter((area) => area.label && area.pi_ids.length).slice(0, MAX_AREAS);
+}
+
+// Cluster the retrieved labs into ~3 plain-English research areas. Returns
+// [{ label, summary, pi_ids }]; the caller rehydrates pi_ids into the real lab
+// rows. Falls back to a single "Related work" area over all labs if the model
+// gives nothing usable, so an interest that matched real labs never dead-ends.
+async function clusterAreas(input, credentials, options = {}) {
+  const labs = Array.isArray(input && input.labs) ? input.labs : [];
+  if (!labs.length) return [];
+  const interest = one(input.interest, 400);
+  const prompt = [
+    "A student described a research interest. Below are REAL Berkeley labs that matched it.",
+    "Group them into about three coherent research areas, each a short plain-English theme",
+    "(e.g. \"Neural interfaces\", \"Sensorimotor systems\", \"Assistive robotics\") -- NOT a department name.",
+    "Every area must contain only labs from the list, referenced by their [index]. A lab may",
+    "sit in one area. It is fine to leave a weakly-related lab out. Do not invent labs or areas.",
+    "",
+    interest ? `Interest: "${interest}"` : "",
+    "",
+    "Labs:",
+    labMenu(labs),
+    "",
+    `Give at most ${MAX_AREAS} areas, most relevant first. ${JSON_ONLY}`,
+    'Shape: {"areas":[{"label":"short theme","summary":"one line on what ties these labs together",',
+    '"labs":[0,3,5]}]}',
+  ].filter((line) => line !== null).join("\n") + "\n";
+
+  const areas = normalizeAreas(await callModel(prompt, credentials, options), labs);
+  if (areas.length) return areas;
+  return [{
+    label: "Related work",
+    summary: "Berkeley labs whose work connects to your interest.",
+    pi_ids: labs.map((lab) => lab.pi_id).filter(Boolean),
+  }];
+}
 
 function normalizeIdeas(raw) {
   const list = raw && Array.isArray(raw.ideas) ? raw.ideas : [];
@@ -263,16 +332,19 @@ function explorationToPayload(input) {
 }
 
 module.exports = {
+  clusterAreas,
   generateIdeas,
   refineIdea,
   generatePath,
   explorationToPayload,
   // exported for tests
   labContext,
+  normalizeAreas,
   normalizeIdeas,
   normalizeRefine,
   normalizePath,
   LANES,
+  MAX_AREAS,
   MAX_IDEAS,
   MAX_ROWS,
 };

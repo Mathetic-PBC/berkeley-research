@@ -2,9 +2,10 @@
 
 // Read access to the Berkeley research graph for the onboarding exploration.
 // Thin wrappers over the SECURITY DEFINER RPCs added in
-// 20260830120000_engelbart_research_read.sql: an interest resolves to a few
-// research areas, an area to its labs, a lab to its people and work. All input
-// is bounded here so nothing unvalidated reaches the database, and `options`
+// 20260830120000_engelbart_research_read.sql: an interest resolves to the real
+// labs it connects to (which the model then clusters into a few plain-English
+// research areas), and a lab resolves to its people and work. All input is
+// bounded here so nothing unvalidated reaches the database, and `options`
 // (env / fetchImpl) is threaded through for tests, exactly like the rest of
 // api/_lib.
 
@@ -28,23 +29,14 @@ function requireUuid(value, label) {
   return text;
 }
 
-async function areas(interest, options = {}) {
+// The real labs an interest connects to, across every department, ranked by
+// relevance. The visible "research areas" are not departments -- they are
+// semantic clusters the model draws over exactly these rows, so this returns
+// the retrieval set and the clustering happens in research-model.js.
+async function labMatches(interest, options = {}) {
   const rows = await rpc(
-    "engelbart_research_areas",
-    { p_interest: cleanInterest(interest), p_limit: 3 },
-    options,
-  );
-  return Array.isArray(rows) ? rows : [];
-}
-
-async function labs(departmentId, interest, options = {}) {
-  const rows = await rpc(
-    "engelbart_research_labs",
-    {
-      p_department_id: requireUuid(departmentId, "department id"),
-      p_interest: cleanInterest(interest),
-      p_limit: 8,
-    },
+    "engelbart_research_lab_matches",
+    { p_interest: cleanInterest(interest), p_limit: 15 },
     options,
   );
   return Array.isArray(rows) ? rows : [];
@@ -61,4 +53,4 @@ async function lab(piId, options = {}) {
   return detail && detail.pi ? detail : null;
 }
 
-module.exports = { areas, labs, lab, cleanInterest, requireUuid, MAX_INTEREST };
+module.exports = { labMatches, lab, cleanInterest, requireUuid, MAX_INTEREST };

@@ -1,9 +1,14 @@
 "use strict";
 
-// Read-only Berkeley research browsing for the onboarding exploration. Every
-// call is gated on Engelbart membership (the same posture as every other authed
-// endpoint); a CLI token is not accepted, because browsing is a browser act.
-// The data itself comes from the SECURITY DEFINER RPCs in api/_lib/research.js.
+// Read-only Berkeley research browsing for the onboarding exploration: opening
+// one lab to its people and work. Gated on Engelbart membership (the same
+// posture as every other authed endpoint); a CLI token is not accepted, because
+// browsing is a browser act. The data comes from the SECURITY DEFINER RPCs in
+// api/_lib/research.js.
+//
+// The step before this -- interest to research areas -- is model-backed and
+// lives in engelbart-setup.js (action "areas"), because the visible areas are
+// semantic clusters the model draws over the real labs, not a plain DB read.
 
 const Research = require("./_lib/research");
 const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("./_lib/http");
@@ -16,14 +21,6 @@ async function handler(req, res) {
     const action = String(body.action || "");
 
     await verifyUser(bearerToken(req));
-
-    if (action === "areas") {
-      return sendJson(res, 200, { areas: await Research.areas(body.interest) });
-    }
-
-    if (action === "labs") {
-      return sendJson(res, 200, { labs: await Research.labs(body.departmentId, body.interest) });
-    }
 
     if (action === "lab") {
       const detail = await Research.lab(body.piId);
