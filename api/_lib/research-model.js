@@ -116,6 +116,31 @@ function labContext(lab) {
 
 const JSON_ONLY = "Reply with ONE JSON object and nothing else -- no prose, no code fence.";
 
+const MAX_OWN_INFO = 2000;
+
+// The participant's own project context, when they brought the idea themselves
+// ("bring your own project" on the setup page): background they wrote, and the
+// paper they attached. One shared block, so refine, path, and the structured
+// generator all anchor on the student's own framing the same way.
+function ownLines(own) {
+  if (!own || typeof own !== "object") return [];
+  const lines = [
+    "",
+    "The student brought this project idea THEMSELVES -- it is their own, not one"
+      + " generated from the lab's work. Treat their framing as the anchor and the"
+      + " lab data above as supporting context; never steer them back to a lab"
+      + " project they did not ask for.",
+  ];
+  const info = one(own.information, MAX_OWN_INFO);
+  if (info) lines.push(`Background the student wrote about it: ${info}`);
+  const p = own.paper && typeof own.paper === "object" ? own.paper : null;
+  if (p && (p.title || p.url)) {
+    lines.push(`They attached the paper "${one(p.title, MAX_TITLE) || "(untitled)"}"`
+      + `${p.url ? ` (${one(p.url, MAX_ROW)})` : ""} as a starting point.`);
+  }
+  return lines;
+}
+
 // Every generator writes for the same reader: an undergraduate meeting research
 // for the first time, who has not used the lab's tools before. The failure mode
 // this guards against is real output like "Baseline Controller in Simulation --
@@ -260,6 +285,7 @@ async function refineIdea(input, credentials, options = {}) {
     "",
     `Current idea title: ${one(idea.title, MAX_TITLE)}`,
     `Current description: ${one(idea.description || idea.what, MAX_TEXT)}`,
+    ...ownLines(input.own),
     "",
     `The student asked: "${note}". Fold that into the idea -- adjust scope, method, or framing as asked,`,
     "without drifting from what the lab actually does.",
@@ -305,6 +331,7 @@ async function generatePath(input, credentials, options = {}) {
     "",
     `Chosen idea: ${one(idea.title, MAX_TITLE)} -- ${one(idea.description || idea.what, MAX_TEXT)}`,
     interest ? `Student interest: "${interest}".` : "",
+    ...ownLines(input.own),
     "",
     `Give ${MAX_ROWS} or fewer short rows per lane. A row may use "\\n" to add a quieter second line.`,
     `Also suggest a short project name and a one-line objective. ${JSON_ONLY}`,
@@ -454,11 +481,38 @@ function normalizeProject(raw, ctx) {
   };
 }
 
+// The student's own attached paper is non-negotiable: whatever papers the model
+// chose, their paper reads first. Prepend a deterministic Understand goal when
+// the model left it out (the numbered-menu instruction normally suffices).
+function forceOwnUnderstand(project, p) {
+  if (project.understand.some((u) => u.paper.paper_id === p.id)) return project;
+  project.understand.unshift({
+    paper: {
+      paper_id: p.id,
+      title: one(p.title, MAX_TITLE),
+      url: one(p.doi_url || p.url, MAX_ROW),
+    },
+    description: "The paper you attached to this project.",
+    purpose: "You picked it as the starting point -- understanding it grounds"
+      + " everything you build after.",
+    todos: [
+      "Read the abstract and introduction, and write three sentences on what the paper does",
+      "List each tool or method it uses that is new to you, with a one-line note on what it is",
+      "Note the one result that matters most for your project",
+    ],
+  });
+  project.understand = project.understand.slice(0, MAX_UNDERSTAND);
+  return project;
+}
+
 async function generateProject(input, credentials, options = {}) {
   const lab = input.lab || {};
   const idea = input.idea || {};
   const interest = one(input.interest, 400);
   const papers = Array.isArray(lab.papers) ? lab.papers.slice(0, 20) : [];
+  // The caller marks the student's own attached paper with `own: true` (and
+  // puts it first, so the slice above can never drop it).
+  const ownIdx = papers.findIndex((p) => p && p.own);
   const hints = input.lanes && typeof input.lanes === "object" ? input.lanes : {};
   const hintLines = LANES.map((lane) => {
     const rs = rows(hints[lane]).map((r) => one(r.split("\n")[0], MAX_ROW)).filter(Boolean);
@@ -515,6 +569,11 @@ async function generateProject(input, credentials, options = {}) {
       + `${one(idea.description || idea.what, MAX_TEXT)}`,
     idea.inspired ? `It builds on: ${one(idea.inspired, MAX_TITLE)}.` : "",
     interest ? `Student's stated interest: "${interest}".` : "",
+    ...ownLines(input.own),
+    ownIdx >= 0
+      ? `Paper [${ownIdx}] is the one the student attached themselves: it MUST be`
+        + ' one of the "understand" entries.'
+      : "",
     hintLines.length
       ? "\nThe student sketched these rough directions; use them as hints and refine:"
       : "",
@@ -556,7 +615,8 @@ async function generateProject(input, credentials, options = {}) {
     error.statusCode = 502;
     throw error;
   }
-  return normalizeProject(raw, { lab, idea, interest });
+  const project = normalizeProject(raw, { lab, idea, interest });
+  return ownIdx >= 0 ? forceOwnUnderstand(project, papers[ownIdx]) : project;
 }
 
 // The structured project as the pending-setup payload the CLI already imports:
