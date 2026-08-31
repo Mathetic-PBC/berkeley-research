@@ -886,12 +886,38 @@
 
   // --- explore: the lab tree ------------------------------------------------
 
+  // A tree connector mirroring a centered row of n equal columns: one vertical
+  // tick at each column's center, joined by a horizontal rail between the first
+  // and last centers. `cell` is the column width PLUS its column gap -- a row of
+  // n such cells, centered, puts every tick exactly on a column's center. dir
+  // "down" draws the rail at the top (a split toward the row below); "up" draws
+  // it at the bottom (a merge from the row above).
+  function tieRow(n, cell, dir) {
+    var rowEl = el("div", "tie-row " + dir + " in");
+    for (var i = 0; i < n; i++) {
+      var t = el("div", "tie");
+      t.style.width = cell + "px";
+      if (i > 0) t.appendChild(el("i", "rail rail-l"));
+      if (i < n - 1) t.appendChild(el("i", "rail rail-r"));
+      t.appendChild(el("i", "tick"));
+      rowEl.appendChild(t);
+    }
+    return rowEl;
+  }
+
+  function stemEl(h) {
+    var s = el("div", "stem draw", "");
+    s.style.height = h + "px";
+    return s;
+  }
+
   function phaseExplore(stage) {
     var pi = (st.lab && st.lab.pi) || {};
     var members = (st.lab && st.lab.members) || [];
+    var shown = members.slice(0, 6);
 
     stage.appendChild(el("div", "cap", "The lab"));
-    stage.appendChild(el("div", "stem draw", "")).style.height = "18px";
+    stage.appendChild(stemEl(18));
 
     var piBtn = el("button", "node-pi in");
     piBtn.appendChild(el("div", "avatar avatar-pi", initials(pi.name)));
@@ -903,15 +929,27 @@
     on(piBtn, "click", openPI);
     stage.appendChild(piBtn);
 
-    if (members.length) {
-      stage.appendChild(el("div", "members-label", "PhD researchers"));
+    // The lab as one connected tree: the PI's stem splits to the students, and
+    // their lines merge back into the ideas below -- .member is 210px wide in a
+    // 40px column gap (cell 250), .idea-col 250px in an 18px gap (cell 268).
+    // The mirrored connector geometry only holds while the row stays on ONE
+    // line, so four or more students fall back to the plain labeled row.
+    var ties = shown.length > 0 && shown.length <= 3;
+    if (shown.length) {
+      if (ties) {
+        stage.appendChild(stemEl(14));
+        stage.appendChild(tieRow(shown.length, 250, "down"));
+      } else {
+        stage.appendChild(el("div", "members-label", "PhD researchers"));
+      }
       var mrow = el("div", "members-row");
-      members.slice(0, 6).forEach(function (m, i) {
+      shown.forEach(function (m, i) {
         var mBtn = el("button", "member in");
         mBtn.style.animationDelay = (i * 60) + "ms";
         mBtn.appendChild(el("div", "avatar avatar-m", initials(m.name)));
         var ml = el("div", "person-line");
         ml.appendChild(el("span", "person-name", m.name));
+        ml.appendChild(el("span", "person-tag", "PhD"));
         mBtn.appendChild(ml);
         // Verified role only -- students inherit the PI's interests in the data,
         // so we never render those as a personal research focus.
@@ -920,6 +958,12 @@
         mrow.appendChild(mBtn);
       });
       stage.appendChild(mrow);
+      if (ties) {
+        stage.appendChild(tieRow(shown.length, 250, "up"));
+        stage.appendChild(stemEl(14));
+      }
+    } else {
+      stage.appendChild(stemEl(26));
     }
 
     stage.appendChild(el("div", "ideas-label", "Project ideas for this lab"));
@@ -935,6 +979,10 @@
       return;
     }
 
+    if (st.ideas.length > 1 && st.ideas.length <= 3) {
+      stage.appendChild(stemEl(12));
+      stage.appendChild(tieRow(st.ideas.length, 268, "down"));
+    }
     var grid = el("div", "ideas-grid" + (st.hoverIdea >= 0 ? " hovering" : ""));
     st.ideas.forEach(function (idea, i) {
       var col = el("div", "idea-col in" + (st.hoverIdea === i ? " hot" : ""));
