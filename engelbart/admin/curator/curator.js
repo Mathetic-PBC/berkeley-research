@@ -416,10 +416,10 @@
     card.appendChild(el("div", { class: "section-title" }, "PhD students — tick to include, drag order with ↑↓"));
     card.appendChild(renderMembers(lab, detail));
 
-    card.appendChild(el("div", { class: "section-title" }, "Projects (PI)"));
+    card.appendChild(el("div", { class: "section-title" }, "Projects (PI & students)"));
     card.appendChild(renderProjects(lab, detail));
 
-    card.appendChild(el("div", { class: "section-title" }, "Papers (PI)"));
+    card.appendChild(el("div", { class: "section-title" }, "Papers (PI & students)"));
     card.appendChild(renderPapers(lab, detail));
 
     card.appendChild(el("div", { class: "field" }, [
@@ -472,8 +472,8 @@
     const selected = lab.student_ids.map((id) => byId.get(id)).filter(Boolean);
     const rest = (detail.members || []).filter((m) => lab.student_ids.indexOf(m.id) < 0);
 
-    selected.forEach((m, i) => wrap.appendChild(memberRow(lab, m, true, i)));
-    rest.forEach((m) => wrap.appendChild(memberRow(lab, m, false, -1)));
+    selected.forEach((m, i) => wrap.appendChild(memberRow(lab, detail, m, true, i)));
+    rest.forEach((m) => wrap.appendChild(memberRow(lab, detail, m, false, -1)));
     if (!detail.members || !detail.members.length) wrap.appendChild(el("p", { class: "muted" }, "No students on record."));
     wrap.appendChild(el("button", { class: "mini", type: "button",
       onclick: () => addStudent(lab, detail) }, "+ Add PhD student"));
@@ -489,14 +489,15 @@
         patch: { name: "New student", kind: "phd_student", advisor_id: detail.pi.id },
       });
       detail.members.push({
-        id: row.id, name: row.name, title: row.title || "", image_url: row.image_url || "",
+        id: row.id, name: row.name, title: row.title || "",
+        bio: row.bio || "", url: row.url || "", image_url: row.image_url || "",
       });
       lab.student_ids.push(row.id);
       renderAreas();
     } catch (error) { flash(error.message, "error"); }
   }
 
-  function memberRow(lab, m, on, i) {
+  function memberRow(lab, detail, m, on, i) {
     const check = el("input", { type: "checkbox", onchange: () => {
       if (check.checked) lab.student_ids.push(m.id);
       else lab.student_ids = lab.student_ids.filter((x) => x !== m.id);
@@ -513,8 +514,20 @@
     editor.appendChild(el("div", { class: "grid2" }, [
       pfield("Name", m.name, "", commit("name")),
       pfield("Title", m.title, "", commit("title")),
-      pfield("Photo URL", m.image_url, "full", commit("image_url")),
+      pfield("Website", m.url, "", commit("url")),
+      pfield("Photo URL", m.image_url, "", commit("image_url")),
+      pfield("Description / bio", m.bio, "full", commit("bio"), true),
     ]));
+    // participant-specific, rides in the bundle (persists on Save), never the graph
+    editor.appendChild(el("div", { class: "field" }, [
+      el("label", {}, "Why especially useful for " + (state.label || state.participantKey) + " (optional)"),
+      el("textarea", { onchange: (e) => {
+        lab.student_notes = lab.student_notes || {};
+        if (e.target.value.trim()) lab.student_notes[m.id] = e.target.value;
+        else delete lab.student_notes[m.id];
+      } }, (lab.student_notes && lab.student_notes[m.id]) || "")]));
+    editor.appendChild(el("button", { class: "mini", type: "button",
+      onclick: () => addProject(lab, detail, m.id) }, "+ Project for this student"));
     editBtn.addEventListener("click", () => editor.classList.toggle("hidden"));
 
     const thumb = m.image_url
@@ -543,9 +556,11 @@
     return wrap;
   }
 
-  async function addProject(lab, detail) {
+  async function addProject(lab, detail, personId) {
     try {
-      const row = await act("upsert_project", { personId: detail.pi.id, patch: { title: "New project", status: "active" } });
+      const owner = personId || detail.pi.id;
+      const row = await act("upsert_project", { personId: owner, patch: { title: "New project", status: "active" } });
+      row.person_id = row.person_id || owner;
       detail.projects.push(row);
       lab.project_ids.push(row.id);
       renderAreas();
@@ -575,9 +590,12 @@
     ]));
     editBtn.addEventListener("click", () => editor.classList.toggle("hidden"));
     const title = el("div", { class: "t" }, p.title || "(untitled)");
+    const student = p.person_id && detail.pi && p.person_id !== detail.pi.id
+      ? (detail.members || []).find((s) => s.id === p.person_id) : null;
+    const meta = (p.status || "") + (student ? " · " + (student.name || "student") : "");
     const head = el("div", { class: "work-row" + (on ? "" : " off") }, [
       check,
-      el("div", { class: "work-main" }, [title, el("div", { class: "muted" }, p.status || "")]),
+      el("div", { class: "work-main" }, [title, el("div", { class: "muted" }, meta)]),
       on && i >= 0 ? reorderButtons(lab.project_ids, i, renderAreas) : el("span"),
       editBtn]);
     return el("div", {}, [head, editor]);
