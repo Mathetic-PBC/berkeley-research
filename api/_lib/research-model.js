@@ -720,8 +720,99 @@ function explorationToPayload(input) {
   return payload;
 }
 
+// --- "add a lab by link": extract a lab from its own web page ---------------
+//
+// A participant pastes the URL of a lab that isn't in the graph yet; the page's
+// text is the ONLY source. The model extracts facts the page states -- PI, lab
+// name, students, projects, papers -- and everything is bounded and stripped of
+// invention room here before the caller creates canonical rows from it.
+
+const MAX_EXTRACT_STUDENTS = 12;
+const MAX_EXTRACT_PROJECTS = 8;
+const MAX_EXTRACT_PAPERS = 12;
+const MAX_PAGE_EXTRACT = 20000;
+
+function normalizeLabExtract(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const pi = src.pi && typeof src.pi === "object" ? src.pi : {};
+  const list = (value, cap, map) => (Array.isArray(value) ? value : [])
+    .map(map).filter(Boolean).slice(0, cap);
+  return {
+    pi: {
+      name: one(pi.name, MAX_TITLE),
+      title: one(pi.title, 120),
+      bio: one(pi.bio, MAX_TEXT),
+      interests: list(pi.interests, 8, (x) => one(x, 60) || null),
+    },
+    lab_name: one(src.lab_name, MAX_TITLE),
+    lab_description: one(src.lab_description, MAX_TEXT),
+    department: one(src.department, MAX_TITLE),
+    students: list(src.students, MAX_EXTRACT_STUDENTS, (s) => {
+      const name = s && typeof s === "object" ? one(s.name, 80) : "";
+      return name ? { name, title: one(s.title, 120) } : null;
+    }),
+    projects: list(src.projects, MAX_EXTRACT_PROJECTS, (p) => {
+      const title = p && typeof p === "object" ? one(p.title, MAX_TITLE) : "";
+      return title
+        ? { title, description: one(p.description, MAX_TEXT), url: one(p.url, MAX_ROW) }
+        : null;
+    }),
+    papers: list(src.papers, MAX_EXTRACT_PAPERS, (p) => {
+      const title = p && typeof p === "object" ? one(p.title, 200) : "";
+      if (!title) return null;
+      const year = Number(p.year);
+      return {
+        title,
+        year: Number.isInteger(year) && year > 1900 && year < 2100 ? year : null,
+        venue: one(p.venue, 120),
+        url: one(p.url, MAX_ROW),
+      };
+    }),
+  };
+}
+
+async function extractLab(input, credentials, options = {}) {
+  const url = one(input.url, MAX_ROW);
+  const hint = one(input.hint, 200);
+  const text = String(input.text || "").slice(0, MAX_PAGE_EXTRACT);
+  const prompt = [
+    "Below is the plain text of a research lab's web page. Extract ONLY facts the"
+      + " page itself states -- never guess, never fill in from outside knowledge,"
+      + " never invent a person, project, or paper. Leave any field empty (or any"
+      + " list empty) when the page does not state it.",
+    "",
+    `Page: ${url}`,
+    hint ? `The student says this page is about: "${hint}".` : "",
+    "",
+    "PAGE TEXT:",
+    text,
+    "",
+    `${JSON_ONLY}`,
+    "Shape: {",
+    '  "pi": {"name": "the principal investigator / professor", "title": "their'
+      + ' academic title", "bio": "1-3 sentences about them, from the page",'
+      + ' "interests": ["short research topics"]},',
+    '  "lab_name": "the lab\'s name", "lab_description": "1-3 sentences about the'
+      + ' lab", "department": "their department, if stated",',
+    '  "students": [{"name": "...", "title": "e.g. PhD student"}],',
+    '  "projects": [{"title": "...", "description": "...", "url": "..."}],',
+    '  "papers": [{"title": "...", "year": 2024, "venue": "...", "url": "..."}]',
+    "}",
+    `At most ${MAX_EXTRACT_STUDENTS} students, ${MAX_EXTRACT_PROJECTS} projects,`
+      + ` ${MAX_EXTRACT_PAPERS} papers -- the most central ones when there are more.`,
+  ].filter(Boolean).join("\n") + "\n";
+  const raw = await callModel(prompt, credentials, options);
+  if (!raw) {
+    const error = new Error("The page could not be read as a lab");
+    error.statusCode = 502;
+    throw error;
+  }
+  return normalizeLabExtract(raw);
+}
+
 module.exports = {
   clusterAreas,
+  extractLab,
   generateIdeas,
   refineIdea,
   generatePath,
@@ -735,6 +826,7 @@ module.exports = {
   normalizeRefine,
   normalizePath,
   normalizeProject,
+  normalizeLabExtract,
   LANES,
   MAX_AREAS,
   MAX_IDEAS,
