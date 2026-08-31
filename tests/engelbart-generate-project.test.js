@@ -156,3 +156,29 @@ test("normalizeProvenance keeps only valid canonical ids", () => {
   assert.equal(prov.papers.length, 1);                // paper needs a valid id
   assert.equal(prov.papers[0].paper_id, PA1);
 });
+
+test("generateProject throws on an unusable reply instead of a near-empty project", async () => {
+  // Truncated / non-JSON output used to slip through as a "structured" project
+  // holding only the Shape goal; a throw lets save_path degrade to the lanes
+  // the student actually drafted.
+  const unusable = async function fetchImpl() {
+    return { ok: true, status: 200,
+      async json() { return { content: [{ type: "text", text: '{"brainstorm": {"descr' }] }; } };
+  };
+  await assert.rejects(
+    RM.generateProject({ interest: "", idea: { title: "T" }, lab: LAB, lanes: {} },
+      CREDS, { fetchImpl: unusable }),
+    /usable JSON/);
+});
+
+test("generateProject asks the gateway for the large-reply headroom", async () => {
+  let body = null;
+  const capture = async function fetchImpl(url, init) {
+    body = JSON.parse(init.body);
+    return { ok: true, status: 200,
+      async json() { return { content: [{ type: "text", text: JSON.stringify(REPLY) }] }; } };
+  };
+  await RM.generateProject({ interest: "", idea: { title: "T" }, lab: LAB, lanes: {} },
+    CREDS, { fetchImpl: capture });
+  assert.equal(body.max_tokens, 8192);
+});

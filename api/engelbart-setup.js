@@ -260,6 +260,7 @@ async function handler(req, res) {
       ].filter(Boolean).join(" ");
 
       let payload;
+      let mode = "structured";
       try {
         // The structured generator is grounded in the refetched lab and billed
         // to the member's key; a lab of null still generates (empty Understand).
@@ -276,6 +277,11 @@ async function handler(req, res) {
       } catch (modelError) {
         // Degrade to the classic flat-lane payload, keeping the structured
         // provenance so the fallback project is still related to the research.
+        // Loudly: a silent degrade looks exactly like a generator bug from the
+        // workspace (four phase-named goals, every step flattened into todos).
+        mode = "lanes";
+        console.error("engelbart-setup: structured generate degraded to lanes:",
+          (modelError && modelError.message) || modelError);
         payload = SetupChat.normalizePayload(ResearchModel.explorationToPayload({
           name: body.name,
           objective: body.objective,
@@ -297,7 +303,7 @@ async function handler(req, res) {
         throw error;
       }
       await rpc("engelbart_save_pending_setup", { p_user_id: user.id, p_payload: payload });
-      return sendJson(res, 200, { saved: true });
+      return sendJson(res, 200, { saved: true, mode });
     }
 
     const error = new Error("Unknown Engelbart setup action");
