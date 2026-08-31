@@ -87,7 +87,7 @@
     saving: false,
 
     made: null,          // { name, code, expiresInSeconds }
-    installKind: "npx",  // npx | curl
+    installKind: "curl", // curl | npx — curl first: needs nothing on the machine
 
     profile: null        // the open researcher/lab modal, or null
   };
@@ -1030,17 +1030,21 @@
     body.appendChild(commandRow());
 
     var seg = el("div", "seg-row");
-    ["npx", "curl"].forEach(function (kind) {
-      var b = el("button", "seg " + (st.installKind === kind ? "on" : "off"),
-        kind === "npx" ? "npx" : "curl");
+    ["curl", "npx"].forEach(function (kind) {
+      var b = el("button", "seg " + (st.installKind === kind ? "on" : "off"), kind);
       on(b, "click", function () { st.installKind = kind; draw(); });
       seg.appendChild(b);
     });
     body.appendChild(seg);
 
+    // What each install command needs, so the reader knows why to pick one.
+    // curl is a self-contained binary (nothing preinstalled); npx needs Node.
     var mins = Math.round((st.made.expiresInSeconds || 900) / 60);
+    var note = st.installKind === "curl"
+      ? "No Node, npm, or Python needed."
+      : "Uses Node, which you already have if you run npx.";
     body.appendChild(el("div", "step-t",
-      "The code works once and expires in " + mins
+      note + " The code works once and expires in " + mins
       + (mins === 1 ? " minute." : " minutes.")));
 
     var acts = el("div", "actions");
