@@ -65,6 +65,7 @@
 
     areas: [],
     areaIdx: -1,
+    areaDraft: "",       // a manually named research area
 
     labs: [],
     labSel: null,        // chosen pi_id
@@ -192,13 +193,17 @@
   // The areas are semantic clusters the model draws over the real labs the
   // interest retrieved -- a model-backed setup call, not a plain read -- and
   // each area already carries the real labs beneath it. Also the regenerate
-  // on the direction screen: same interest, a fresh clustering.
-  function loadAreas() {
+  // on the direction screen: same interest, a fresh clustering. A string
+  // argument retrieves for THAT text instead (the manually named area);
+  // anything else (a click event) means the original interest.
+  function loadAreas(interestText) {
     if (st.thinking) return;
+    var interest = (typeof interestText === "string" && interestText.trim())
+      ? interestText.trim() : st.interest;
     st.error = "";
     st.thinking = true;
     draw();
-    setup("areas", { interest: st.interest }).then(function (out) {
+    setup("areas", { interest: interest }).then(function (out) {
       st.thinking = false;
       // Curated areas lead (the backend returns them first); interest-discovered
       // areas follow. Keep a few of each so a curated participant still sees
@@ -502,7 +507,7 @@
     st.phase = "interest";
     st.draft0 = "";
     st.interest = "";
-    st.areas = []; st.areaIdx = -1;
+    st.areas = []; st.areaIdx = -1; st.areaDraft = "";
     st.labs = []; st.labSel = null;
     st.lab = null; st.ideas = []; st.ideasError = ""; st.hoverIdea = -1;
     st.idea = null; st.refMsgs = []; st.refDraft = "";
@@ -762,9 +767,35 @@
       stage.appendChild(acts);
     }
     errorNode(stage);
-    // A lab that fits none of these areas is still addable right here -- the
-    // participant should never have to guess which area hides the door.
-    if (!st.thinking) labAddSection(stage);
+    // The shown areas are suggestions, not the menu: the participant can name
+    // the research area they actually mean and retrieve labs for THAT. (Adding
+    // a missing lab by link lives one step deeper, on the lab list.)
+    if (!st.thinking) areaAddSection(stage);
+  }
+
+  function areaAddSection(stage) {
+    stage.appendChild(el("div", "ideas-label", "Have a specific area in mind?"));
+    var card = el("div", "own-card in");
+    var field = el("textarea", "eb-f own-field area-entry");
+    field.setAttribute("rows", "1");
+    field.setAttribute("spellcheck", "false");
+    field.setAttribute("placeholder",
+      "Name it yourself — e.g. \"soft robotics\" or \"conservation psychology\"");
+    field.value = st.areaDraft;
+    on(field, "input", function () { st.areaDraft = field.value; grow(field); });
+    on(field, "keydown", function (event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        loadAreas(st.areaDraft);
+      }
+    });
+    card.appendChild(field);
+    var acts = el("div", "actions own-acts");
+    acts.appendChild(btn("Find labs in this area", "btn-dark", function () {
+      loadAreas(st.areaDraft);
+    }, { arrow: true }));
+    card.appendChild(acts);
+    stage.appendChild(card);
   }
 
   // --- lab ------------------------------------------------------------------
