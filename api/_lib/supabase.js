@@ -81,6 +81,17 @@ async function patchRows(table, query, values, options = {}) {
   });
 }
 
+async function deleteRows(table, query, options = {}) {
+  return serviceRequest(`/rest/v1/${table}?${query}`, {
+    ...options,
+    method: "DELETE",
+    headers: {
+      Prefer: options.prefer || "return=minimal",
+      ...(options.headers || {}),
+    },
+  });
+}
+
 async function rpc(name, body, options = {}) {
   return serviceRequest(`/rest/v1/rpc/${encodeURIComponent(name)}`, {
     ...options,
@@ -115,6 +126,7 @@ async function verifyUser(accessToken, options = {}) {
 
 module.exports = {
   ServiceError,
+  deleteRows,
   insertRows,
   parseResponse,
   patchRows,

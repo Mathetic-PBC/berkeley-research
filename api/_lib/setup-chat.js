@@ -23,8 +23,16 @@ const MAX_PLAN = 2400;
 const MAX_UNSURE = 6;
 const MAX_GOALS = 8;
 const MAX_TODOS = 20;
-const MAX_SUBGOALS = 6;
+// A generated project fans a phase into several goals (one Understand goal per
+// paper, several Implement goals), so the four-lane cap of 6 is too low.
+const MAX_SUBGOALS = 12;
 const MAX_NAME = 80;
+const MAX_DESC = 1000;
+const MAX_DOC_BODY = 8000;
+
+// The research-path phases a generated goal may belong to. Kept in sync with
+// hc's goals.PATH_PHASES; anything else means "no phase".
+const PATH_PHASES = ["brainstorm", "understand", "implement", "apply"];
 
 const CARDS = ["questions", "plan", "goals", "todos", "none"];
 const KINDS = ["mcq", "select_all", "free", "open"];
@@ -257,17 +265,106 @@ function normalizeTodos(value) {
   return out;
 }
 
+// One generated Brainstorm document ref carried on a subgoal: a title and the
+// markdown body. Bounded, newlines kept. Null when there is nothing to open.
+function normalizeDocumentRef(value) {
+  if (!value || typeof value !== "object") return null;
+  const body = String(value.body_md == null ? "" : value.body_md)
+    .replace(/\r/g, "").slice(0, MAX_DOC_BODY);
+  const title = one(value.title, MAX_TITLE);
+  if (!body.trim() && !title) return null;
+  return { title, body_md: body };
+}
+
 function normalizeSubgoals(value) {
   const out = [];
   for (const row of Array.isArray(value) ? value : []) {
     if (!row || typeof row !== "object") continue;
     const label = one(row.label || row.title, MAX_LABEL);
     const rows = normalizeTodos(row.todos);
-    if (!label || !rows.length) continue;
-    out.push({ label, todos: rows });
+    let phase = one(row.phase, 40).toLowerCase();
+    if (!PATH_PHASES.includes(phase)) phase = "";
+    const paper = normalizePaperRef(row.paper);
+    const document = normalizeDocumentRef(row.document);
+    // Keep a subgoal that carries WORK (todos), a PATH PHASE, or a RESOURCE (a
+    // paper or a document): an Understand paper goal and a Brainstorm document
+    // goal may have no todos of their own. Only an empty heading is dropped.
+    if (!label || (!rows.length && !phase && !paper && !document)) continue;
+    const sg = { label, todos: rows };
+    if (phase) sg.phase = phase;
+    const why = one(row.why, MAX_WHY);
+    if (why) sg.why = why;
+    const description = long(row.description, MAX_DESC);
+    if (description) sg.description = description;
+    if (paper) sg.paper = paper;
+    if (document) sg.document = document;
+    out.push(sg);
     if (out.length >= MAX_SUBGOALS) break;
   }
   return out;
+}
+
+// A small bounded list of structured refs for provenance.
+function boundList(value, fn, cap) {
+  const out = [];
+  for (const entry of Array.isArray(value) ? value : []) {
+    if (!entry || typeof entry !== "object") continue;
+    const mapped = fn(entry);
+    if (mapped) out.push(mapped);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+function provUuid(value) {
+  const text = String(value == null ? "" : value).trim();
+  return PAPER_ID_RE.test(text) ? text : "";
+}
+
+// The project's research provenance as STRUCTURED data (stable canonical ids),
+// not prose: research area, lab, PI, students, papers, projects, idea. Kept so
+// the workspace can later relate the project back to real researchers/work
+// without re-deriving anything from goal titles. Null when nothing survives.
+function normalizeProvenance(value) {
+  if (!value || typeof value !== "object") return null;
+  const out = {};
+  const interest = one(value.interest, 400);
+  if (interest) out.interest = interest;
+  if (value.area && typeof value.area === "object") {
+    const label = one(value.area.label, MAX_LABEL);
+    if (label) out.area = { label };
+  }
+  if (value.lab && typeof value.lab === "object") {
+    const pi_id = provUuid(value.lab.pi_id);
+    const lab_name = one(value.lab.lab_name, MAX_TITLE);
+    if (pi_id || lab_name) out.lab = { pi_id, lab_name };
+  }
+  if (value.pi && typeof value.pi === "object") {
+    const id = provUuid(value.pi.id);
+    const name = one(value.pi.name, MAX_TITLE);
+    if (id || name) out.pi = { id, name };
+  }
+  const students = boundList(value.students, (s) => {
+    const id = provUuid(s.id); const name = one(s.name, MAX_TITLE);
+    return id || name ? { id, name } : null;
+  }, 12);
+  if (students.length) out.students = students;
+  const papers = boundList(value.papers, (p) => {
+    const paper_id = provUuid(p.paper_id || p.id); const title = one(p.title, MAX_TITLE);
+    return paper_id ? { paper_id, title } : null;
+  }, 8);
+  if (papers.length) out.papers = papers;
+  const projects = boundList(value.projects, (p) => {
+    const id = provUuid(p.id); const title = one(p.title, MAX_TITLE);
+    return id || title ? { id, title } : null;
+  }, 8);
+  if (projects.length) out.projects = projects;
+  if (value.idea && typeof value.idea === "object") {
+    const title = one(value.idea.title, MAX_TITLE);
+    const inspired = one(value.idea.inspired, MAX_TITLE);
+    if (title || inspired) out.idea = { title, inspired };
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 // The envelope put back around a payload the model returned bare. Read by
@@ -324,11 +421,28 @@ function normalizeCard(value) {
   return out;
 }
 
+const PAPER_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// A canonical Berkeley paper reference carried on the approved project so the
+// chosen goal opens against it. Only the stable id + a display title + a source
+// URL travel here: never a PDF, never a signed URL, never a storage path -- the
+// id is all hc's Paper tab needs to ask the backend for a fresh signed URL.
+// Returns null unless there is a real canonical id to carry.
+function normalizePaperRef(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const id = String(source.paper_id || source.id || "").trim();
+  if (!PAPER_ID_RE.test(id)) return null;
+  let url = one(source.url, MAX_LINE_VALUE);
+  if (url && !/^https?:\/\//.test(url)) url = "";
+  return { paper_id: id, title: one(source.title, MAX_TITLE), url };
+}
+
 // The approved payload, bounded before it is stored: the table must never
 // hold unbounded model output. The CLI re-normalizes again on import.
 function normalizePayload(value) {
   value = value && typeof value === "object" ? value : {};
-  return {
+  const out = {
     name: one(value.name, MAX_NAME),
     plan: normalizePlan(value.plan),
     goals: normalizeGoals(value.goals),
@@ -336,6 +450,15 @@ function normalizePayload(value) {
     todos: normalizeTodos(value.todos),
     subgoals: normalizeSubgoals(value.subgoals),
   };
+  // Optional: the canonical paper the chosen goal reads against. LEGACY single-
+  // paper form, kept for old pending setups; new projects put papers on their
+  // own Understand subgoals. Kept only when a valid id survives.
+  const paper = normalizePaperRef(value.paper);
+  if (paper) out.paper = paper;
+  // Optional: the project's structured research provenance.
+  const provenance = normalizeProvenance(value.provenance);
+  if (provenance) out.provenance = provenance;
+  return out;
 }
 
 function pickModel(models) {
@@ -446,6 +569,8 @@ module.exports = {
   compose,
   normalizeCard,
   normalizePayload,
+  normalizePaperRef,
+  normalizeProvenance,
   pickModel,
   stageOf,
   turn,

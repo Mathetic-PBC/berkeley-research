@@ -329,6 +329,9 @@
     });
     setup("save_path", {
       piId: st.labSel,
+      // The student's original interest, so Generate can ground the structured
+      // project (and its Brainstorm document) in what they actually asked for.
+      interest: st.interest,
       name: st.name,
       objective: st.path.objective,
       idea: {

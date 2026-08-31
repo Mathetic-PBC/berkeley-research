@@ -101,7 +101,9 @@ test("an approved payload is bounded before it can be stored", () => {
   assert.equal(payload.plan.unsure.length, 6);
   assert.equal(payload.goals.length, 8);
   assert.equal(payload.todos.length, 20);
-  assert.equal(payload.subgoals.length, 6);
+  // A generated project fans a phase into several goals, so the subgoal cap is
+  // 12 (an Understand goal per paper, several Implement goals, etc.).
+  assert.equal(payload.subgoals.length, 12);
 });
 
 test("the account's own dated sonnet wins; the alias never reaches the proxy", () => {

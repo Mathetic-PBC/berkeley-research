@@ -1,0 +1,161 @@
+/* Curator: a utilitarian internal tool. It leans on /engelbart/styles.css for
+   the base tokens, typography and buttons, and adds only the dense editing
+   layout the curator needs. Deliberately plain -- this is an admin surface, not
+   a landing page. */
+
+.curator-shell { max-width: 1080px; }
+.fill { flex: 1 1 auto; }
+
+.curator-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.curator-bar .field { margin: 0; }
+.curator-bar .grow { flex: 1 1 220px; }
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 16px 0;
+}
+.toolbar .spacer { flex: 1 1 auto; }
+
+.area-card {
+  border: 1px solid var(--rule, #d9d4c7);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 14px 0;
+  background: rgba(255, 255, 255, 0.5);
+}
+.area-head, .lab-head, .work-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.area-head input.area-label {
+  flex: 1 1 auto;
+  font-weight: 600;
+}
+.lab-card {
+  border: 1px solid var(--rule, #e2ddd0);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  background: #fff;
+}
+.lab-title { flex: 1 1 auto; font-weight: 600; }
+.muted { color: var(--muted, #6b6559); font-size: 0.85em; }
+
+.reorder { display: inline-flex; gap: 2px; }
+.mini {
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--rule, #d9d4c7);
+  background: #fff;
+  cursor: pointer;
+}
+.mini:hover { background: #f3f0e8; }
+.mini.danger { color: #a1301f; border-color: #e2b5ac; }
+.mini:disabled { opacity: 0.4; cursor: default; }
+
+.section-title {
+  font-size: 0.78em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6559);
+  margin: 12px 0 6px;
+}
+
+.work-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 0;
+  border-top: 1px dotted var(--rule, #e7e2d5);
+}
+.work-row:first-of-type { border-top: 0; }
+.work-row .work-main { flex: 1 1 auto; min-width: 0; }
+.work-row .work-main .t { font-size: 0.92em; }
+.work-row.off .work-main { opacity: 0.5; }
+
+.thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--rule, #d9d4c7);
+  background: #f3f0e8;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.grid2 .full { grid-column: 1 / -1; }
+.field label { display: block; font-size: 0.78em; color: var(--muted, #6b6559); margin-bottom: 3px; }
+.field input, .field textarea, .field select {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--rule, #d9d4c7);
+  border-radius: 6px;
+  background: #fff;
+}
+.field textarea { min-height: 54px; resize: vertical; }
+
+.editor-panel {
+  border: 1px dashed var(--rule, #d9d4c7);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  background: #faf8f2;
+}
+
+.search-results { margin: 8px 0; }
+.search-hit {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px dotted var(--rule, #e7e2d5);
+}
+.search-hit .hit-main { flex: 1 1 auto; }
+
+.pdf-state { font-size: 0.85em; }
+.pdf-state.has { color: #2f6d3a; }
+.pdf-state.none { color: var(--muted, #6b6559); }
+
+.json-view {
+  white-space: pre;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #17150f;
+  color: #f2eeda;
+  padding: 14px 16px;
+  border-radius: 8px;
+  max-height: 60vh;
+}
+
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.82em;
+  padding: 3px 8px;
+  border: 1px solid var(--rule, #d9d4c7);
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+.chip.on { background: #17150f; color: #fbfaf6; border-color: #17150f; }

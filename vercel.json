@@ -58,6 +58,35 @@
           "value": "camera=(), microphone=(), geolocation=()"
         }
       ]
+    },
+    {
+      "source": "/engelbart/admin/curator(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; base-uri 'self'; connect-src 'self' https://tynpqxepuyyvxqdwzhkj.supabase.co wss://tynpqxepuyyvxqdwzhkj.supabase.co; font-src 'self' https://fonts.gstatic.com; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: https:; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://fonts.googleapis.com"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        }
+      ]
     }
   ],
   "rewrites": [
@@ -76,11 +105,18 @@
     {
       "source": "/engelbart/admin",
       "destination": "/engelbart/admin/index.html"
+    },
+    {
+      "source": "/engelbart/admin/curator",
+      "destination": "/engelbart/admin/curator/index.html"
     }
   ],
   "functions": {
     "api/engelbart-setup.js": {
       "maxDuration": 120
+    },
+    "api/engelbart-curator.js": {
+      "maxDuration": 60
     }
   },
   "redirects": [
@@ -92,6 +128,11 @@
     {
       "source": "/engelbart/install",
       "destination": "https://github.com/divadbaroon/claude-plugins/releases/download/engelbart-latest/install.sh",
+      "permanent": false
+    },
+    {
+      "source": "/engelbart/install.ps1",
+      "destination": "https://github.com/divadbaroon/claude-plugins/releases/download/engelbart-latest/install.ps1",
       "permanent": false
     }
   ]

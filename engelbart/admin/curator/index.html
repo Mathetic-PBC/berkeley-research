@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Curator · Engelbart admin</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/engelbart/styles.css">
+  <link rel="stylesheet" href="/engelbart/admin/curator/curator.css">
+</head>
+<body>
+  <nav class="landing-bar" aria-label="Primary">
+    <a class="wordmark" href="/engelbart">Engelbart</a>
+    <div class="nav-actions">
+      <a class="pill" href="/engelbart/admin">Back to admin</a>
+    </div>
+  </nav>
+
+  <main class="shell curator-shell">
+    <header class="masthead">
+      <h1>Landscape curator</h1>
+      <p class="def">Hand-build a participant's research landscape from the real
+        Berkeley graph. Facts you correct here update the shared graph; the
+        selection and order are stored for this participant only.</p>
+    </header>
+
+    <section id="curator-loading" class="panel">
+      <p class="status">Checking your admin session…</p>
+    </section>
+
+    <section id="signin-needed" class="panel hidden">
+      <p class="status" data-kind="error">You need an active admin session.</p>
+      <p><a class="button" href="/engelbart/admin">Go to admin sign-in</a></p>
+    </section>
+
+    <div id="app" class="hidden">
+      <!-- participant selection -->
+      <section class="panel">
+        <h2>Participant</h2>
+        <div class="curator-bar">
+          <div class="field grow">
+            <label for="participant-existing">Open an existing participant</label>
+            <select id="participant-existing"></select>
+          </div>
+          <button id="participant-open" class="button secondary" type="button">Open</button>
+        </div>
+        <hr>
+        <div class="curator-bar">
+          <div class="field">
+            <label for="new-key">New participant key</label>
+            <input id="new-key" type="text" placeholder="ashley" autocomplete="off">
+          </div>
+          <div class="field grow">
+            <label for="new-label">Label (optional)</label>
+            <input id="new-label" type="text" placeholder="Ashley — HCI pilot" autocomplete="off">
+          </div>
+          <button id="participant-new" class="button secondary" type="button">Create &amp; open</button>
+        </div>
+        <p id="participant-status" class="status"></p>
+      </section>
+
+      <!-- editor -->
+      <div id="editor" class="hidden">
+        <section class="panel">
+          <div class="curator-bar">
+            <div class="field grow">
+              <label for="cur-label">Participant label</label>
+              <input id="cur-label" type="text" autocomplete="off">
+            </div>
+            <div class="field grow">
+              <label for="cur-auth">Bound login (optional)</label>
+              <select id="cur-auth"></select>
+            </div>
+          </div>
+          <p class="muted" id="cur-key-note"></p>
+        </section>
+
+        <div class="toolbar">
+          <button id="add-area" class="button secondary" type="button">+ Research area</button>
+          <span class="spacer"></span>
+          <button id="btn-preview" class="button secondary" type="button">Preview JSON</button>
+          <button id="btn-reload" class="button secondary" type="button">Reload</button>
+          <button id="btn-save" class="button" type="button">Save</button>
+        </div>
+        <p id="editor-status" class="status"></p>
+
+        <div id="areas"></div>
+
+        <section id="preview-panel" class="panel hidden">
+          <div class="work-head">
+            <h2 class="fill">Onboarding preview</h2>
+            <button id="preview-close" class="mini" type="button">Close</button>
+          </div>
+          <p class="muted">The exact payload onboarding will consume for this participant.</p>
+          <div id="preview-json" class="json-view"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script src="/engelbart/admin/curator/curator.js"></script>
+</body>
+</html>
