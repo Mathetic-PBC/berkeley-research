@@ -288,7 +288,9 @@ textarea.eb-interest { font-size: 16px; line-height: 1.75; overflow: hidden; }
 /* --- the path ----------------------------------------------------------- */
 .path { max-width: 560px; margin: 30px auto 0; text-align: left; animation: v2-in 500ms cubic-bezier(.25,.1,.25,1) both; }
 .path-head { font-size: 9px; line-height: 1; font-weight: 500; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); }
-.path-target { margin-top: 10px; font-size: 11.5px; line-height: 1.7; color: var(--muted); }
+.path-target { display: flex; align-items: baseline; gap: 6px; margin-top: 10px; font-size: 11.5px; line-height: 1.7; color: var(--muted); }
+.path-target-cap { flex: none; }
+.path-target-edit { flex: 1; font-size: 11.5px; line-height: 1.7; color: var(--ink); overflow: hidden; }
 .lane { margin-top: 14px; }
 .lane:first-of-type { margin-top: 24px; }
 .lane-name { font-size: 11.5px; line-height: 1; font-weight: 700; letter-spacing: 2.2px; text-transform: uppercase; color: var(--ink); }
@@ -296,7 +298,8 @@ textarea.eb-interest { font-size: 16px; line-height: 1.75; overflow: hidden; }
 .lane-rows { margin-top: 8px; padding-left: 14px; border-left: 1px solid var(--hair); }
 .eb-row { display: flex; align-items: flex-start; gap: 11px; padding: 6px 2px; }
 .eb-row-dot { flex: none; color: var(--muted); padding-bottom: 2px; }
-.eb-row-body { flex: 1; min-width: 0; }
+.eb-row-body { flex: 1; min-width: 0; cursor: text; }
+.eb-row-edit { flex: 1; font-size: 12.5px; line-height: 1.65; overflow: hidden; }
 .eb-row-main { font-size: 12.5px; line-height: 1.65; color: var(--ink); text-wrap: pretty; }
 .eb-row-sub { margin-top: 3px; font-size: 10.5px; line-height: 1.65; color: var(--muted); white-space: pre-line; text-wrap: pretty; }
 .eb-x { flex: none; padding: 0 3px; font-family: inherit; font-size: 12px; line-height: 1; color: var(--muted); background: none; border: none; cursor: pointer; opacity: 0; transition: opacity 120ms; }

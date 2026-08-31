@@ -87,6 +87,7 @@
     saving: false,
 
     made: null,          // { name, code, expiresInSeconds }
+    savedMode: "",       // "structured" | "lanes" (the degraded save)
     installKind: "curl", // curl | npx — curl first: needs nothing on the machine
 
     profile: null        // the open researcher/lab modal, or null
@@ -173,13 +174,19 @@
     var interest = st.draft0.trim();
     if (!interest || st.thinking) return;
     st.interest = interest;
+    loadAreas();
+  }
+
+  // The areas are semantic clusters the model draws over the real labs the
+  // interest retrieved -- a model-backed setup call, not a plain read -- and
+  // each area already carries the real labs beneath it. Also the regenerate
+  // on the direction screen: same interest, a fresh clustering.
+  function loadAreas() {
+    if (st.thinking) return;
     st.error = "";
     st.thinking = true;
     draw();
-    // The areas are semantic clusters the model draws over the real labs the
-    // interest retrieved -- a model-backed setup call, not a plain read -- and
-    // each area already carries the real labs beneath it.
-    setup("areas", { interest: interest }).then(function (out) {
+    setup("areas", { interest: st.interest }).then(function (out) {
       st.thinking = false;
       // Curated areas lead (the backend returns them first); interest-discovered
       // areas follow. Keep a few of each so a curated participant still sees
@@ -307,7 +314,8 @@
       LANES.forEach(function (lane) {
         st.lanes[lane] = ((out.lanes && out.lanes[lane]) || []).map(row);
       });
-      st.name = st.path.name;
+      // A regenerate keeps the name the student already typed.
+      st.name = st.name.trim() ? st.name : st.path.name;
       st.phase = "path";
       draw();
     }, function (error) {
@@ -343,7 +351,10 @@
         inspired: st.idea.inspired
       },
       lanes: lanes
-    }).then(function () {
+    }).then(function (saved) {
+      // "lanes" means the structured generator degraded and the path was
+      // saved exactly as drafted -- worth a quiet note on the done screen.
+      st.savedMode = (saved && saved.mode) || "";
       return issueCode();
     }).then(function (issued) {
       st.saving = false;
@@ -621,7 +632,13 @@
       grid.appendChild(col);
     });
     stage.appendChild(grid);
-    if (st.thinking) stage.appendChild(generating("finding labs"));
+    if (st.thinking) stage.appendChild(generating("rethinking the areas"));
+    else {
+      var acts = el("div", "actions");
+      acts.style.justifyContent = "center";
+      acts.appendChild(btn("Show different areas", "btn-ghost", loadAreas));
+      stage.appendChild(acts);
+    }
     errorNode(stage);
   }
 
@@ -721,6 +738,11 @@
       grid.appendChild(col);
     });
     stage.appendChild(grid);
+
+    var again = el("div", "actions");
+    again.style.justifyContent = "center";
+    again.appendChild(btn("Regenerate ideas", "btn-ghost", loadIdeas));
+    stage.appendChild(again);
   }
 
   // Hover is a light touch: rerender only the ideas grid's hot/dim classes,
@@ -824,9 +846,16 @@
   function phasePath(stage) {
     var path = el("div", "path");
     path.appendChild(el("div", "path-head", "Your path"));
-    if (st.path.objective) {
-      path.appendChild(el("div", "path-target", "Toward: " + st.path.objective));
-    }
+    var targetLine = el("div", "path-target");
+    targetLine.appendChild(el("span", "path-target-cap", "Toward:"));
+    var target = el("textarea", "eb-f path-target-edit");
+    target.setAttribute("rows", "1");
+    target.setAttribute("spellcheck", "false");
+    target.setAttribute("placeholder", "what this project is working toward…");
+    target.value = st.path.objective;
+    on(target, "input", function () { st.path.objective = target.value; grow(target); });
+    targetLine.appendChild(target);
+    path.appendChild(targetLine);
 
     LANES.forEach(function (lane) {
       var block = el("div", "lane");
@@ -858,6 +887,7 @@
 
     var acts = el("div", "actions");
     acts.appendChild(btn("Back to the idea", "btn-ghost", function () { goBackTo("project"); }));
+    acts.appendChild(btn("Regenerate path", "btn-ghost", generatePath));
     path.appendChild(acts);
 
     errorNode(path);
@@ -883,11 +913,35 @@
     var line = el("div", "eb-row");
     line.appendChild(el("span", "eb-row-dot", "·"));
     var body = el("div", "eb-row-body");
+    body.setAttribute("title", "Click to edit");
     var parts = str(r.text).split("\n");
     body.appendChild(el("div", "eb-row-main", parts[0]));
     if (parts.length > 1 && parts.slice(1).join(" ").trim()) {
       body.appendChild(el("div", "eb-row-sub", parts.slice(1).join(" ")));
     }
+    // Click to edit in place; blur commits, and an emptied row is a delete.
+    on(body, "click", function () {
+      var edit = el("textarea", "eb-f eb-row-edit");
+      edit.setAttribute("rows", "1");
+      edit.setAttribute("spellcheck", "false");
+      edit.value = r.text;
+      on(edit, "input", function () { r.text = edit.value; grow(edit); });
+      on(edit, "keydown", function (event) {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          edit.blur();
+        }
+      });
+      on(edit, "blur", function () {
+        if (!edit.value.trim()) {
+          st.lanes[lane] = st.lanes[lane].filter(function (o) { return o !== r; });
+        }
+        draw();
+      });
+      line.replaceChild(edit, body);
+      grow(edit);
+      edit.focus();
+    });
     line.appendChild(body);
     var x = el("button", "eb-x", "×");
     on(x, "click", function () {
@@ -1028,6 +1082,11 @@
     heroBox.appendChild(el("div", "done-word", "Ready."));
     heroBox.appendChild(el("div", "done-note",
       "“" + str(st.made.name) + "” is saved to your account."));
+    if (st.savedMode === "lanes") {
+      heroBox.appendChild(el("div", "done-note",
+        "Saved exactly as you drafted it — the structured generator was"
+        + " unavailable just now, so the phases were kept as flat steps."));
+    }
     done.appendChild(heroBox);
 
     var card = el("div", "card");
