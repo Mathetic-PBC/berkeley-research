@@ -271,7 +271,77 @@
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); run(); } });
     panel.appendChild(el("div", { class: "curator-bar" }, [el("div", { class: "field grow" }, input), btn]));
     panel.appendChild(results);
+    panel.appendChild(renderLabCreate(area));
     return panel;
+  }
+
+  // Create a lab that isn't in Berkeley's graph yet (a PI record), then attach it
+  // to this area exactly like a searched hit. It joins the shared graph, so the
+  // canonical PI editor, projects, and papers below all work on it immediately.
+  function renderLabCreate(area) {
+    const wrap = el("div", { class: "editor-panel" });
+    const toggle = el("button", { class: "mini", type: "button" }, "+ Create a new lab");
+    const form = el("div", { class: "hidden create-lab" });
+
+    // one input per canonical field; the create RPC whitelists exactly these.
+    const f = {};
+    const mk = (key, ph, textarea) => {
+      f[key] = textarea ? el("textarea", { placeholder: ph || "" }, "")
+                        : el("input", { type: "text", placeholder: ph || "" });
+      return f[key];
+    };
+    const field = (label, node, cls) =>
+      el("div", { class: "field " + (cls || "") }, [el("label", {}, label), node]);
+    const status = el("p", { class: "status" }, "");
+    const create = el("button", { class: "button", type: "button" }, "Create & add");
+
+    create.addEventListener("click", async () => {
+      const name = f.name.value.trim();
+      const lab_name = f.lab_name.value.trim();
+      if (!name || !lab_name) {
+        status.textContent = "A PI name and a lab name are both required.";
+        status.dataset.kind = "error";
+        return;
+      }
+      status.textContent = "Creating…"; status.dataset.kind = ""; create.disabled = true;
+      try {
+        await createLab(area, {
+          name, lab_name,
+          title: f.title.value.trim(),
+          lab_url: f.lab_url.value.trim(),
+          lab_description: f.lab_description.value.trim(),
+          lab_image_url: f.lab_image_url.value.trim(),
+          url: f.url.value.trim(),
+          bio: f.bio.value.trim(),
+          image_url: f.image_url.value.trim(),
+          interests: f.interests.value.split(",").map((s) => s.trim()).filter(Boolean),
+        });
+        // createLab -> addLab -> renderAreas() rebuilds this subtree collapsed.
+      } catch (error) {
+        status.textContent = error.message; status.dataset.kind = "error";
+        create.disabled = false;
+      }
+    });
+    toggle.addEventListener("click", () => form.classList.toggle("hidden"));
+
+    form.appendChild(el("p", { class: "muted" },
+      "Not in Berkeley’s graph yet? Create the lab (a PI record) and add it to this area. "
+      + "It joins the shared graph and becomes searchable; add its projects and papers below. "
+      + "Only a PI name and lab name are required — the rest can be filled here or later."));
+    form.appendChild(el("div", { class: "grid2" }, [
+      field("PI name", mk("name", "e.g. Jane Doe")),
+      field("Lab name", mk("lab_name", "e.g. Doe Lab")),
+      field("PI title (optional)", mk("title", "e.g. Associate Professor")),
+      field("Lab website", mk("lab_url", "https://…")),
+      field("PI website", mk("url", "https://…")),
+      field("Research areas (comma separated)", mk("interests", "robotics, control, soft robotics"), "full"),
+      field("PI photo URL", mk("image_url", "https://…")),
+      field("Lab image URL", mk("lab_image_url", "https://…")),
+      field("PI bio / description", mk("bio", "", true), "full"),
+      field("Lab description", mk("lab_description", "", true), "full")]));
+    form.appendChild(el("div", { class: "curator-bar" }, [create, status]));
+    wrap.append(toggle, form);
+    return wrap;
   }
 
   function renderHit(area, row) {
@@ -306,6 +376,17 @@
       });
       renderAreas();
     } catch (error) { flash(error.message, "error"); }
+  }
+
+  async function createLab(area, fields) {
+    const row = await act("create_person", { patch: fields });
+    labCache[row.id] = await act("lab_detail", { piId: row.id });
+    await addLab(area, {
+      pi_id: row.id, pi_name: row.name, title: row.title, lab_name: row.lab_name,
+      department: "", bio: row.bio, interests: fields.interests || [],
+      n_members: 0, n_projects: 0,
+    });
+    flash("Lab created and added.", "success");
   }
 
   // ---- a single lab -------------------------------------------------------

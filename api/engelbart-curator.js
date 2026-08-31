@@ -70,6 +70,16 @@ async function handler(req, res) {
       if (!value) throw notFound("Person not found");
       return sendJson(res, 200, value);
     }
+    if (action === "create_person") {
+      // A lab that isn't in Berkeley's graph yet: create the PI record so it can
+      // be attached like any other. The RPC requires a name and defaults kind to
+      // 'professor', so a lab_name makes it a lab.
+      const value = await rpc("engelbart_curator_create_person", {
+        p_patch: patch(body.patch),
+      });
+      if (!value) throw new Error("Could not create the lab");
+      return sendJson(res, 200, value);
+    }
     if (action === "upsert_project") {
       const value = await rpc("engelbart_curator_upsert_project", {
         p_id: Curated.optUuid(body.id) || null,
