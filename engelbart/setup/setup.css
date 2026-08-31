@@ -391,3 +391,30 @@ textarea.eb-interest { font-size: 16px; line-height: 1.75; overflow: hidden; }
 .step { display: flex; gap: 14px; padding: 11px 0; }
 .step-n { flex: none; width: 16px; font-size: 10px; line-height: 1.8; font-weight: 500; color: var(--muted); }
 .step-t { flex: 1; font-size: 12.5px; line-height: 1.8; color: var(--body); text-wrap: pretty; }
+
+/* --- bring your own project ---------------------------------------------- */
+.own-card {
+  max-width: 560px; margin: 14px auto 0; text-align: left;
+  background: var(--page); border: 1px solid var(--hair3); border-radius: 10px;
+  padding: 16px 20px 18px;
+}
+.own-cap { text-align: left; }
+.own-cap + .own-cap, .own-field + .own-cap { margin-top: 18px; }
+.own-field {
+  margin-top: 10px; font-size: 13px; line-height: 1.7; overflow: hidden;
+  border-bottom: 1px solid var(--hair2); padding-bottom: 8px;
+  transition: border-color 250ms;
+}
+.own-field:focus { border-color: var(--muted); }
+textarea.own-desc { font-size: 14px; }
+.own-file-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.own-file-name { font-size: 11px; color: var(--muted); font-style: italic; overflow-wrap: anywhere; }
+.own-file-clear {
+  flex: none; width: 20px; height: 20px; border: none; background: none; cursor: pointer;
+  color: var(--muted); font-size: 14px; line-height: 1; padding: 0;
+}
+.own-file-clear:hover { color: var(--danger); }
+.own-acts { justify-content: flex-start; }
+.own-card .err { text-align: left; margin-top: 10px; }
+.own-paper-link { color: var(--acc); text-decoration: none; overflow-wrap: anywhere; }
+.own-paper-link:hover { text-decoration: underline; }

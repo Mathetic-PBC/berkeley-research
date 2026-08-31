@@ -171,6 +171,64 @@ test("generateProject throws on an unusable reply instead of a near-empty projec
     /usable JSON/);
 });
 
+// --- "bring your own project": the student's attached paper -----------------
+
+const OWN = "cccccccc-0000-0000-0000-000000000001";
+const OWN_LAB = {
+  ...LAB,
+  papers: [
+    { id: OWN, title: "My Own Paper", url: "https://my/paper", own: true },
+    ...LAB.papers,
+  ],
+};
+const OWN_INPUT = { information: "I tried this in a class once",
+  paper: { id: OWN, title: "My Own Paper", url: "https://my/paper" } };
+
+test("generateProject forces the student's own paper into Understand when the model skips it", async () => {
+  // The model picked only lab papers ([1] and [2] here, since own sits at [0]).
+  const reply = { ...REPLY, understand: [
+    { paper: 1, description: "covers A", purpose: "p", todos: ["read"] },
+    { paper: 2, description: "covers B", purpose: "p", todos: ["read"] },
+  ] };
+  const project = await RM.generateProject(
+    { interest: "ml", idea: { title: "Mine", description: "my own thing" },
+      lab: OWN_LAB, own: OWN_INPUT },
+    CREDS, { fetchImpl: modelSaying(reply) });
+  assert.equal(project.understand[0].paper.paper_id, OWN);      // prepended
+  assert.equal(project.understand[0].paper.url, "https://my/paper");
+  assert.ok(project.understand[0].todos.length > 0);
+  assert.ok(project.understand.length <= 3);                    // still capped
+});
+
+test("generateProject keeps the model's own-paper goal when it did include it", async () => {
+  const reply = { ...REPLY, understand: [
+    { paper: 0, description: "the student's paper", purpose: "their anchor", todos: ["read it"] },
+    { paper: 1, description: "covers A", purpose: "p", todos: ["read"] },
+  ] };
+  const project = await RM.generateProject(
+    { interest: "ml", idea: { title: "Mine" }, lab: OWN_LAB, own: OWN_INPUT },
+    CREDS, { fetchImpl: modelSaying(reply) });
+  assert.equal(project.understand.length, 2);                   // no duplicate prepend
+  assert.equal(project.understand[0].paper.paper_id, OWN);
+  assert.equal(project.understand[0].description, "the student's paper");
+});
+
+test("generateProject's prompt anchors on the student's own framing and paper", async () => {
+  let body = null;
+  const capture = async function fetchImpl(url, init) {
+    body = JSON.parse(init.body);
+    return { ok: true, status: 200,
+      async json() { return { content: [{ type: "text", text: JSON.stringify(REPLY) }] }; } };
+  };
+  await RM.generateProject(
+    { interest: "", idea: { title: "Mine" }, lab: OWN_LAB, own: OWN_INPUT },
+    CREDS, { fetchImpl: capture });
+  const prompt = body.messages[0].content;
+  assert.match(prompt, /brought this project idea THEMSELVES/);
+  assert.match(prompt, /I tried this in a class once/);
+  assert.match(prompt, /Paper \[0\] is the one the student attached/);
+});
+
 test("generateProject asks the gateway for the large-reply headroom", async () => {
   let body = null;
   const capture = async function fetchImpl(url, init) {

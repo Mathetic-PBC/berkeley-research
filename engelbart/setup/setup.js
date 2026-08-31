@@ -77,6 +77,12 @@
 
     idea: null,          // the chosen, editable idea { title, description, why, inspired }
 
+    ownOpen: false,      // the "bring your own project" form, expanded
+    ownDraft: null,      // the form's fields while drafting
+    own: null,           // committed { information, paper: {id,title,url} | null } or null
+    ownBusy: false,      // creating the paper / uploading the PDF
+    ownError: "",
+
     refMsgs: [],         // [{ who: 'you' | 'engelbart', text }]
     refDraft: "",
     refining: false,
@@ -263,10 +269,84 @@
       why: str(idea.why),
       inspired: str(idea.inspired)
     };
+    st.own = null;       // a generated idea replaces any own-project context
     st.refMsgs = [];
     st.refDraft = "";
     st.phase = "project";
     draw();
+  }
+
+  // The participant's own-project context, attached to every model call once
+  // they brought their own idea, so refine / path / generate stay anchored on
+  // their framing and their attached paper.
+  function ownPayload() {
+    if (!st.own) return undefined;
+    return { information: st.own.information, paper: st.own.paper };
+  }
+
+  // "Bring your own project": commit the drafted form. If a paper was given,
+  // create it first (and PUT the PDF straight to Storage when one was picked),
+  // then land in the project phase where the refine chat is the brainstorm.
+  function startOwnProject() {
+    var d = st.ownDraft || {};
+    if (st.ownBusy) return;
+    if (!str(d.description).trim()) {
+      st.ownError = "Describe what you want the project to be first.";
+      draw();
+      return;
+    }
+    st.ownBusy = true;
+    st.ownError = "";
+    draw();
+
+    var wantsPaper = str(d.paperTitle).trim() || str(d.paperUrl).trim() || d.file;
+    var makePaper = !wantsPaper ? Promise.resolve(null)
+      : setup("own_paper", {
+          title: d.paperTitle,
+          url: d.paperUrl,
+          wantsUpload: !!d.file
+        }).then(function (out) {
+          if (!d.file || !out.upload) return out;
+          return fetch(out.upload.uploadUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/pdf",
+              "x-upsert": "true",
+              apikey: out.upload.anonKey,
+              Authorization: "Bearer " + out.upload.anonKey
+            },
+            body: d.file
+          }).then(function (put) {
+            if (!put.ok) throw new Error("The PDF upload failed (" + put.status + ")");
+            return setup("own_paper_saved", { id: out.id, token: out.token });
+          }).then(function () { return out; });
+        });
+
+    makePaper.then(function (paper) {
+      st.ownBusy = false;
+      st.own = {
+        information: str(d.information).trim(),
+        paper: paper ? { id: paper.id, title: str(paper.title), url: str(paper.url) } : null
+      };
+      st.idea = {
+        title: str(d.title).trim() || "My own project",
+        description: str(d.description).trim(),
+        why: "",
+        inspired: ""
+      };
+      st.refMsgs = [{
+        who: "engelbart",
+        text: "It's your project — tell me more about what you're imagining, or"
+          + " ask me to poke at it. We'll shape it together before charting the path."
+      }];
+      st.refDraft = "";
+      st.phase = "project";
+      draw();
+    }, function (error) {
+      st.ownBusy = false;
+      st.ownError = (error && error.message) || "could not start your project";
+      draw();
+    });
   }
 
   function sendRefine() {
@@ -280,7 +360,8 @@
     setup("refine", {
       piId: st.labSel,
       idea: { title: st.idea.title, description: st.idea.description },
-      note: note
+      note: note,
+      own: ownPayload()
     }).then(function (out) {
       st.refining = false;
       if (out.title) st.idea.title = out.title;
@@ -306,7 +387,8 @@
     setup("path", {
       piId: st.labSel,
       idea: { title: st.idea.title, description: st.idea.description },
-      interest: st.interest
+      interest: st.interest,
+      own: ownPayload()
     }).then(function (out) {
       st.thinking = false;
       st.path = { name: out.name || st.idea.title, objective: out.objective || st.idea.description };
@@ -350,7 +432,8 @@
         description: st.idea.description,
         inspired: st.idea.inspired
       },
-      lanes: lanes
+      lanes: lanes,
+      own: ownPayload()
     }).then(function (saved) {
       // "lanes" means the structured generator degraded and the path was
       // saved exactly as drafted -- worth a quiet note on the done screen.
@@ -388,6 +471,8 @@
     st.labs = []; st.labSel = null;
     st.lab = null; st.ideas = []; st.ideasError = ""; st.hoverIdea = -1;
     st.idea = null; st.refMsgs = []; st.refDraft = "";
+    st.own = null; st.ownDraft = null; st.ownOpen = false;
+    st.ownBusy = false; st.ownError = "";
     st.path = null; st.lanes = null; st.name = "";
     st.made = null; st.error = ""; st.profile = null;
     draw();
@@ -722,6 +807,7 @@
       again.style.justifyContent = "center";
       again.appendChild(btn("Try again", "btn-ghost", loadIdeas));
       stage.appendChild(again);
+      ownSection(stage);
       return;
     }
 
@@ -743,6 +829,98 @@
     again.style.justifyContent = "center";
     again.appendChild(btn("Regenerate ideas", "btn-ghost", loadIdeas));
     stage.appendChild(again);
+
+    ownSection(stage);
+  }
+
+  // "Or bring your own project": a quiet card under the generated ideas. The
+  // participant states the project in their own words, attaches background and
+  // (optionally) a paper -- link, PDF, or both -- then lands in the same
+  // project phase, where the refine chat is the brainstorming surface.
+  function ownSection(stage) {
+    stage.appendChild(el("div", "ideas-label", "Or bring your own project"));
+
+    if (!st.ownOpen) {
+      var openRow = el("div", "actions");
+      openRow.style.justifyContent = "center";
+      openRow.appendChild(btn("I have my own project idea", "btn-ghost", function () {
+        st.ownOpen = true;
+        draw();
+      }));
+      stage.appendChild(openRow);
+      return;
+    }
+
+    if (!st.ownDraft) {
+      st.ownDraft = {
+        title: "", description: "", information: "",
+        paperTitle: "", paperUrl: "", file: null
+      };
+    }
+    var d = st.ownDraft;
+    var card = el("div", "own-card in");
+
+    function area(cls, placeholder, rowsN, value, set) {
+      var t = el("textarea", "eb-f own-field " + cls);
+      t.setAttribute("rows", String(rowsN));
+      t.setAttribute("spellcheck", "false");
+      t.setAttribute("placeholder", placeholder);
+      t.value = value;
+      on(t, "input", function () { set(t.value); grow(t); });
+      return t;
+    }
+
+    card.appendChild(el("div", "cap own-cap", "Your project"));
+    card.appendChild(area("own-desc", "What do you want the project to be? Describe it in your own words.",
+      3, d.description, function (v) { d.description = v; }));
+    card.appendChild(area("own-title", "Give it a working title (optional)",
+      1, d.title, function (v) { d.title = v; }));
+    card.appendChild(area("own-info", "Anything else worth knowing — background, context, what you've tried (optional)",
+      2, d.information, function (v) { d.information = v; }));
+
+    card.appendChild(el("div", "cap own-cap", "Attach a paper (optional)"));
+    card.appendChild(area("own-paper-title", "Paper title", 1, d.paperTitle,
+      function (v) { d.paperTitle = v; }));
+    card.appendChild(area("own-paper-url", "Link — a DOI or URL", 1, d.paperUrl,
+      function (v) { d.paperUrl = v; }));
+
+    var fileRow = el("div", "own-file-row");
+    var file = el("input", "own-file");
+    file.setAttribute("type", "file");
+    file.setAttribute("accept", "application/pdf");
+    file.style.display = "none";
+    on(file, "change", function () {
+      d.file = (file.files && file.files[0]) || null;
+      draw();
+    });
+    fileRow.appendChild(file);
+    fileRow.appendChild(btn(d.file ? "Change PDF" : "Attach a PDF", "btn-ghost", function () {
+      file.click();
+    }));
+    fileRow.appendChild(el("span", "own-file-name",
+      d.file ? d.file.name : "no file attached"));
+    if (d.file) {
+      var drop = el("button", "own-file-clear", "×");
+      on(drop, "click", function () { d.file = null; draw(); });
+      fileRow.appendChild(drop);
+    }
+    card.appendChild(fileRow);
+
+    if (st.ownBusy) {
+      card.appendChild(generating(d.file ? "attaching your paper" : "starting your project"));
+    } else {
+      var acts = el("div", "actions own-acts");
+      acts.appendChild(btn("Shape this project", "btn-dark", startOwnProject, { arrow: true }));
+      acts.appendChild(btn("Never mind", "btn-ghost", function () {
+        st.ownOpen = false;
+        st.ownError = "";
+        draw();
+      }));
+      card.appendChild(acts);
+    }
+    if (st.ownError) card.appendChild(el("div", "err", st.ownError));
+
+    stage.appendChild(card);
   }
 
   // Hover is a light touch: rerender only the ideas grid's hot/dim classes,
@@ -796,6 +974,29 @@
     focus.appendChild(meta);
     if (st.idea.inspired) {
       focus.appendChild(el("div", "focus-sub", "Builds on " + st.idea.inspired + "."));
+    }
+
+    // An own-brought project shows what came with it: the attached paper (a
+    // real link when one was given) and the background they wrote.
+    if (st.own && (st.own.paper || st.own.information)) {
+      focus.appendChild(el("div", "cap focus-cap", "What you brought"));
+      if (st.own.paper) {
+        var pLine = el("div", "focus-sub");
+        pLine.appendChild(document.createTextNode("Paper: "));
+        if (st.own.paper.url) {
+          var pA = el("a", "own-paper-link", st.own.paper.title || "attached paper");
+          pA.setAttribute("href", st.own.paper.url);
+          pA.setAttribute("target", "_blank");
+          pA.setAttribute("rel", "noreferrer");
+          pLine.appendChild(pA);
+        } else {
+          pLine.appendChild(document.createTextNode(st.own.paper.title || "attached PDF"));
+        }
+        focus.appendChild(pLine);
+      }
+      if (st.own.information) {
+        focus.appendChild(el("div", "focus-sub", clip(st.own.information, 300)));
+      }
     }
 
     // Inline refine: a quiet conversation that edits the idea in place.

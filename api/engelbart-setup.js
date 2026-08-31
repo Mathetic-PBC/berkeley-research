@@ -1,11 +1,15 @@
 "use strict";
 
+const crypto = require("node:crypto");
+
 const CliAuth = require("./_lib/cli-auth");
 const Credits = require("./_lib/credits");
 const Curated = require("./_lib/curated");
 const SetupChat = require("./_lib/setup-chat");
 const Research = require("./_lib/research");
 const ResearchModel = require("./_lib/research-model");
+const Storage = require("./_lib/storage");
+const { encryptionKey, supabaseConfig } = require("./_lib/config");
 const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("./_lib/http");
 const { rpc, verifyUser } = require("./_lib/supabase");
 
@@ -86,6 +90,31 @@ async function discoverAreas(interest, credentials, exclude) {
       discovered: true,
     }))
     .filter((area) => area.labs.length);
+}
+
+// The participant's own project context ("bring your own project"): background
+// in their words plus, when they attached one, the paper own_paper created.
+// Bounded here; the paper id must be a real uuid or the paper is dropped.
+function ownContext(value) {
+  if (!value || typeof value !== "object") return null;
+  const information = String(value.information || "").slice(0, 2000).trim();
+  const p = value.paper && typeof value.paper === "object" ? value.paper : null;
+  const id = p ? Curated.optUuid(p.id) : "";
+  const paper = id ? {
+    id,
+    title: String(p.title || "").slice(0, 300).trim(),
+    url: String(p.url || "").slice(0, 500).trim(),
+  } : null;
+  if (!information && !paper) return null;
+  return { information, paper };
+}
+
+// Proof that THIS member created THIS paper through own_paper just now, so the
+// pdf-recording step cannot be pointed at an arbitrary canonical paper. The
+// curator endpoints stay curator-gated; this is the member-scoped equivalent.
+function ownPaperToken(paperId, userId) {
+  return crypto.createHmac("sha256", encryptionKey())
+    .update(`own-paper:${paperId}:${userId}`).digest("base64url");
 }
 
 // The web setup conversation. `turn` and `save` are the browser's, behind the
@@ -207,14 +236,65 @@ async function handler(req, res) {
       const { user, credentials } = await memberCredentials(req);
       const lab = await groundingLab(body.piId, user);
       return sendJson(res, 200, await ResearchModel.refineIdea(
-        { lab, idea: body.idea, note: body.note }, credentials));
+        { lab, idea: body.idea, note: body.note, own: ownContext(body.own) }, credentials));
     }
 
     if (action === "path") {
       const { user, credentials } = await memberCredentials(req);
       const lab = await groundingLab(body.piId, user);
       return sendJson(res, 200, await ResearchModel.generatePath(
-        { lab, idea: body.idea, interest: body.interest }, credentials));
+        { lab, idea: body.idea, interest: body.interest, own: ownContext(body.own) },
+        credentials));
+    }
+
+    // "Bring your own project": the participant attaches their own paper. The
+    // row is CREATED here every time -- never an update by client-sent id -- so
+    // a member can only ever touch a paper this action made for them. With no
+    // linked authors it stays invisible to every lab view; it is reachable only
+    // through the project that references it.
+    if (action === "own_paper") {
+      const user = await verifyUser(bearerToken(req));
+      const title = String(body.title || "").slice(0, 300).trim() || "Attached paper";
+      const url = String(body.url || "").slice(0, 500).trim();
+      const value = await rpc("engelbart_curator_upsert_paper", {
+        p_id: null,
+        p_patch: { title, url },
+      });
+      if (!value || !value.id) {
+        const error = new Error("Could not create the paper");
+        error.statusCode = 502;
+        throw error;
+      }
+      const out = { id: value.id, title: value.title, url: value.url || "" };
+      if (body.wantsUpload) {
+        // The PDF goes straight from the browser to Storage, exactly like the
+        // curator's uploads; the token lets own_paper_saved trust the id.
+        const up = await Storage.signedUploadUrl(Storage.paperObjectPath(value.id));
+        out.upload = { ...up, anonKey: supabaseConfig().anonKey };
+        out.token = ownPaperToken(value.id, user.id);
+      }
+      return sendJson(res, 200, out);
+    }
+
+    // The browser reports the PDF landed; record the stable path. The token
+    // from own_paper is the guard: it only verifies for a paper that action
+    // created for this same member.
+    if (action === "own_paper_saved") {
+      const user = await verifyUser(bearerToken(req));
+      const id = Curated.optUuid(body.id);
+      const token = String(body.token || "");
+      const expected = id ? ownPaperToken(id, user.id) : "";
+      const ok = expected && token.length === expected.length
+        && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+      if (!ok) {
+        const error = new Error("That upload cannot be recorded");
+        error.statusCode = 403;
+        throw error;
+      }
+      await rpc("engelbart_curator_set_paper_pdf", {
+        p_id: id, p_pdf_path: Storage.paperObjectPath(id),
+      });
+      return sendJson(res, 200, { saved: true });
     }
 
     // The final "Generate project". The browser sends its (edited) name +
@@ -241,6 +321,19 @@ async function handler(req, res) {
       const interest = String(body.interest || "");
       const pi = lab && lab.pi ? lab.pi : null;
 
+      // The participant's own attached paper joins the grounding pool FIRST,
+      // marked `own`, so the generator's paper menu carries it and the forced
+      // Understand goal can bind to its real canonical id.
+      const own = ownContext(body.own);
+      if (own && own.paper) {
+        lab = lab || {};
+        lab.papers = [
+          { id: own.paper.id, title: own.paper.title || "Attached paper",
+            url: own.paper.url, own: true },
+          ...(Array.isArray(lab.papers) ? lab.papers : []),
+        ];
+      }
+
       // Structured provenance -- stable canonical ids, kept as data. The papers
       // are filled in from whichever canonical papers the generator selected.
       const provenance = {
@@ -266,7 +359,7 @@ async function handler(req, res) {
         // to the member's key; a lab of null still generates (empty Understand).
         const credentials = await Credits.credentialsFor(user);
         const project = await ResearchModel.generateProject(
-          { interest, idea, lab: lab || {}, lanes: body.lanes }, credentials);
+          { interest, idea, lab: lab || {}, lanes: body.lanes, own }, credentials);
         provenance.papers = project.understand.map(
           (u) => ({ paper_id: u.paper.paper_id, title: u.paper.title }));
         payload = SetupChat.normalizePayload(ResearchModel.structuredToPayload(project, {
@@ -288,6 +381,11 @@ async function handler(req, res) {
           idea,
           lanes: body.lanes,
           lab: pi ? { lab_name: pi.lab_name, pi_name: pi.name, department: pi.department } : {},
+          // The own attached paper survives the degrade through the legacy
+          // single-paper field the importer already understands.
+          paper: own && own.paper
+            ? { paper_id: own.paper.id, title: own.paper.title, url: own.paper.url }
+            : undefined,
         }));
         const prov = SetupChat.normalizeProvenance(provenance);
         if (prov) payload.provenance = prov;
