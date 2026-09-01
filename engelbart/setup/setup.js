@@ -43,13 +43,6 @@
     brainstorm: "Brainstorm", understand: "Understand",
     implement: "Implement", apply: "Apply"
   };
-  var LANE_NOTE = {
-    brainstorm: "Open questions to explore first — these can change as you learn.",
-    understand: "What to read or reproduce, grounded in the lab's real work.",
-    implement: "Concrete steps to a first working version.",
-    apply: "How to share it back with the lab."
-  };
-
   var CURL_INSTALL = "https://berkeley.mathetic.com/engelbart/install.sh";
 
   // `screen` gates loading/sign-in; within `flow`, `phase` is what is drawn.
@@ -92,6 +85,7 @@
     refMsgs: [],         // [{ who: 'you' | 'engelbart', text }]
     refDraft: "",
     refining: false,
+    refOpen: false,      // the refine conversation, expanded
 
     path: null,          // { name, objective } as returned
     lanes: null,         // editable { brainstorm: [{id,text}], ... }
@@ -307,6 +301,7 @@
     st.own = null;       // a generated idea replaces any own-project context
     st.refMsgs = [];
     st.refDraft = "";
+    st.refOpen = false;
     st.phase = "project";
     draw();
   }
@@ -375,6 +370,7 @@
           + " ask me to poke at it. We'll shape it together before charting the path."
       }];
       st.refDraft = "";
+      st.refOpen = true;   // brainstorming an own idea starts in the chat
       st.phase = "project";
       draw();
     }, function (error) {
@@ -505,7 +501,7 @@
     st.areas = []; st.areaIdx = -1;
     st.labs = []; st.labSel = null;
     st.lab = null; st.ideas = []; st.ideasError = ""; st.hoverIdea = -1;
-    st.idea = null; st.refMsgs = []; st.refDraft = "";
+    st.idea = null; st.refMsgs = []; st.refDraft = ""; st.refOpen = false;
     st.own = null; st.ownDraft = null; st.ownOpen = false;
     st.ownBusy = false; st.ownError = "";
     st.labAddOpen = false; st.labAddUrl = ""; st.labAddHint = "";
@@ -563,7 +559,13 @@
   function acctNode() {
     if (!session || !session.user) return;
     var wrap = el("div", "acct-wrap");
-    var b = el("button", "acct", initials(session.user.email || "?"));
+    var b = el("button", "acct");
+    b.setAttribute("title", session.user.email || "signed in");
+    // The reference's little person glyph, not initials.
+    b.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"'
+      + ' stroke="currentColor" stroke-width="1.6" stroke-linecap="round">'
+      + '<circle cx="12" cy="8.5" r="3.5"></circle>'
+      + '<path d="M5 19.5 C6.5 15.5 9 14.5 12 14.5 C15 14.5 17.5 15.5 19 19.5"></path></svg>';
     on(b, "click", function () { st.menu = !st.menu; draw(); });
     wrap.appendChild(b);
     if (st.menu) {
@@ -626,7 +628,9 @@
     brandNode();
     acctNode();
     if (st.phase === "done") { drawDone(); return; }
-    railNode();
+    // The rail appears once the exploration is under way -- the interest
+    // question stands alone, the way the reference opens.
+    if (st.phase !== "interest") railNode();
     drawFlow();
     if (st.profile) drawModal();
   }
@@ -666,6 +670,7 @@
 
     if (st.phase === "interest") { phaseInterest(stage); return; }
 
+    stage.appendChild(el("div", "spacer deep"));
     contextLine(stage);
     if (st.phase === "direction") phaseDirection(stage);
     else if (st.phase === "lab") phaseLab(stage);
@@ -678,7 +683,6 @@
   function contextLine(stage) {
     var wrap = el("div", "ctx-wrap");
     var line = el("div", "ctx");
-    line.appendChild(el("span", "cap", "you"));
     line.appendChild(el("span", "ctx-txt", st.interest));
     on(line, "click", function () { goBackTo("interest"); });
     wrap.appendChild(line);
@@ -715,8 +719,7 @@
     var area = el("textarea", "eb-f eb-interest");
     area.setAttribute("rows", "1");
     area.setAttribute("spellcheck", "false");
-    area.setAttribute("placeholder",
-      "e.g. I like machine learning and medicine — using models to read scans…");
+    area.setAttribute("placeholder", "in your own words…");
     area.value = st.draft0;
     on(area, "input", function () { st.draft0 = area.value; grow(area); });
     on(area, "keydown", function (event) {
@@ -727,7 +730,7 @@
     });
     line.appendChild(area);
     wrap.appendChild(line);
-    wrap.appendChild(el("div", "hint", st.draft0.trim() ? "Return to continue" : ""));
+    wrap.appendChild(el("div", "hint", st.draft0.trim() ? "enter ↵" : ""));
     stage.appendChild(wrap);
     if (st.thinking) stage.appendChild(generating("reading Berkeley"));
     errorNode(stage);
@@ -738,7 +741,7 @@
 
   function phaseDirection(stage) {
     stage.appendChild(el("div", "reveal-label in",
-      "That points toward a few research areas at Berkeley. Which pulls you most?"));
+      "Your interest connects to a few research areas."));
     var grid = el("div", "area-grid");
     st.areas.forEach(function (area, i) {
       var col = el("div", "area-col in");
@@ -766,26 +769,47 @@
 
   // --- lab ------------------------------------------------------------------
 
-  function phaseLab(stage) {
+  // The picked area stays on screen as a small anchored pill (the reference
+  // collapses the area grid down to this) -- clicking it walks back.
+  function areaAnchor(stage) {
     var area = st.areas[st.areaIdx];
-    stage.appendChild(el("div", "reveal-label in",
-      "In " + (area ? area.label : "that area")
-      + ", these labs work closest to what you described."));
+    if (!area) return;
+    var wrap = el("div", "anchor-wrap in");
+    wrap.appendChild(el("div", "cap", "area"));
+    var pill = el("button", "area-anchor", area.label);
+    on(pill, "click", function () { goBackTo("direction"); });
+    wrap.appendChild(pill);
+    stage.appendChild(wrap);
+    stage.appendChild(stemEl(18));
+  }
+
+  // One lab card, shared by the lab list and the dimmed row kept above the
+  // explore tree. `mode` "" | "dim" | "chosen".
+  function labCard(lab, i, mode) {
+    var name = lab.labName || ((lab.piName || "") + " Lab");
+    var card = el("button", "lab-card in" + (mode ? " " + mode : ""));
+    card.style.animationDelay = (i * 70) + "ms";
+    card.appendChild(el("div", "lab-logo", initials(name)));
+    card.appendChild(el("span", "lab-name", name));
+    var desc = lab.bio
+      ? clip(lab.bio, 96)
+      : (lab.interests || []).slice(0, 3).join(", ");
+    if (desc) card.appendChild(el("div", "lab-desc", desc));
+    // The chosen card in the explore row walks back to the lab list (the
+    // reference's behavior); any other card opens that lab.
+    if (mode === "chosen") on(card, "click", function () { goBackTo("lab"); });
+    else on(card, "click", function () { pickLab(lab.piId); });
+    return card;
+  }
+
+  function phaseLab(stage) {
+    areaAnchor(stage);
+    stage.appendChild(el("div", "reveal-label in", "Related labs"));
+    stage.appendChild(stemEl(14));
+    stage.appendChild(el("div", "h-rail draw"));
     var grid = el("div", "labs-grid");
     st.labs.forEach(function (lab, i) {
-      var name = lab.labName || ((lab.piName || "") + " Lab");
-      var card = el("button", "lab-card in");
-      card.style.animationDelay = (i * 70) + "ms";
-      card.appendChild(el("div", "lab-logo", initials(name)));
-      card.appendChild(el("span", "lab-name", name));
-      var desc = lab.bio
-        ? clip(lab.bio, 96)
-        : (lab.interests || []).slice(0, 3).join(", ");
-      if (desc) card.appendChild(el("div", "lab-desc", desc));
-      var pi = (lab.piName || "") + (lab.title ? " · " + lab.title : "");
-      card.appendChild(el("div", "lab-pi", pi));
-      on(card, "click", function () { pickLab(lab.piId); });
-      grid.appendChild(card);
+      grid.appendChild(labCard(lab, i, ""));
     });
     stage.appendChild(grid);
     if (st.thinking) stage.appendChild(generating("opening the lab"));
@@ -882,8 +906,19 @@
     var members = (st.lab && st.lab.members) || [];
     var shown = members.slice(0, 6);
 
-    stage.appendChild(el("div", "cap", "The lab"));
-    stage.appendChild(stemEl(18));
+    // The reference keeps the whole lab row on screen: the chosen lab reads a
+    // touch larger, its siblings dim to ghosts but stay clickable, and the
+    // tree hangs beneath the row.
+    areaAnchor(stage);
+    stage.appendChild(el("div", "cap explore-cap", "Related labs"));
+    if (st.labs.length) {
+      var row = el("div", "labs-grid explore-labs");
+      st.labs.forEach(function (lab, i) {
+        row.appendChild(labCard(lab, i, lab.piId === st.labSel ? "chosen" : "dim"));
+      });
+      stage.appendChild(row);
+    }
+    stage.appendChild(stemEl(20));
 
     var piBtn = el("button", "node-pi in");
     piBtn.appendChild(el("div", "avatar avatar-pi", initials(pi.name)));
@@ -891,7 +926,7 @@
     line.appendChild(el("span", "person-name", pi.name));
     line.appendChild(el("span", "person-tag", "PI"));
     piBtn.appendChild(line);
-    if (pi.lab_name) piBtn.appendChild(el("div", "person-focus", pi.lab_name));
+    piBtn.appendChild(el("div", "person-focus", "directs the lab’s research program"));
     on(piBtn, "click", openPI);
     stage.appendChild(piBtn);
 
@@ -1091,7 +1126,7 @@
     var pi = (st.lab && st.lab.pi) || {};
     var focus = el("div", "focus in");
 
-    focus.appendChild(el("div", "cap", "Your project"));
+    focus.appendChild(el("div", "cap", "project idea"));
 
     var titleLine = el("div", "focus-title-line");
     var title = el("textarea", "eb-f focus-title");
@@ -1112,18 +1147,19 @@
     focus.appendChild(descLine);
 
     if (st.idea.why) {
-      focus.appendChild(el("div", "cap focus-cap", "Why this project"));
+      focus.appendChild(el("div", "cap focus-cap", "why this project"));
       focus.appendChild(el("div", "focus-why", st.idea.why));
     }
 
-    focus.appendChild(el("div", "cap focus-cap", "Connected to"));
+    focus.appendChild(el("div", "cap focus-cap", "connected to"));
     var meta = el("div", "focus-meta");
-    var link = el("button", "focus-link", pi.lab_name || ((pi.name || "the lab")));
+    var link = el("button", "focus-link", pi.name || "the lab");
     on(link, "click", openPI);
     meta.appendChild(link);
     focus.appendChild(meta);
+    if (pi.lab_name) focus.appendChild(el("div", "focus-sub", pi.lab_name));
     if (st.idea.inspired) {
-      focus.appendChild(el("div", "focus-sub", "Builds on " + st.idea.inspired + "."));
+      focus.appendChild(el("div", "focus-sub focus-inspired", "Based on: " + st.idea.inspired));
     }
 
     // An own-brought project shows what came with it: the attached paper (a
@@ -1149,36 +1185,53 @@
       }
     }
 
-    // Inline refine: a quiet conversation that edits the idea in place.
-    var refine = el("div", "ref-block");
-    st.refMsgs.forEach(function (m) {
-      var msg = el("div", "ref-msg");
-      msg.appendChild(el("div", "ref-who", m.who === "you" ? "you" : "engelbart"));
-      msg.appendChild(el("div", "ref-text " + m.who, m.text));
-      refine.appendChild(msg);
-    });
-    if (st.refining) refine.appendChild(generating("refining"));
-    var inputLine = el("div", "ref-input-line");
-    var input = el("textarea", "eb-f ref-input");
-    input.setAttribute("rows", "1");
-    input.setAttribute("spellcheck", "false");
-    input.setAttribute("placeholder", "Ask for a change — smaller scope, a different angle…");
-    input.value = st.refDraft;
-    on(input, "input", function () { st.refDraft = input.value; grow(input); });
-    on(input, "keydown", function (event) {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        sendRefine();
-      }
-    });
-    inputLine.appendChild(input);
-    refine.appendChild(inputLine);
-    focus.appendChild(refine);
-
-    var acts = el("div", "actions");
-    acts.appendChild(btn("Chart the path", "btn-dark", generatePath, { arrow: true }));
-    acts.appendChild(btn("Back to ideas", "btn-ghost", function () { goBackTo("explore"); }));
-    focus.appendChild(acts);
+    // Inline refine: a quiet conversation that edits the idea in place. It
+    // stays folded behind "Refine this idea" until asked for, the way the
+    // reference keeps the project card clean.
+    if (st.refOpen) {
+      var refine = el("div", "ref-block");
+      st.refMsgs.forEach(function (m) {
+        var msg = el("div", "ref-msg");
+        msg.appendChild(el("div", "ref-who", m.who === "you" ? "you" : "engelbart"));
+        msg.appendChild(el("div", "ref-text " + m.who, m.text));
+        refine.appendChild(msg);
+      });
+      if (st.refining) refine.appendChild(generating("refining"));
+      var inputLine = el("div", "ref-input-line");
+      var input = el("textarea", "eb-f ref-input");
+      input.setAttribute("rows", "1");
+      input.setAttribute("spellcheck", "false");
+      input.setAttribute("placeholder",
+        "make it more visual · feasible in two weeks · no model training…");
+      input.value = st.refDraft;
+      on(input, "input", function () { st.refDraft = input.value; grow(input); });
+      on(input, "keydown", function (event) {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          sendRefine();
+        }
+      });
+      inputLine.appendChild(input);
+      refine.appendChild(inputLine);
+      refine.appendChild(el("div", "ref-note",
+        "say how to reshape it — or edit the name and description directly above"));
+      var doneActs = el("div", "actions");
+      doneActs.appendChild(btn("Done", "btn-dark", function () {
+        st.refOpen = false;
+        draw();
+      }));
+      refine.appendChild(doneActs);
+      focus.appendChild(refine);
+    } else {
+      var acts = el("div", "actions");
+      acts.appendChild(btn("Refine this idea", "btn-ghost", function () {
+        st.refOpen = true;
+        draw();
+      }));
+      acts.appendChild(btn("Generate the path", "btn-dark", generatePath, { arrow: true }));
+      acts.appendChild(btn("← back", "btn-bare", function () { goBackTo("explore"); }));
+      focus.appendChild(acts);
+    }
 
     errorNode(focus);
     stage.appendChild(focus);
@@ -1188,30 +1241,38 @@
 
   function phaseGenerating(stage) {
     stage.appendChild(el("div", "focus in"))
-      .appendChild(el("div", "cap", "Your project"));
-    stage.appendChild(generating("charting a path through “" + clip(st.idea.title, 40) + "”"));
+      .appendChild(el("div", "cap", "project idea"));
+    stage.appendChild(generating("generating"));
   }
 
   // --- the path -------------------------------------------------------------
 
   function phasePath(stage) {
+    var pi = (st.lab && st.lab.pi) || {};
     var path = el("div", "path");
-    path.appendChild(el("div", "path-head", "Your path"));
+    path.appendChild(el("div", "path-head", "The Path Forward"));
+
+    // "Target {lab} led by {person}" -- both halves open the researcher modal.
+    // The objective still rides along in state and is saved with the path; the
+    // reference simply doesn't surface it here.
     var targetLine = el("div", "path-target");
-    targetLine.appendChild(el("span", "path-target-cap", "Toward:"));
-    var target = el("textarea", "eb-f path-target-edit");
-    target.setAttribute("rows", "1");
-    target.setAttribute("spellcheck", "false");
-    target.setAttribute("placeholder", "what this project is working toward…");
-    target.value = st.path.objective;
-    on(target, "input", function () { st.path.objective = target.value; grow(target); });
-    targetLine.appendChild(target);
+    targetLine.appendChild(document.createTextNode("Target "));
+    var labLink = el("button", "focus-link", pi.lab_name || "this lab");
+    on(labLink, "click", openPI);
+    targetLine.appendChild(labLink);
+    targetLine.appendChild(document.createTextNode(" led by "));
+    var piLink = el("button", "focus-link", pi.name || "its PI");
+    on(piLink, "click", openPI);
+    targetLine.appendChild(piLink);
     path.appendChild(targetLine);
 
     LANES.forEach(function (lane) {
       var block = el("div", "lane");
       block.appendChild(el("div", "lane-name", LANE_LABEL[lane]));
-      block.appendChild(el("div", "lane-note", LANE_NOTE[lane]));
+      // The reference annotates only the first lane.
+      if (lane === "brainstorm") {
+        block.appendChild(el("div", "lane-note", "This can change as you learn."));
+      }
       var rows = el("div", "lane-rows");
       st.lanes[lane].forEach(function (r) {
         rows.appendChild(laneRow(lane, r));
@@ -1221,11 +1282,12 @@
       path.appendChild(block);
     });
 
+    path.appendChild(el("div", "cap name-cap", "name your project"));
     var namerow = el("div", "namerow");
     var name = el("input", "eb-f");
     name.setAttribute("type", "text");
     name.setAttribute("spellcheck", "false");
-    name.setAttribute("placeholder", "name this project");
+    name.setAttribute("placeholder", "a short name");
     name.value = st.name;
     on(name, "input", function () { st.name = name.value; syncCreate(); });
     namerow.appendChild(name);
@@ -1342,7 +1404,7 @@
 
     if (p.bio) {
       var s1 = el("div", "modal-sec");
-      s1.appendChild(el("div", "modal-cap", "About"));
+      s1.appendChild(el("div", "modal-cap", "short description"));
       s1.appendChild(el("div", "modal-bio", p.bio));
       modal.appendChild(s1);
     }
@@ -1354,7 +1416,7 @@
     }
     if (p.interests && p.interests.length) {
       var s2 = el("div", "modal-sec");
-      s2.appendChild(el("div", "modal-cap", "Interests"));
+      s2.appendChild(el("div", "modal-cap", "research interests"));
       s2.appendChild(el("div", "modal-interests", p.interests.join(" · ")));
       if (p.interestsNote) s2.appendChild(el("div", "modal-lab", p.interestsNote));
       modal.appendChild(s2);
@@ -1376,7 +1438,7 @@
       modal.appendChild(s3);
     }
     if (p.url) {
-      var link = el("a", "modal-link", "Visit site");
+      var link = el("a", "modal-link", "visit personal site ↗");
       link.setAttribute("href", p.url);
       link.setAttribute("target", "_blank");
       link.setAttribute("rel", "noopener noreferrer");
@@ -1430,9 +1492,9 @@
     var done = el("div", "done");
 
     var heroBox = el("div", "done-hero");
-    heroBox.appendChild(el("div", "done-word", "Ready."));
+    heroBox.appendChild(el("div", "done-word", "Engelbart"));
     heroBox.appendChild(el("div", "done-note",
-      "“" + str(st.made.name) + "” is saved to your account."));
+      "“" + str(st.made.name) + "” is ready to install."));
     if (st.savedMode === "lanes") {
       heroBox.appendChild(el("div", "done-note",
         "Saved exactly as you drafted it — the structured generator was"
@@ -1478,7 +1540,7 @@
         draw();
       }).catch(function (error) { st.error = error.message; draw(); });
     }));
-    acts.appendChild(btn("Explore another", "btn-ghost", restart));
+    acts.appendChild(btn("Set up another", "btn-ghost", restart));
     body.appendChild(acts);
     if (st.error) body.appendChild(el("div", "err", st.error));
     card.appendChild(body);
