@@ -51,6 +51,56 @@ const FALLBACK_MODEL = "claude-sonnet-4-5-20250929";
 const MAX_REPLY_TOKENS = 4096;
 const TURN_TIMEOUT_MS = 90 * 1000;
 
+// The brief: a member pastes what they were sent -- a name, some links, a
+// sentence about the paper, a suggested task -- and the whole project is
+// written from it in one pass, instead of being drawn out a card at a time.
+// The pages behind the links are fetched and handed over as sources, so the
+// model reads them rather than guessing from the URL.
+const MAX_BRIEF_TEXT = 6000;
+const MAX_SOURCE_TEXT = 6000;
+
+const BRIEF_FORM = [
+  "Someone has pasted the brief they were given for a research project --",
+  "usually a person to work with, a paper, a repository, and a sentence or",
+  "two about what might be worth trying. The pages behind their links have",
+  "been fetched for you and are quoted below. Read the brief AND the",
+  "sources, and write the whole project in one reply.",
+  "",
+  "Reply with ONE JSON object and nothing else:",
+  "",
+  '  {"name": "<a short name for the project, in their terms>",',
+  '   "plan": {"description": "<a couple of short paragraphs: what this work',
+  '                            is and what done looks like, written so they',
+  '                            could argue with it>",',
+  '            "unsure": ["<something the brief did not settle, in their',
+  '                        terms>"]},',
+  '   "goals": [{"label": "<an outcome, not a task>",',
+  '              "why": "<why this one is worth starting on>"}],',
+  '   "chosen": "<the label of the goal to start on>",',
+  '   "subgoals": [{"label": "<a piece of the chosen goal>",',
+  '                 "todos": ["<one row of work in that piece>"]}]}',
+  "",
+  "Write it for whoever was handed this brief: someone who has not read the",
+  "paper yet and has not opened the repository. The brief itself usually",
+  "says how to start -- read the paper, then the code, then find a task --",
+  "and that ordering is theirs, so keep it rather than inventing your own.",
+  "",
+  "Ground everything in what you were actually given. Name the real paper,",
+  "the real repository, the real person, the real system, using the names",
+  "the sources use. Where a link could not be read you are told so: work",
+  "from the brief's own words about it and put what you could not check in",
+  "`unsure` rather than inventing a finding, a result, or an API.",
+  "",
+  "A goal is an outcome someone could tell you they had reached. A TODO row",
+  "is one piece of work, in the imperative, that a coding agent could pick",
+  "up and finish. Neither is a phase, a heading or a category. Two to four",
+  "subgoals is usually the shape of it.",
+  "",
+  "`unsure` is what tells them whether you understood the brief or guessed",
+  "at it, so write the real gaps -- the ambiguous task, the result you",
+  "cannot see, the thing only their advisor knows -- and not none.",
+];
+
 // Verbatim from setup_chat.py FORM. Any edit belongs there first.
 const FORM = [
   "You are setting up a new project in Engelbart with someone who has just",
@@ -605,13 +655,49 @@ async function turn(input, options = {}) {
   return { ...card, ok: true, due };
 }
 
+// The whole project from one paste. Unlike turn(), there is no card order to
+// hold to and nothing to discard: one call, one payload, which the browser
+// then shows for editing before anything is saved.
+async function fromBrief(input, options = {}) {
+  const text = String(input.text == null ? "" : input.text).slice(0, MAX_BRIEF_TEXT).trim();
+  if (!text) {
+    return { ok: false, error: "Paste the brief first" };
+  }
+  const sources = Array.isArray(input.sources) ? input.sources : [];
+  const lines = BRIEF_FORM.concat(["", "# The brief they pasted", "", text, ""]);
+  if (sources.length) {
+    lines.push("# What is behind their links", "");
+    for (const source of sources) {
+      lines.push(`## ${String(source.url || "")}`, "");
+      lines.push(source.error
+        ? `(this one could not be read: ${source.error})`
+        : String(source.text || "").slice(0, MAX_SOURCE_TEXT), "");
+    }
+  }
+  let raw;
+  try {
+    raw = await callModel(lines.join("\n") + "\n", input.credentials, options);
+  } catch (error) {
+    if (error.statusCode === 409) throw error;
+    return { ok: false, error: one(error.message, 200) || "The model could not be reached" };
+  }
+  const payload = normalizePayload(raw);
+  if (!payload.plan.description && !payload.goals.length) {
+    return { ok: false, error: "That did not read as a project brief" };
+  }
+  return { ok: true, payload };
+}
+
 module.exports = {
+  BRIEF_FORM,
   FALLBACK_MODEL,
   FORM,
   MAX_TURNS,
+  MAX_BRIEF_TEXT,
   MAX_QUESTION_ROUNDS,
   MIN_QUESTION_ROUNDS,
   allowedCards,
+  fromBrief,
   ORDER,
   compose,
   normalizeCard,

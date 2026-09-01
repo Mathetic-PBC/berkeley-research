@@ -8,6 +8,9 @@
 const MAX_PAGE_BYTES = 512 * 1024;
 const MAX_PAGE_TEXT = 20000;
 const FETCH_TIMEOUT_MS = 15 * 1000;
+// A brief cites a handful of things; past that it is a link dump, and every
+// one costs a round trip before the member sees anything.
+const MAX_BRIEF_LINKS = 6;
 
 // A member-supplied URL, or a 400. Public DNS names only.
 function safeHttpUrl(value) {
@@ -80,4 +83,50 @@ async function fetchPageText(url, options = {}) {
   return text;
 }
 
-module.exports = { safeHttpUrl, pageText, fetchPageText, MAX_PAGE_TEXT };
+// arXiv's /pdf/ link is a PDF, and pageText() would hand the model the binary
+// noise inside it; /abs/ is the same paper as HTML, with the abstract and the
+// metadata a brief actually wants. Anything else is returned untouched.
+function readableUrl(value) {
+  let url;
+  try { url = new URL(String(value == null ? "" : value)); } catch { return String(value || ""); }
+  if (/(^|\.)arxiv\.org$/.test(url.hostname.toLowerCase())) {
+    const paper = url.pathname.match(/^\/pdf\/(.+?)(?:v\d+)?(?:\.pdf)?$/);
+    if (paper) {
+      url.pathname = "/abs/" + paper[1];
+      url.search = "";
+      return url.toString();
+    }
+  }
+  return url.toString();
+}
+
+// The links inside a pasted brief, in the order they were written, deduped and
+// capped. A brief is prose with links in it, not a form: anything that is not
+// a plain public http(s) URL is dropped rather than failing the whole paste.
+function linksIn(text, cap = MAX_BRIEF_LINKS) {
+  const found = String(text == null ? "" : text).match(/https?:\/\/[^\s<>"'`)\]}]+/g) || [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of found) {
+    // trailing sentence punctuation is prose, not part of the link
+    const trimmed = raw.replace(/[.,;:!?]+$/, "");
+    let safe;
+    try { safe = safeHttpUrl(trimmed); } catch { continue; }
+    const url = readableUrl(safe);
+    if (seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+module.exports = {
+  MAX_BRIEF_LINKS,
+  MAX_PAGE_TEXT,
+  fetchPageText,
+  linksIn,
+  pageText,
+  readableUrl,
+  safeHttpUrl,
+};

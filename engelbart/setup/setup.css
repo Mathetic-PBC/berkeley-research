@@ -149,3 +149,10 @@ input.f.piece-name{font:500 13px/1.6 'Source Code Pro',monospace;color:var(--ink
 
 .err{margin-top:12px;font:12px/1.7 'Source Code Pro',monospace;color:var(--del)}
 .hint{margin-top:12px;font:11.5px/1.7 'Source Code Pro',monospace;color:var(--fnt);text-wrap:pretty}
+
+/* --- the pasted brief ---------------------------------------------------- */
+.brief-offer { justify-content: center; margin-top: 18px; }
+.brief-card { margin-top: 18px; }
+textarea.brief-f {
+  min-height: 150px; line-height: 1.7; resize: vertical; overflow: auto;
+}
