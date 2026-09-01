@@ -429,11 +429,28 @@
       "Sagar Karandikar\nhttps://sagark.org/\nhttps://arxiv.org/pdf/…\n\n"
       + "Paper overview: …\nPossible task: …");
     field.value = st.brief;
-    on(field, "input", function () { st.brief = field.value; });
     body.appendChild(field);
     var acts = el("div", "acts");
-    var ready = !!st.brief.trim();
-    acts.appendChild(btn("Read it", ready ? "btn-on" : "", sendBrief, !ready));
+    // Built enabled so the click handler is actually attached -- btn() only
+    // wires one when it is not disabled -- and then dimmed until there is
+    // something to read. Typing tunes it in place: redrawing on every
+    // keystroke would take the caret out of the field they are typing into.
+    var read = btn("Read it", "btn-on", sendBrief);
+    function tuneRead() {
+      if (st.brief.trim() && !st.thinking) read.removeAttribute("disabled");
+      else read.setAttribute("disabled", "disabled");
+    }
+    tuneRead();
+    on(field, "input", function () { st.brief = field.value; tuneRead(); });
+    // A brief is multiline, so Enter has to stay a newline; cmd/ctrl-enter is
+    // the way to send one without reaching for the button.
+    on(field, "keydown", function (event) {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        sendBrief();
+      }
+    });
+    acts.appendChild(read);
     acts.appendChild(btn("Cancel", "", function () {
       st.briefOpen = false;
       draw();
