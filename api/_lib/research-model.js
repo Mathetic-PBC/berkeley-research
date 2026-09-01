@@ -395,19 +395,19 @@ function fallbackDoc(ctx) {
   const t = one(ctx.idea && (ctx.idea.title || ctx.idea.name), MAX_TITLE) || "this project";
   const lab = one(ctx.lab && ctx.lab.pi && ctx.lab.pi.lab_name, MAX_TITLE);
   return [
-    `# Shaping: ${t}`,
+    "# Brainstorming Questions",
     "",
     `- What part of "${t}" sounds most interesting to you?`,
+    "- What real-world problem or phenomenon connected to it do you actually care about?",
     "- What would you be excited to have working at the end — something you"
       + " could see, run, or play with?",
-    "- What would you be curious to change, just to see what happens?",
+    "- What would you be curious to change or experiment with, just to see what happens?",
     lab
-      ? `- Would you rather recreate something ${lab} has already done, or try`
-        + " your own variation on it?"
-      : "- Would you rather recreate something from the research, or try your"
-        + " own variation on it?",
-    "- How small could the first version be and still feel real to you?",
-    "- If it works, what would make you want to keep exploring?",
+      ? `- Does your curiosity point at ${lab}'s version of this, or at a`
+        + " different but related project of your own?"
+      : "- Does your curiosity point at this exact idea, or at a different but"
+        + " related project of your own?",
+    "- What kind of outcome or discovery would make you want to keep exploring?",
   ].join("\n");
 }
 
@@ -420,7 +420,6 @@ const MAX_DOC_QUESTIONS = 6;
 
 function questionsOnly(doc) {
   const lines = String(doc || "").split("\n").map((l) => l.trim()).filter(Boolean);
-  const heading = lines.find((l) => l.startsWith("#"));
   const questions = [];
   for (const line of lines) {
     if (line.startsWith("#")) continue;
@@ -431,8 +430,9 @@ function questionsOnly(doc) {
     if (questions.length >= MAX_DOC_QUESTIONS) break;
   }
   if (questions.length < 3) return "";
-  return [heading ? one(heading, MAX_TITLE) : "# Shaping the project", "", ...questions]
-    .join("\n");
+  // The heading is fixed: the page is the questions, so it is named for what
+  // it is -- never for the project (the model likes to title it that way).
+  return ["# Brainstorming Questions", "", ...questions].join("\n");
 }
 
 // One todo line, main clause only (a generated goal's rows are single lines).
@@ -555,32 +555,36 @@ async function generateProject(input, credentials, options = {}) {
       + " example, see SOMETHING work. Rigor (baselines, metrics, validation)"
       + " comes in later goals only.",
     "",
-    "The brainstorm \"document_md\" is genuine brainstorming, never a requirements"
-      + " interview. Its job is to help the student DISCOVER what they want to"
-      + " build -- do not assume they already know the technical shape.",
-    "Its format is strict: a short markdown heading, then EXACTLY 6 questions as"
-      + " a plain list -- nothing else. No introduction, no closing line, no bold"
-      + " labels, no text after any question.",
-    "Each question is ONE short sentence ending in a single question mark, at"
-      + " most ~22 words, carrying ONE idea -- high-level, about what to build and"
-      + " why. Never follow a question with examples, 'for instance...', or a menu"
-      + " of options; if a question needs examples to be understood, it is the"
-      + " wrong question.",
-    "The six progress roughly like this:",
-    "1. which part of this idea actually interests them;",
-    "2. what they would be excited to have working, see, or interact with;",
-    "3. what they are curious to change or experiment with, just to see what happens;",
-    "4. whether they would rather recreate/extend the lab's research or try their own variation;",
-    "5. how small or ambitious the first version should be;",
-    "6. what result or next step would make them want to keep going.",
-    "Every question must be answerable by a beginner who does not know the field"
-      + " yet, and tailored to THIS idea, lab, papers, and the student's stated"
-      + " interest -- specific, never boilerplate, and never copied mechanically"
-      + " from the progression above.",
-    "NEVER lead with technical decisions the plan can propose later: algorithm or"
-      + " controller choices, simulators or libraries, evaluation metrics, numeric"
-      + " thresholds, hardware specs, safety limits, deployment formats, benchmark"
-      + " design. Nothing that reads like filling out a technical specification.",
+    "The brainstorm \"document_md\" is 5-6 short brainstorming questions that help"
+      + " the student figure out what they might actually want to build or explore"
+      + " around the chosen idea. The student may only have a vague initial"
+      + " interest, so do NOT assume the current idea is already the right"
+      + " project: the questions help them discover what direction within or"
+      + " around it genuinely interests them.",
+    "Ask broad, exploratory questions about things like: what part of the topic"
+      + " they find interesting; what real-world problem, phenomenon, or"
+      + " application they care about; what they would want to understand,"
+      + " experiment with, predict, explain, or create; what aspect they would"
+      + " enjoy spending time exploring; what kinds of outcomes or discoveries"
+      + " would feel exciting to them; whether their curiosity points toward a"
+      + " different but related project.",
+    "Keep the questions accessible and conversational -- answerable without"
+      + " already understanding the research area deeply, and tailored to THIS"
+      + " idea, lab, and the student's stated interest, never boilerplate.",
+    "Do NOT prematurely ask them to choose: specific algorithms or model"
+      + " architectures, datasets, evaluation metrics, technical implementation"
+      + " details, benchmark scope, experimental parameters, specific features,"
+      + " or a published method to reproduce. Avoid questions that merely give"
+      + " two implementation options to pick between ('Would you rather use a"
+      + " neural network or a classical solver?'); prefer 'What about this"
+      + " problem would you most want to understand or experiment with?'.",
+    "The questions move from broad interest, to specific curiosity, to a possible"
+      + " problem or project direction -- never from a predefined project to"
+      + " implementation decisions.",
+    "Format, strictly: the heading line '# Brainstorming Questions', then the 5-6"
+      + " questions as a plain list -- nothing else. No introduction, no closing"
+      + " line, no bold labels, no text after any question. Each question is ONE"
+      + " short sentence ending in a single question mark.",
     "",
     labContext(lab),
     "",
@@ -609,8 +613,8 @@ async function generateProject(input, credentials, options = {}) {
     "{",
     '  "brainstorm": {"description": "one line: what \\"Shape the project\\" means'
       + ' here", "purpose": "why shaping it first matters", "document_md": "the'
-      + ' brainstorming page described above: a short heading, then exactly 6'
-      + ' one-line questions, nothing else"},',
+      + " brainstorming page described above: the heading '# Brainstorming"
+      + " Questions', then 5-6 one-line questions, nothing else\"},",
     '  "understand": [{"paper": <number from the list above>, "description": "what'
       + ' this paper covers that matters here", "purpose": "why understanding it'
       + ' matters for THIS project", "todos": ["read the relevant sections",'
@@ -660,7 +664,7 @@ function structuredToPayload(project, meta) {
     why: project.brainstorm.purpose,
     description: project.brainstorm.description,
     document: {
-      title: name ? `Shaping: ${name}` : "Shape the project",
+      title: "Brainstorming Questions",
       body_md: project.brainstorm.document_md,
     },
     todos: [],
