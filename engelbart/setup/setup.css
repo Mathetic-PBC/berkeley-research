@@ -444,3 +444,7 @@ textarea.own-desc { font-size: 14px; }
 @media (max-width: 760px) {
   .tie-row { display: none; }
 }
+
+/* A tied member tier must stay on the one line its connectors mirror; the JS
+   only draws it when the row fits the viewport. */
+.members-row.one-line { flex-wrap: nowrap; }
