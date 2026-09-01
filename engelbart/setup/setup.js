@@ -41,7 +41,10 @@
     name: "",            // the project's name, typed while the rest arrives
     made: null,          // { code, expiresInSeconds } once the code is issued
     saving: false,       // the button is mid-request
-    installKind: "curl"  // which install command the done screen shows
+    installKind: "curl", // which install command the done screen shows
+    brief: "",           // a pasted brief, before it is read
+    briefOpen: false,    // the paste panel is showing
+    sources: []          // { url, read, error } for the links in that brief
   };
 
   // The two ways in, and what each is worth saying. curl is first because it
@@ -195,6 +198,70 @@
       });
   }
 
+  // A pasted brief, read in one pass: the server fetches the links inside it
+  // and writes the plan, the goals and the rows from what they say. It lands
+  // on the todos card, which is the one that already knows how to edit rows,
+  // name the project and save it -- so nothing here is a new way to finish.
+  function sendBrief() {
+    var text = st.brief.trim();
+    if (!text || st.thinking) return;
+    st.thinking = true;
+    st.error = "";
+    st.card = null;
+    say("you", text);
+    draw();
+    api("brief", { text: text })
+      .then(function (out) {
+        var made = out.payload || {};
+        st.thinking = false;
+        st.sources = out.sources || [];
+        st.brief = "";
+        st.briefOpen = false;
+        st.plan = made.plan || { description: "", unsure: [] };
+        st.goals = made.goals || [];
+        st.chosen = made.chosen || "";
+        st.name = made.name || "";
+        st.pieces = (made.subgoals || []).map(function (g) {
+          return { id: fresh(), label: g.label,
+                   todos: (g.todos || []).map(row) };
+        });
+        st.todos = (made.todos || []).map(row);
+        // The whole order arrived at once, so the conversation is past all
+        // four cards: a later turn asks for what comes after them, not for a
+        // plan that is already on screen.
+        st.shown = ["questions", "plan", "goals", "todos"];
+        st.card = { card: "todos", say: "",
+                    todos: st.todos.map(function (t) { return t.text; }),
+                    subgoals: st.pieces };
+        say("engelbart", briefSaid(st.sources));
+        remember();
+        draw();
+      })
+      .catch(function (error) {
+        st.thinking = false;
+        st.error = error.message || "that brief could not be read";
+        draw();
+      });
+  }
+
+  // What was actually read, said plainly -- a link that would not load
+  // changes what the plan can be trusted on, so it is not hidden.
+  function briefSaid(sources) {
+    var read = sources.filter(function (s) { return s.read; });
+    var missed = sources.filter(function (s) { return !s.read; });
+    var said = read.length
+      ? "Read " + read.length + (read.length === 1 ? " link" : " links")
+        + " and wrote the project from them."
+      : "Wrote the project from the brief itself.";
+    if (missed.length) {
+      said += " " + (missed.length === 1 ? "This one" : "These")
+        + " could not be read, so nothing here rests on "
+        + (missed.length === 1 ? "it" : "them") + ": "
+        + missed.map(function (s) { return s.url; }).join(", ") + ".";
+    }
+    return said + " Everything below is editable before it is saved.";
+  }
+
   function send() {
     var text = st.draft.trim();
     if (!text || st.thinking) return;
@@ -326,6 +393,8 @@
       col.appendChild(bad);
     }
 
+    if (!st.thinking && st.msgs.length <= 1 && !st.card) drawBriefEntry(col);
+
     var kind = st.card && st.card.card;
     if (!st.thinking && kind === "questions") drawQuestions(col);
     if (!st.thinking && kind === "plan") drawPlan(col);
@@ -333,6 +402,43 @@
     if (!st.thinking && kind === "todos") drawTodos(col);
 
     drawComposer(app);
+  }
+
+  // The other way in: paste the brief you were handed instead of answering
+  // questions about it. Offered only on the opening screen -- once the
+  // conversation has started, the cards are the way forward.
+  function drawBriefEntry(col) {
+    if (!st.briefOpen) {
+      var offer = el("div", "acts brief-offer");
+      offer.appendChild(btn("Paste a brief instead", "", function () {
+        st.briefOpen = true;
+        draw();
+      }));
+      col.appendChild(offer);
+      return;
+    }
+    var body = cardBox(col, "a brief", "links are read");
+    body.appendChild(el("div", "card-lede",
+      "Paste what you were sent -- a person, a paper, a repository, the task"
+      + " someone suggested. The links are opened and read, and the plan, the"
+      + " goals and the rows are written from what they say."));
+    var field = el("textarea", "f brief-f");
+    field.setAttribute("rows", "8");
+    field.setAttribute("spellcheck", "false");
+    field.setAttribute("placeholder",
+      "Sagar Karandikar\nhttps://sagark.org/\nhttps://arxiv.org/pdf/…\n\n"
+      + "Paper overview: …\nPossible task: …");
+    field.value = st.brief;
+    on(field, "input", function () { st.brief = field.value; });
+    body.appendChild(field);
+    var acts = el("div", "acts");
+    var ready = !!st.brief.trim();
+    acts.appendChild(btn("Read it", ready ? "btn-on" : "", sendBrief, !ready));
+    acts.appendChild(btn("Cancel", "", function () {
+      st.briefOpen = false;
+      draw();
+    }));
+    body.appendChild(acts);
   }
 
   function generating() {

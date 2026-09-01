@@ -274,3 +274,51 @@ test("prose twice over keeps the words rather than losing the round", async () =
   assert.equal(result.card, "none");
   assert.equal(result.say, "kept words");
 });
+
+test("a brief becomes a whole project in one pass", async () => {
+  const calls = [];
+  const result = await SetupChat.fromBrief({
+    text: "Sagar Karandikar https://sagark.org/ — try the hardware agent paper",
+    sources: [
+      { url: "https://arxiv.org/abs/2606.27350", text: "Chia: agents that design hardware." },
+      { url: "https://github.com/ucb-bar/chia.git", error: "That page answered 404" },
+    ],
+    credentials: CREDENTIALS,
+  }, {
+    fetchImpl: modelSaying([{
+      name: "Chia hardware agents",
+      plan: { description: "Compare LLMs on one hardware spec.", unsure: ["which baseline"] },
+      goals: [{ label: "A reproducible comparison", why: "it is the claim" }],
+      chosen: "A reproducible comparison",
+      subgoals: [{ label: "Read the paper", todos: ["Read the Chia paper end to end"] }],
+    }], calls),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.payload.name, "Chia hardware agents");
+  assert.equal(result.payload.goals.length, 1);
+  assert.equal(result.payload.subgoals[0].todos.length, 1);
+  assert.equal(result.payload.plan.unsure[0], "which baseline");
+  const prompt = calls[0].body.messages[0].content;
+  // Both the brief and the fetched pages reach the model, and a link that
+  // would not load is declared rather than quietly dropped.
+  assert.match(prompt, /Sagar Karandikar/);
+  assert.match(prompt, /agents that design hardware/);
+  assert.match(prompt, /could not be read: That page answered 404/);
+});
+
+test("a brief with nothing in it never reaches the model", async () => {
+  const calls = [];
+  const result = await SetupChat.fromBrief({ text: "   ", credentials: CREDENTIALS }, {
+    fetchImpl: modelSaying([{ name: "x" }], calls),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(calls.length, 0);
+});
+
+test("a reply with no plan and no goals is refused, not saved as an empty project", async () => {
+  const result = await SetupChat.fromBrief({
+    text: "some links", credentials: CREDENTIALS,
+  }, { fetchImpl: modelSaying([{ name: "Only a name" }]) });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /did not read as a project/);
+});
