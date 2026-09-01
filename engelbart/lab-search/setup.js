@@ -129,6 +129,34 @@
     return b;
   }
 
+  // --- question cards -------------------------------------------------------
+  // One card per question: a heading, then either a field or a list of
+  // choices. `optRow` is the reference's radio row -- the picked one carries
+  // the border and a solid dot, the rest stay quiet.
+
+  function qcard(stage, title, sub) {
+    var stack = stage.lastChild && stage.lastChild.className === "qc-stack"
+      ? stage.lastChild
+      : stage.appendChild(el("div", "qc-stack"));
+    var card = el("div", "qc in");
+    card.appendChild(el("div", "qc-title", title));
+    if (sub) card.appendChild(el("div", "qc-sub", sub));
+    stack.appendChild(card);
+    return card.appendChild(el("div", "qc-body"));
+  }
+
+  function optRow(body, label, why, picked, pick) {
+    var line = el("button", "qc-opt" + (picked ? " on" : ""));
+    line.appendChild(el("span", "qc-dot"));
+    var text = el("span", "qc-opt-text");
+    text.appendChild(el("span", "qc-opt-label", label));
+    if (why) text.appendChild(el("span", "qc-opt-why", why));
+    line.appendChild(text);
+    on(line, "click", pick);
+    body.appendChild(line);
+    return line;
+  }
+
   function initials(name) {
     var parts = str(name).trim().split(/\s+/).filter(Boolean);
     if (!parts.length) return "·";
@@ -712,12 +740,10 @@
   // --- interest -------------------------------------------------------------
 
   function phaseInterest(stage) {
-    stage.appendChild(el("div", "spacer"));
-    stage.appendChild(el("div", "q0 in", "What are you interested in, and why?"));
-    var wrap = el("div", "field-wrap in");
-    var line = el("div", "eb-line");
-    var area = el("textarea", "eb-f eb-interest");
-    area.setAttribute("rows", "1");
+    stage.appendChild(el("div", "spacer deep"));
+    var body = qcard(stage, "What are you interested in, and why?");
+    var area = el("textarea", "qc-field");
+    area.setAttribute("rows", "2");
     area.setAttribute("spellcheck", "false");
     area.setAttribute("placeholder", "in your own words…");
     area.value = st.draft0;
@@ -728,10 +754,8 @@
         submitInterest();
       }
     });
-    line.appendChild(area);
-    wrap.appendChild(line);
-    wrap.appendChild(el("div", "hint", st.draft0.trim() ? "enter ↵" : ""));
-    stage.appendChild(wrap);
+    body.appendChild(area);
+    body.appendChild(el("div", "qc-hint", st.draft0.trim() ? "enter ↵" : ""));
     if (st.thinking) stage.appendChild(generating("reading Berkeley"));
     errorNode(stage);
     focusInto(area);
@@ -740,23 +764,16 @@
   // --- area -----------------------------------------------------------------
 
   function phaseDirection(stage) {
-    stage.appendChild(el("div", "reveal-label in",
-      "Your interest connects to a few research areas."));
-    var grid = el("div", "area-grid");
+    var body = qcard(stage, "Which research area is yours?",
+                     "Your interest connects to a few of them.");
     st.areas.forEach(function (area, i) {
-      var col = el("div", "area-col in");
-      col.style.animationDelay = (i * 80) + "ms";
-      var node = el("button", "area-node", area.label);
-      on(node, "click", function () { pickArea(i); });
-      col.appendChild(node);
       var n = (area.labs || []).length;
       var desc = area.summary
         ? clip(area.summary, 90)
         : n + (n === 1 ? " lab" : " labs");
-      col.appendChild(el("div", "area-desc", desc));
-      grid.appendChild(col);
+      optRow(body, area.label, desc, st.areaIdx === i,
+             function () { pickArea(i); });
     });
-    stage.appendChild(grid);
     if (st.thinking) stage.appendChild(generating("rethinking the areas"));
     else {
       var acts = el("div", "actions");
@@ -804,14 +821,14 @@
 
   function phaseLab(stage) {
     areaAnchor(stage);
-    stage.appendChild(el("div", "reveal-label in", "Related labs"));
-    stage.appendChild(stemEl(14));
-    stage.appendChild(el("div", "h-rail draw"));
-    var grid = el("div", "labs-grid");
-    st.labs.forEach(function (lab, i) {
-      grid.appendChild(labCard(lab, i, ""));
+    var body = qcard(stage, "Which lab do you want to look inside?",
+                     "Each one is a real Berkeley group.");
+    st.labs.forEach(function (lab) {
+      var name = lab.labName || ((lab.piName || "") + " Lab");
+      var why = [lab.piName, lab.department].filter(Boolean).join(" · ");
+      optRow(body, name, why, st.labSel === lab.piId,
+             function () { pickLab(lab.piId); });
     });
-    stage.appendChild(grid);
     if (st.thinking) stage.appendChild(generating("opening the lab"));
     errorNode(stage);
     if (!st.thinking) labAddSection(stage);
