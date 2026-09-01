@@ -474,3 +474,79 @@ textarea.own-desc { font-size: 14px; }
 /* A tied member tier must stay on the one line its connectors mirror; the JS
    only draws it when the row fits the viewport. */
 .members-row.one-line { flex-wrap: nowrap; }
+
+/* --- question cards ------------------------------------------------------
+ *
+ * The stacked-card questionnaire: one card per question, a bold sans heading,
+ * and beneath it either a filled field or a list of choices where the picked
+ * one is a bordered row with a solid dot and the rest are hairline-separated
+ * and quiet. The sans is scoped to these cards on purpose -- the tree, the
+ * idea pills and the caps labels keep the monospace the rest of the page is
+ * built from, so the cards read as the reference without restyling the lab
+ * visualisation underneath them. Every colour is a token, so dark mode and
+ * the hc-setup-theme toggle keep working untouched. */
+
+.qc-stack { max-width: 720px; margin: 0 auto; text-align: left; }
+.qc {
+  --qc-sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--qc-sans);
+  background: var(--page); border: 1px solid var(--hair); border-radius: 14px;
+  padding: 24px 26px 26px; margin-bottom: 16px; text-align: left;
+}
+.qc-title {
+  font-family: var(--qc-sans); font-size: 19px; line-height: 1.35; font-weight: 700;
+  letter-spacing: -.2px; color: var(--ink); text-wrap: pretty;
+}
+.qc-sub { margin-top: 6px; font-size: 13px; line-height: 1.6; color: var(--body); }
+.qc-body { margin-top: 16px; }
+
+/* the filled field */
+.qc-field {
+  display: block; width: 100%; font-family: var(--qc-sans); font-size: 16px;
+  line-height: 1.6; color: var(--ink); background: var(--fill);
+  border: 1px solid transparent; border-radius: 10px; padding: 13px 15px;
+  outline: none; resize: none; overflow: hidden; caret-color: var(--acc);
+}
+.qc-field::placeholder { color: var(--muted); }
+.qc-field:focus { border-color: var(--hair3); }
+
+/* the choices */
+.qc-opts { display: flex; flex-direction: column; }
+.qc-opt {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left;
+  font-family: var(--qc-sans); background: none; cursor: pointer;
+  border: 1.5px solid transparent; border-radius: 11px; padding: 13px 15px;
+  transition: border-color 150ms, background 150ms;
+}
+/* unpicked rows are separated by a hairline rather than a border of their own */
+.qc-opt + .qc-opt { position: relative; }
+.qc-opt + .qc-opt::before {
+  content: ""; position: absolute; left: 15px; right: 15px; top: -1px;
+  height: 1px; background: var(--hair);
+}
+.qc-opt.on { border-color: var(--ink); }
+.qc-opt.on + .qc-opt::before, .qc-opt.on::before { background: transparent; }
+.qc-opt:not(.on):hover { background: var(--fill); }
+.qc-opt:not(.on):hover::before { background: transparent; }
+
+.qc-dot {
+  flex: none; width: 13px; height: 13px; margin-top: 3px; border-radius: 50%;
+  border: 1px solid var(--faint); background: none;
+  transition: background 150ms, border-color 150ms;
+}
+.qc-opt.on .qc-dot { background: var(--ink); border-color: var(--ink); }
+
+.qc-opt-text { min-width: 0; }
+.qc-opt-label { display: block; font-size: 15px; line-height: 1.45; color: var(--body); }
+.qc-opt.on .qc-opt-label { color: var(--ink); }
+.qc-opt-why { display: block; margin-top: 4px; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
+
+.qc-hint {
+  margin-top: 10px; font-size: 9px; line-height: 1; font-weight: 500;
+  letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); text-align: right;
+}
+
+@media (max-width: 620px) {
+  .qc { padding: 20px 18px 22px; border-radius: 12px; }
+  .qc-title { font-size: 17px; }
+}
