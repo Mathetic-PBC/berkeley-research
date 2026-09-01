@@ -62,7 +62,7 @@ test("generateProject grounds Understand in canonical papers and drops invented 
   assert.equal(project.understand[0].paper.url, "https://doi.org/1");
   assert.equal(project.understand[1].paper.paper_id, PA2);
   assert.equal(project.understand[1].paper.url, "https://x/2"); // doi empty -> url
-  assert.match(project.brainstorm.document_md, /# Shaping/);
+  assert.match(project.brainstorm.document_md, /# Brainstorming Questions/);
   assert.equal(project.implement.length, 1);
   assert.equal(project.apply.length, 1);
 });
@@ -75,7 +75,7 @@ test("generateProject invents no papers when the lab has none", async () => {
   assert.ok(project.brainstorm.document_md.length > 0);        // fallback doc still project-specific
 });
 
-test("questionsOnly reduces a heavy Shape document to its heading and bare questions", () => {
+test("questionsOnly reduces a heavy Shape document to the fixed heading and bare questions", () => {
   // The real failure this guards: an intro paragraph, bolded questions, and a
   // trail of "For instance..." menus behind every one of them.
   const heavy = [
@@ -99,7 +99,9 @@ test("questionsOnly reduces a heavy Shape document to its heading and bare quest
   ].join("\n");
   const doc = RM.questionsOnly(heavy);
   const lines = doc.split("\n").filter(Boolean);
-  assert.equal(lines[0], "# Visualizing How AI Reads Emotion in Movie Reviews");
+  // The heading is fixed -- the page is named for what it is, never for the
+  // project, whatever title the model gave it.
+  assert.equal(lines[0], "# Brainstorming Questions");
   assert.equal(lines.length, 4);                              // heading + 3 questions
   assert.equal(lines[1],
     "- What kind of emotional misreading by AI would surprise you most?");
@@ -126,7 +128,8 @@ test("normalizeProject swaps a questionless Shape document for the tailored fall
       document_md: "A plan overview with milestones and deliverables. No questions." },
     understand: [], implement: [], apply: [],
   }, { lab: LAB, idea: { title: "My Idea" } });
-  assert.match(project.brainstorm.document_md, /# Shaping: My Idea/);
+  assert.match(project.brainstorm.document_md, /# Brainstorming Questions/);
+  assert.match(project.brainstorm.document_md, /"My Idea"/);   // still tailored
   const qs = project.brainstorm.document_md.split("\n").filter((l) => l.startsWith("-"));
   assert.equal(qs.length, 6);
   assert.ok(qs.every((q) => q.trim().endsWith("?")));
@@ -286,6 +289,23 @@ test("generateProject's prompt anchors on the student's own framing and paper", 
   assert.match(prompt, /brought this project idea THEMSELVES/);
   assert.match(prompt, /I tried this in a class once/);
   assert.match(prompt, /Paper \[0\] is the one the student attached/);
+});
+
+test("the brainstorm-document spec asks for discovery, not implementation choices", async () => {
+  let body = null;
+  const capture = async function fetchImpl(url, init) {
+    body = JSON.parse(init.body);
+    return { ok: true, status: 200,
+      async json() { return { content: [{ type: "text", text: JSON.stringify(REPLY) }] }; } };
+  };
+  await RM.generateProject({ interest: "", idea: { title: "T" }, lab: LAB, lanes: {} },
+    CREDS, { fetchImpl: capture });
+  const prompt = body.messages[0].content;
+  assert.match(prompt, /# Brainstorming Questions/);          // the fixed heading
+  assert.match(prompt, /do NOT assume the current idea is already the right/i);
+  assert.match(prompt, /different but related project/);
+  assert.match(prompt, /neural network or a classical solver/); // the avoid-example
+  assert.match(prompt, /broad interest, to specific curiosity/);
 });
 
 test("generateProject asks the gateway for the large-reply headroom", async () => {
