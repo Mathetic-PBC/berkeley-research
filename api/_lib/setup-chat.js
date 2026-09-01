@@ -39,6 +39,10 @@ const KINDS = ["mcq", "select_all", "free", "open"];
 const CHOICES = ["mcq", "select_all"];
 const ORDER = ["questions", "plan", "goals", "todos"];
 const MIN_QUESTION_ROUNDS = 1;
+// FORM offers "questions again if the answers opened something" and forbids a
+// third round. The stage machine has to allow exactly that many, or the model
+// is invited to ask a question it is then not allowed to draw.
+const MAX_QUESTION_ROUNDS = 2;
 
 // The proxy serves dated model ids only (see scripts/verify-proxy.mjs); the
 // bare alias a member's own subscription understands is not one the gateway
@@ -157,6 +161,21 @@ function stageOf(shown) {
     if (!drawn.includes(card)) return card;
   }
   return "none";
+}
+
+// The cards the model may draw this round. Normally that is just the one that
+// is due -- but while the plan is what comes next, a second round of questions
+// is still open, because the first round's answers can genuinely open the thing
+// the plan turns on. FORM promises that round; without it the model has no way
+// to ask, so it asks in prose instead, the card is discarded as out of turn,
+// and the reader is asked the same question every round while nothing is ever
+// drawn and no stage is ever reached.
+function allowedCards(shown) {
+  const due = stageOf(shown);
+  const rounds = (Array.isArray(shown) ? shown : [])
+    .filter((card) => card === "questions").length;
+  if (due === "plan" && rounds < MAX_QUESTION_ROUNDS) return [due, "questions"];
+  return [due];
 }
 
 function compose(transcript, extra) {
@@ -514,13 +533,28 @@ async function callModel(prompt, credentials, options = {}) {
 async function turn(input, options = {}) {
   const transcript = Array.isArray(input.transcript) ? input.transcript : [];
   const due = stageOf(input.shown);
+  const open = allowedCards(input.shown);
+  const second = open.includes("questions") && due !== "questions";
   const extra = due in DUE ? [
     "", "# The card you are writing now", "",
     `Whatever else you say, on this reply you ${DUE[due]}.`,
     "The reader is stepped through four cards in one order --",
     "questions, plan, goals, todos -- and a card out of turn is not",
     "drawn at all, so naming a different one costs them the round.",
-  ] : [];
+  ].concat(second ? [
+    "",
+    "One exception, and this is the round it is open on: if the answers so",
+    "far genuinely opened something the plan turns on, draw ONE more",
+    "questions card instead. This is the last round on which you may. Do",
+    "not take it to put off a plan you could already write.",
+  ] : due === "plan" ? [
+    "",
+    "You have asked every round of questions there is. Write the plan now,",
+    "from what they have actually told you -- and put what you still could",
+    "not settle in `unsure`, which is what that list is for. Asking again",
+    "in prose is not a card and draws nothing: they would see the question",
+    "and have no way to answer it.",
+  ] : []) : [];
   let raw;
   try {
     raw = await callModel(compose(transcript, extra).join("\n") + "\n", input.credentials, options);
@@ -529,31 +563,42 @@ async function turn(input, options = {}) {
     return { ok: false, error: one(error.message, 200) || "The model could not be reached" };
   }
   let card = normalizeCard(raw);
-  if (card.card !== "none" && card.card !== due) {
+
+  // A reply that draws nothing -- prose, or a card out of turn, which is
+  // discarded -- leaves `shown` exactly as it was, so the same card is due
+  // again next round, and the round after that. That is the loop: the reader
+  // is talked at forever and never handed anything to answer. Push back once,
+  // plainly, whether or not the reply came with words; keeping prose is not
+  // worth a conversation that cannot end.
+  if (due in DUE && !open.includes(card.card)) {
     const kept = card.say;
-    if (!kept) {
-      try {
-        raw = await callModel(compose(transcript, extra.concat([
-          "", `You just replied with a ${card.card} card when the card`
-          + ` due is ${due}. That reply was discarded. Write the ${due}`
-          + " card.",
-        ])).join("\n") + "\n", input.credentials, options);
-      } catch { raw = {}; }
-      card = normalizeCard(raw);
-    }
-    if (card.card !== due) {
-      card = {
-        ...card,
-        card: "none",
-        questions: { eyebrow: "", items: [] },
-        plan: { description: "", unsure: [] },
-        goals: [],
-        todos: [],
-        subgoals: [],
-      };
-      card.say = card.say || kept;
-    }
+    const why = card.card === "none"
+      ? ["You replied with prose and no card. Nothing was drawn, so they have",
+         `nothing to answer and the ${due} card is still what is due.`]
+      : [`You just replied with a ${card.card} card when the card due is`,
+         `${due}. That reply was discarded, so nothing was drawn and they`,
+         "have nothing to answer."];
+    try {
+      raw = await callModel(compose(transcript, extra.concat([""], why, [
+        `Reply again, with the ${due} card itself` + (second
+          ? " -- or, if what you need is genuinely open, the one further"
+            + " round of questions as a questions card."
+          : ", filled in from what they have already told you."),
+      ])).join("\n") + "\n", input.credentials, options);
+    } catch { raw = {}; }
+    const retried = normalizeCard(raw);
+    card = open.includes(retried.card) ? retried : {
+      ...retried,
+      card: "none",
+      questions: { eyebrow: "", items: [] },
+      plan: { description: "", unsure: [] },
+      goals: [],
+      todos: [],
+      subgoals: [],
+      say: retried.say || kept,
+    };
   }
+
   if (!card.say && card.card === "none") {
     return { ok: false, error: "the model answered with nothing" };
   }
@@ -564,7 +609,9 @@ module.exports = {
   FALLBACK_MODEL,
   FORM,
   MAX_TURNS,
+  MAX_QUESTION_ROUNDS,
   MIN_QUESTION_ROUNDS,
+  allowedCards,
   ORDER,
   compose,
   normalizeCard,
