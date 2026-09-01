@@ -65,7 +65,6 @@
 
     areas: [],
     areaIdx: -1,
-    areaDraft: "",       // a manually named research area
 
     labs: [],
     labSel: null,        // chosen pi_id
@@ -193,17 +192,13 @@
   // The areas are semantic clusters the model draws over the real labs the
   // interest retrieved -- a model-backed setup call, not a plain read -- and
   // each area already carries the real labs beneath it. Also the regenerate
-  // on the direction screen: same interest, a fresh clustering. A string
-  // argument retrieves for THAT text instead (the manually named area);
-  // anything else (a click event) means the original interest.
-  function loadAreas(interestText) {
+  // on the direction screen: same interest, a fresh clustering.
+  function loadAreas() {
     if (st.thinking) return;
-    var interest = (typeof interestText === "string" && interestText.trim())
-      ? interestText.trim() : st.interest;
     st.error = "";
     st.thinking = true;
     draw();
-    setup("areas", { interest: interest }).then(function (out) {
+    setup("areas", { interest: st.interest }).then(function (out) {
       st.thinking = false;
       // Curated areas lead (the backend returns them first); interest-discovered
       // areas follow. Keep a few of each so a curated participant still sees
@@ -507,7 +502,7 @@
     st.phase = "interest";
     st.draft0 = "";
     st.interest = "";
-    st.areas = []; st.areaIdx = -1; st.areaDraft = "";
+    st.areas = []; st.areaIdx = -1;
     st.labs = []; st.labSel = null;
     st.lab = null; st.ideas = []; st.ideasError = ""; st.hoverIdea = -1;
     st.idea = null; st.refMsgs = []; st.refDraft = "";
@@ -767,35 +762,6 @@
       stage.appendChild(acts);
     }
     errorNode(stage);
-    // The shown areas are suggestions, not the menu: the participant can name
-    // the research area they actually mean and retrieve labs for THAT. (Adding
-    // a missing lab by link lives one step deeper, on the lab list.)
-    if (!st.thinking) areaAddSection(stage);
-  }
-
-  function areaAddSection(stage) {
-    stage.appendChild(el("div", "ideas-label", "Have a specific area in mind?"));
-    var card = el("div", "own-card in");
-    var field = el("textarea", "eb-f own-field area-entry");
-    field.setAttribute("rows", "1");
-    field.setAttribute("spellcheck", "false");
-    field.setAttribute("placeholder",
-      "Name it yourself — e.g. \"soft robotics\" or \"conservation psychology\"");
-    field.value = st.areaDraft;
-    on(field, "input", function () { st.areaDraft = field.value; grow(field); });
-    on(field, "keydown", function (event) {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        loadAreas(st.areaDraft);
-      }
-    });
-    card.appendChild(field);
-    var acts = el("div", "actions own-acts");
-    acts.appendChild(btn("Find labs in this area", "btn-dark", function () {
-      loadAreas(st.areaDraft);
-    }, { arrow: true }));
-    card.appendChild(acts);
-    stage.appendChild(card);
   }
 
   // --- lab ------------------------------------------------------------------
@@ -930,21 +896,33 @@
     stage.appendChild(piBtn);
 
     // The lab as one connected tree: the PI's stem splits to the students, and
-    // their lines merge back into the ideas below -- .member is 210px wide in a
-    // 40px column gap (cell 250), .idea-col 250px in an 18px gap (cell 268).
-    // The mirrored connector geometry only holds while the row stays on ONE
-    // line, so four or more students fall back to the plain labeled row.
-    var ties = shown.length > 0 && shown.length <= 3;
+    // their lines merge back into the ideas below. The mirrored connector
+    // geometry only holds while the students sit on ONE line, so the columns
+    // narrow as the lab grows -- comfortable 210px columns for a few students,
+    // tighter ones for four to six -- instead of ever wrapping to a second,
+    // disconnected row. Only when even the tight row cannot fit the viewport
+    // does the tier fall back to the plain labeled row.
+    var wide = shown.length <= 3;
+    var memberW = wide ? 210 : 150;
+    var memberGap = wide ? 40 : 22;
+    var cell = memberW + memberGap;
+    var viewport = window.innerWidth || 1280;
+    var ties = shown.length > 0 && shown.length * cell + 40 <= viewport;
     if (shown.length) {
       if (ties) {
         stage.appendChild(stemEl(14));
-        stage.appendChild(tieRow(shown.length, 250, "down"));
+        stage.appendChild(tieRow(shown.length, cell, "down"));
       } else {
         stage.appendChild(el("div", "members-label", "PhD researchers"));
       }
       var mrow = el("div", "members-row");
+      if (ties) {
+        mrow.classList.add("one-line");
+        mrow.style.columnGap = memberGap + "px";
+      }
       shown.forEach(function (m, i) {
         var mBtn = el("button", "member in");
+        if (ties) mBtn.style.width = memberW + "px";
         mBtn.style.animationDelay = (i * 60) + "ms";
         mBtn.appendChild(el("div", "avatar avatar-m", initials(m.name)));
         var ml = el("div", "person-line");
@@ -959,7 +937,7 @@
       });
       stage.appendChild(mrow);
       if (ties) {
-        stage.appendChild(tieRow(shown.length, 250, "up"));
+        stage.appendChild(tieRow(shown.length, cell, "up"));
         stage.appendChild(stemEl(14));
       }
     } else {
@@ -979,7 +957,7 @@
       return;
     }
 
-    if (st.ideas.length > 1 && st.ideas.length <= 3) {
+    if (st.ideas.length > 1 && st.ideas.length * 268 + 40 <= (window.innerWidth || 1280)) {
       stage.appendChild(stemEl(12));
       stage.appendChild(tieRow(st.ideas.length, 268, "down"));
     }
