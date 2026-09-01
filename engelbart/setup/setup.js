@@ -1,105 +1,55 @@
-/* The web onboarding: a research exploration.
+/* The web setup conversation.
  *
- * A member unfolds from their own interest out to a real Berkeley lab, shapes a
- * concrete first project with the model, edits the four-lane path it proposes,
- * and leaves with one command -- `npx engelbart-cli --code XXXX-XXXX-XXXX` --
- * that installs Engelbart on their machine and pulls the project down without a
- * second sign-in.
+ * This is the local `hc setup-ui` page's conversation, wearing the same face
+ * (see setup.css), moved to the browser and put behind an Engelbart account.
+ * A member describes their first project, approves a plan, and leaves with
+ * one command -- `npx engelbart-cli --code XXXX-XXXX-XXXX` -- that installs
+ * on their machine and pulls this project down without a second sign-in.
  *
- * This is a vanilla-JS port of the "Engelbart Onboarding v3" design canvas: the
- * same monospace, ink-on-white unfolding, the same black idea pills, tree
- * lines, and entrance animations (see setup.css), translated out of the design
- * runtime into the same plain el()/on()/btn() idiom the old setup page used.
- * Where the reference simulated data with fixtures and setTimeout, this talks
- * to the real endpoints:
- *   /api/engelbart-research  lab                      (read-only browsing)
- *   /api/engelbart-setup     areas | ideas | refine | path | save_path  (model-backed)
- *   /api/engelbart-device    issue                   (the install code)
- * The Supabase auth boot and the install-code handoff are carried over intact
- * from the conversation page this replaces. */
+ * The card contract is hc's setup_chat (the source of truth); this page only
+ * draws what the server has already normalized. Nothing is written into the
+ * member's account until they press the button at the end. The rendering is
+ * kept deliberately in step with hc/.../trajectory/web/setup.js. */
 (function () {
   "use strict";
 
   var app = document.getElementById("app");
+  var STORE_KEY = "engelbart-web-setup-v1";
 
   var client = null;   // supabase client, once config is fetched
   var session = null;  // the member's session, once signed in
 
-  // Progress rail: interest -> area -> lab -> project. Each phase sits at one
-  // of these depths; steps shallower than the current one are walkable back.
-  var RAIL = [
-    { label: "Interest", phase: "interest", depth: 0 },
-    { label: "Area", phase: "direction", depth: 1 },
-    { label: "Lab", phase: "lab", depth: 2 },
-    { label: "Project", phase: "project", depth: 3 }
-  ];
-  var DEPTH = {
-    interest: 0, direction: 1, lab: 2, explore: 2,
-    project: 3, generating: 3, path: 3, done: 3
-  };
-
-  var LANES = ["brainstorm", "understand", "implement", "apply"];
-  var LANE_LABEL = {
-    brainstorm: "Brainstorm", understand: "Understand",
-    implement: "Implement", apply: "Apply"
-  };
-  var CURL_INSTALL = "https://berkeley.mathetic.com/engelbart/install.sh";
-
-  // `screen` gates loading/sign-in; within `flow`, `phase` is what is drawn.
+  // `screen` is the only thing that decides what is drawn.
   var st = {
-    screen: "loading",   // loading | signin | flow
-    phase: "interest",   // interest | direction | lab | explore | project | generating | path | done
-    thinking: false,     // a phase transition is in flight
+    screen: "loading",   // loading | signin | talk | done
+    msgs: [],
+    card: null,          // the last card the model named
+    answers: {},         // per question id, for the card on screen
+    shown: [],           // the cards drawn so far -- the step order is read
+                         // from this, and the server will not draw one out
+                         // of turn
+    thinking: false,
+    draft: "",
     error: "",
-    menu: false,         // account menu open
-
-    draft0: "",          // the interest textarea
-    interest: "",        // the submitted interest
-
-    areas: [],
-    areaIdx: -1,
-
-    labs: [],
-    labSel: null,        // chosen pi_id
-
-    lab: null,           // { pi, members, projects }
-    ideas: [],
-    ideasLoading: false,
-    ideasError: "",
-    hoverIdea: -1,
-
-    idea: null,          // the chosen, editable idea { title, description, why, inspired }
-
-    labAddOpen: false,   // the "add a lab by link" form, expanded
-    labAddUrl: "",
-    labAddHint: "",
-    labAddBusy: false,   // fetching + extracting + creating the lab
-    labAddError: "",
-
-    ownOpen: false,      // the "bring your own project" form, expanded
-    ownDraft: null,      // the form's fields while drafting
-    own: null,           // committed { information, paper: {id,title,url} | null } or null
-    ownBusy: false,      // creating the paper / uploading the PDF
-    ownError: "",
-
-    refMsgs: [],         // [{ who: 'you' | 'engelbart', text }]
-    refDraft: "",
-    refining: false,
-    refOpen: false,      // the refine conversation, expanded
-
-    path: null,          // { name, objective } as returned
-    lanes: null,         // editable { brainstorm: [{id,text}], ... }
-    name: "",
-    saving: false,
-
-    made: null,          // { name, code, expiresInSeconds }
-    savedMode: "",       // "structured" | "lanes" (the degraded save)
-    installKind: "curl", // curl | npx — curl first: needs nothing on the machine
-
-    profile: null        // the open researcher/lab modal, or null
+    plan: null,          // the plan they approved
+    goals: null,         // the goals they were offered
+    chosen: "",          // the one they picked
+    other: "",           // ...or the one they typed
+    goalNote: "",        // what else the rows should know about it
+    todos: [],           // rows, editable -- flat, when it did not break down
+    pieces: [],          // ...or the pieces of the chosen goal, with rows
+    name: "",            // the project's name, typed while the rest arrives
+    made: null,          // { code, expiresInSeconds } once the code is issued
+    saving: false        // the button is mid-request
   };
+
+  var OPEN = "Tell me what you're working on in your own words."
+    + " I'll ask a few questions, then write up a plan for you to approve.";
 
   function dark() {
+    // Light unless the reader has asked for dark on this page: the first
+    // thing anybody sees of this tool should not depend on a system setting
+    // made for something else.
     try {
       return window.localStorage
         && window.localStorage.getItem("hc-setup-theme") === "dark";
@@ -114,43 +64,69 @@
     if (text != null) node.textContent = text;
     return node;
   }
-  function on(node, event, fn) { node.addEventListener(event, fn); return node; }
-  function str(value) { return value == null ? "" : String(value); }
-  function fresh() { return "x" + Math.random().toString(36).slice(2, 8); }
-  function row(text) { return { id: fresh(), text: str(text) }; }
 
-  function btn(label, cls, fn, opts) {
-    opts = opts || {};
+  function on(node, event, fn) { node.addEventListener(event, fn); return node; }
+
+  function btn(label, cls, fn, disabled) {
     var b = el("button", "btn " + (cls || ""));
     b.appendChild(el("span", "", label));
-    if (opts.arrow) b.appendChild(el("span", "go", "›"));
-    if (opts.disabled) b.setAttribute("disabled", "disabled");
+    if ((cls || "").indexOf("btn-on") >= 0) b.appendChild(el("span", "go", "›"));
+    if (disabled) b.setAttribute("disabled", "disabled");
     else on(b, "click", fn);
     return b;
   }
 
-  function initials(name) {
-    var parts = str(name).trim().split(/\s+/).filter(Boolean);
-    if (!parts.length) return "·";
-    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  function str(value) { return value == null ? "" : String(value); }
+
+  function fresh() { return "x" + Math.random().toString(36).slice(2, 8); }
+
+  function row(text) { return { id: fresh(), text: str(text) }; }
+
+  // --- persistence ----------------------------------------------------------
+
+  function remember() {
+    try {
+      sessionStorage.setItem(STORE_KEY, JSON.stringify({
+        msgs: st.msgs, shown: st.shown, card: st.card,
+        plan: st.plan, goals: st.goals, chosen: st.chosen
+      }));
+    } catch (e) { /* private windows forget; the page still works */ }
   }
 
-  function grow(area) {
-    area.style.height = "auto";
-    area.style.height = Math.min(area.scrollHeight, 260) + "px";
+  function restore() {
+    try {
+      var held = JSON.parse(sessionStorage.getItem(STORE_KEY) || "null");
+      if (!held || !Array.isArray(held.msgs) || !held.msgs.length) return;
+      st.msgs = held.msgs;
+      st.shown = Array.isArray(held.shown) ? held.shown : [];
+      st.card = held.card || null;
+      st.plan = held.plan || null;
+      st.goals = held.goals || null;
+      st.chosen = str(held.chosen);
+      if (st.card && st.card.card === "todos") {
+        st.todos = (st.card.todos || []).map(row);
+        st.pieces = (st.card.subgoals || []).map(function (g) {
+          return { id: fresh(), label: g.label,
+                   todos: (g.todos || []).map(row) };
+        });
+      }
+    } catch (e) { /* a torn record is a fresh start */ }
+  }
+
+  function forget() {
+    try { sessionStorage.removeItem(STORE_KEY); } catch (e) { /* fine */ }
   }
 
   // --- the server -----------------------------------------------------------
 
-  function post(path, body) {
-    return fetch(path, {
+  function api(action, body) {
+    return fetch("/api/engelbart-setup", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: "Bearer " + (session && session.access_token)
       },
-      body: JSON.stringify(body || {})
+      body: JSON.stringify(Object.assign({ action: action }, body || {}))
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (value) {
         if (!r.ok) throw new Error(value.error || "the request failed");
@@ -158,464 +134,85 @@
       });
     });
   }
-  function research(action, body) {
-    return post("/api/engelbart-research", Object.assign({ action: action }, body || {}));
-  }
-  function setup(action, body) {
-    return post("/api/engelbart-setup", Object.assign({ action: action }, body || {}));
-  }
-  function issueCode() {
-    return post("/api/engelbart-device", { action: "issue" });
+
+  // --- the conversation -----------------------------------------------------
+
+  function say(role, text) {
+    if (!str(text)) return;
+    st.msgs.push({ role: role, text: str(text) });
   }
 
-  // --- moving through the exploration --------------------------------------
-
-  function fail(error) {
-    st.thinking = false;
-    st.error = (error && error.message) || "something went wrong";
-    draw();
-  }
-
-  function submitInterest() {
-    var interest = st.draft0.trim();
-    if (!interest || st.thinking) return;
-    st.interest = interest;
-    loadAreas();
-  }
-
-  // The areas are semantic clusters the model draws over the real labs the
-  // interest retrieved -- a model-backed setup call, not a plain read -- and
-  // each area already carries the real labs beneath it. Also the regenerate
-  // on the direction screen: same interest, a fresh clustering.
-  function loadAreas() {
-    if (st.thinking) return;
-    st.error = "";
+  function round(extra) {
+    // One turn: the whole transcript out, one card back. The card the model
+    // named replaces whatever was on screen.
     st.thinking = true;
+    st.error = "";
+    st.card = null;
+    st.answers = {};
+    remember();
     draw();
-    setup("areas", { interest: st.interest }).then(function (out) {
-      st.thinking = false;
-      // Curated areas lead (the backend returns them first); interest-discovered
-      // areas follow. Keep a few of each so a curated participant still sees
-      // discovery beyond what was hand-picked, rather than only their curation.
-      st.areas = (out.areas || []).slice(0, 6);
-      if (!st.areas.length) {
-        st.error = "Nothing matched that yet — try describing it a little differently.";
+    api("turn", { transcript: st.msgs.concat(extra || []), shown: st.shown })
+      .then(function (out) {
+        st.thinking = false;
+        if (!out || !out.ok) {
+          st.error = (out && out.error) || "setup could not reach Claude";
+          draw();
+          return;
+        }
+        say("engelbart", out.say);
+        st.card = out;
+        if (out.card && out.card !== "none") st.shown.push(out.card);
+        if (out.card === "plan") st.plan = out.plan;
+        if (out.card === "goals") st.goals = out.goals;
+        if (out.card === "todos") {
+          st.todos = (out.todos || []).map(row);
+          st.pieces = (out.subgoals || []).map(function (g) {
+            return { id: fresh(), label: g.label,
+                     todos: (g.todos || []).map(row) };
+          });
+        }
+        remember();
         draw();
-        return;
-      }
-      st.phase = "direction";
-      draw();
-    }, fail);
-  }
-
-  function pickArea(i) {
-    if (st.thinking) return;
-    var area = st.areas[i];
-    if (!area) return;
-    st.areaIdx = i;
-    st.error = "";
-    // The labs are already embedded in the chosen area -- no second round-trip.
-    st.labs = area.labs || [];
-    if (!st.labs.length) {
-      st.error = "No labs surfaced for that area — pick another.";
-      draw();
-      return;
-    }
-    st.phase = "lab";
-    draw();
-  }
-
-  // "Add a lab by link": the server fetches the pasted page, extracts what it
-  // states, creates the canonical rows, and hands back the new lab's id -- then
-  // the normal pickLab flow opens it like any other lab.
-  function addLab() {
-    var u = str(st.labAddUrl).trim();
-    if (st.labAddBusy) return;
-    if (!u) {
-      st.labAddError = "Paste the lab page's link first.";
-      draw();
-      return;
-    }
-    st.labAddBusy = true;
-    st.labAddError = "";
-    draw();
-    setup("add_lab", { url: u, hint: st.labAddHint }).then(function (out) {
-      st.labAddBusy = false;
-      st.labAddOpen = false;
-      st.labAddUrl = "";
-      st.labAddHint = "";
-      // Walking back to this step should still show the lab that was added.
-      st.labs.push({ piId: out.piId, piName: "", labName: out.labName, interests: [] });
-      pickLab(out.piId);
-    }, function (error) {
-      st.labAddBusy = false;
-      st.labAddError = (error && error.message) || "the lab could not be added";
-      draw();
-    });
-  }
-
-  function pickLab(piId) {
-    if (st.thinking) return;
-    st.labSel = piId;
-    st.error = "";
-    st.thinking = true;
-    draw();
-    research("lab", { piId: piId }).then(function (detail) {
-      st.thinking = false;
-      st.lab = detail;
-      st.phase = "explore";
-      st.hoverIdea = -1;
-      draw();
-      loadIdeas();
-    }, fail);
-  }
-
-  // Ideas are model-backed and billed to the member; a spent key is a friendly
-  // 409, so a failure here leaves the lab tree standing with a retry rather
-  // than throwing the whole screen away.
-  function loadIdeas() {
-    st.ideas = [];
-    st.ideasError = "";
-    st.ideasLoading = true;
-    draw();
-    setup("ideas", { piId: st.labSel, interest: st.interest }).then(function (out) {
-      st.ideasLoading = false;
-      st.ideas = out.ideas || [];
-      if (!st.ideas.length) st.ideasError = "No ideas came back — try again.";
-      draw();
-    }, function (error) {
-      st.ideasLoading = false;
-      st.ideasError = (error && error.message) || "could not reach Claude";
-      draw();
-    });
-  }
-
-  function pickIdea(i) {
-    var idea = st.ideas[i];
-    st.idea = {
-      title: str(idea.title),
-      description: str(idea.what),
-      why: str(idea.why),
-      inspired: str(idea.inspired)
-    };
-    st.own = null;       // a generated idea replaces any own-project context
-    st.refMsgs = [];
-    st.refDraft = "";
-    st.refOpen = false;
-    st.phase = "project";
-    draw();
-  }
-
-  // The participant's own-project context, attached to every model call once
-  // they brought their own idea, so refine / path / generate stay anchored on
-  // their framing and their attached paper.
-  function ownPayload() {
-    if (!st.own) return undefined;
-    return { information: st.own.information, paper: st.own.paper };
-  }
-
-  // "Bring your own project": commit the drafted form. If a paper was given,
-  // create it first (and PUT the PDF straight to Storage when one was picked),
-  // then land in the project phase where the refine chat is the brainstorm.
-  function startOwnProject() {
-    var d = st.ownDraft || {};
-    if (st.ownBusy) return;
-    if (!str(d.description).trim()) {
-      st.ownError = "Describe what you want the project to be first.";
-      draw();
-      return;
-    }
-    st.ownBusy = true;
-    st.ownError = "";
-    draw();
-
-    var wantsPaper = str(d.paperTitle).trim() || str(d.paperUrl).trim() || d.file;
-    var makePaper = !wantsPaper ? Promise.resolve(null)
-      : setup("own_paper", {
-          title: d.paperTitle,
-          url: d.paperUrl,
-          wantsUpload: !!d.file
-        }).then(function (out) {
-          if (!d.file || !out.upload) return out;
-          return fetch(out.upload.uploadUrl, {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/pdf",
-              "x-upsert": "true",
-              apikey: out.upload.anonKey,
-              Authorization: "Bearer " + out.upload.anonKey
-            },
-            body: d.file
-          }).then(function (put) {
-            if (!put.ok) throw new Error("The PDF upload failed (" + put.status + ")");
-            return setup("own_paper_saved", { id: out.id, token: out.token });
-          }).then(function () { return out; });
-        });
-
-    makePaper.then(function (paper) {
-      st.ownBusy = false;
-      st.own = {
-        information: str(d.information).trim(),
-        paper: paper ? { id: paper.id, title: str(paper.title), url: str(paper.url) } : null
-      };
-      st.idea = {
-        title: str(d.title).trim() || "My own project",
-        description: str(d.description).trim(),
-        why: "",
-        inspired: ""
-      };
-      st.refMsgs = [{
-        who: "engelbart",
-        text: "It's your project — tell me more about what you're imagining, or"
-          + " ask me to poke at it. We'll shape it together before charting the path."
-      }];
-      st.refDraft = "";
-      st.refOpen = true;   // brainstorming an own idea starts in the chat
-      st.phase = "project";
-      draw();
-    }, function (error) {
-      st.ownBusy = false;
-      st.ownError = (error && error.message) || "could not start your project";
-      draw();
-    });
-  }
-
-  function sendRefine() {
-    var note = st.refDraft.trim();
-    if (!note || st.refining) return;
-    st.refMsgs.push({ who: "you", text: note });
-    st.refDraft = "";
-    st.refining = true;
-    st.error = "";
-    draw();
-    setup("refine", {
-      piId: st.labSel,
-      idea: { title: st.idea.title, description: st.idea.description },
-      note: note,
-      own: ownPayload()
-    }).then(function (out) {
-      st.refining = false;
-      if (out.title) st.idea.title = out.title;
-      if (out.description) st.idea.description = out.description;
-      st.refMsgs.push({ who: "engelbart", text: out.say || "Updated the idea above." });
-      draw();
-    }, function (error) {
-      st.refining = false;
-      st.refMsgs.push({
-        who: "engelbart",
-        text: (error && error.message) || "I couldn't reach Claude just then."
-      });
-      draw();
-    });
-  }
-
-  function generatePath() {
-    if (st.thinking) return;
-    st.error = "";
-    st.thinking = true;
-    st.phase = "generating";
-    draw();
-    setup("path", {
-      piId: st.labSel,
-      idea: { title: st.idea.title, description: st.idea.description },
-      interest: st.interest,
-      own: ownPayload()
-    }).then(function (out) {
-      st.thinking = false;
-      st.path = { name: out.name || st.idea.title, objective: out.objective || st.idea.description };
-      st.lanes = {};
-      LANES.forEach(function (lane) {
-        st.lanes[lane] = ((out.lanes && out.lanes[lane]) || []).map(row);
-      });
-      // A regenerate keeps the name the student already typed.
-      st.name = st.name.trim() ? st.name : st.path.name;
-      st.phase = "path";
-      draw();
-    }, function (error) {
-      st.thinking = false;
-      st.phase = "project";
-      st.error = (error && error.message) || "the path could not be charted";
-      draw();
-    });
-  }
-
-  // The one write: save the edited path, then mint the install code.
-  function createProject() {
-    if (!st.name.trim() || st.saving) return;
-    st.saving = true;
-    st.error = "";
-    draw();
-    var lanes = {};
-    LANES.forEach(function (lane) {
-      lanes[lane] = st.lanes[lane]
-        .map(function (r) { return r.text; })
-        .filter(function (t) { return t.trim(); });
-    });
-    setup("save_path", {
-      piId: st.labSel,
-      // The student's original interest, so Generate can ground the structured
-      // project (and its Brainstorm document) in what they actually asked for.
-      interest: st.interest,
-      name: st.name,
-      objective: st.path.objective,
-      idea: {
-        title: st.idea.title,
-        description: st.idea.description,
-        inspired: st.idea.inspired
-      },
-      lanes: lanes,
-      own: ownPayload()
-    }).then(function (saved) {
-      // "lanes" means the structured generator degraded and the path was
-      // saved exactly as drafted -- worth a quiet note on the done screen.
-      st.savedMode = (saved && saved.mode) || "";
-      return issueCode();
-    }).then(function (issued) {
-      st.saving = false;
-      st.made = {
-        name: st.name.trim(),
-        code: issued.code,
-        expiresInSeconds: issued.expiresInSeconds
-      };
-      st.phase = "done";
-      draw();
-    }).catch(function (error) {
-      st.saving = false;
-      st.error = (error && error.message) || "the project could not be saved";
-      draw();
-    });
-  }
-
-  function goBackTo(phase) {
-    if (st.thinking) return;
-    st.error = "";
-    st.phase = phase;
-    st.menu = false;
-    draw();
-  }
-
-  function restart() {
-    st.phase = "interest";
-    st.draft0 = "";
-    st.interest = "";
-    st.areas = []; st.areaIdx = -1;
-    st.labs = []; st.labSel = null;
-    st.lab = null; st.ideas = []; st.ideasError = ""; st.hoverIdea = -1;
-    st.idea = null; st.refMsgs = []; st.refDraft = ""; st.refOpen = false;
-    st.own = null; st.ownDraft = null; st.ownOpen = false;
-    st.ownBusy = false; st.ownError = "";
-    st.labAddOpen = false; st.labAddUrl = ""; st.labAddHint = "";
-    st.labAddBusy = false; st.labAddError = "";
-    st.path = null; st.lanes = null; st.name = "";
-    st.made = null; st.error = ""; st.profile = null;
-    draw();
-  }
-
-  // --- the modal: a researcher, or the lab -----------------------------------
-
-  function openPI() {
-    var pi = st.lab && st.lab.pi;
-    if (!pi) return;
-    st.profile = {
-      name: pi.name,
-      role: pi.title || "Principal investigator",
-      lab: [pi.lab_name, pi.department].filter(Boolean).join(" · "),
-      bio: pi.bio,
-      interests: pi.interests || [],
-      works: (st.lab.projects || []).slice(0, 6),
-      worksLabel: "The lab's work",
-      url: pi.url || pi.lab_url || ""
-    };
-    draw();
-  }
-
-  function openMember(m) {
-    var pi = (st.lab && st.lab.pi) || {};
-    // Scraped students are thin records that inherit the PI's interests, not
-    // their own stated focus, so interests stay empty and we never present a
-    // fabricated personal research area. Bio, site, and the "why" note appear
-    // only when a curator wrote them for this student.
-    st.profile = {
-      name: m.name,
-      role: m.title || "PhD researcher",
-      lab: [pi.lab_name, pi.name ? "advised by " + pi.name : ""].filter(Boolean).join(" · "),
-      bio: m.bio || "",
-      why: m.why || "",
-      interests: [],
-      interestsNote: m.bio ? "" : "Advised in " + (pi.lab_name || "this lab")
-        + ". We shape project ideas around the lab's work, not a student's individual focus.",
-      works: [],
-      url: m.url || ""
-    };
-    draw();
-  }
-
-  function closeModal() { st.profile = null; draw(); }
-
-  // --- chrome ---------------------------------------------------------------
-
-  function brandNode() { app.appendChild(el("div", "brand", "Engelbart")); }
-
-  function acctNode() {
-    if (!session || !session.user) return;
-    var wrap = el("div", "acct-wrap");
-    var b = el("button", "acct");
-    b.setAttribute("title", session.user.email || "signed in");
-    // The reference's little person glyph, not initials.
-    b.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"'
-      + ' stroke="currentColor" stroke-width="1.6" stroke-linecap="round">'
-      + '<circle cx="12" cy="8.5" r="3.5"></circle>'
-      + '<path d="M5 19.5 C6.5 15.5 9 14.5 12 14.5 C15 14.5 17.5 15.5 19 19.5"></path></svg>';
-    on(b, "click", function () { st.menu = !st.menu; draw(); });
-    wrap.appendChild(b);
-    if (st.menu) {
-      var menu = el("div", "menu");
-      menu.appendChild(el("div", "menu-email", session.user.email || "signed in"));
-      var theme = el("button", "menu-btn", dark() ? "Switch to light" : "Switch to dark");
-      on(theme, "click", function () {
-        try {
-          window.localStorage.setItem("hc-setup-theme", dark() ? "light" : "dark");
-        } catch (e) { /* private windows keep the default */ }
-        st.menu = false;
+      })
+      .catch(function (error) {
+        st.thinking = false;
+        st.error = error.message || "setup could not reach Claude";
         draw();
       });
-      menu.appendChild(theme);
-      var out = el("button", "menu-btn", "Sign out");
-      on(out, "click", function () {
-        if (client) client.auth.signOut();
-        window.location.href = "/engelbart/signin";
-      });
-      menu.appendChild(out);
-      wrap.appendChild(menu);
-      var scrim = el("div", "scrim");
-      on(scrim, "click", function () { st.menu = false; draw(); });
-      app.appendChild(scrim);
-    }
-    app.appendChild(wrap);
   }
 
-  function railNode() {
-    var cur = DEPTH[st.phase];
-    var reachable = {
-      interest: true,
-      direction: st.areas.length > 0,
-      lab: st.labs.length > 0,
-      project: !!st.idea
-    };
-    var rail = el("div", "rail");
-    var inner = el("div", "rail-inner");
-    inner.appendChild(el("div", "rail-line"));
-    RAIL.forEach(function (stepDef) {
-      var back = stepDef.depth < cur && reachable[stepDef.phase];
-      var here = stepDef.depth === cur;
-      var stepEl = el("div", "rail-step" + (here ? " cur" : back ? " go" : ""));
-      stepEl.appendChild(el("span", "rail-dot"));
-      stepEl.appendChild(el("span", "rail-lbl", stepDef.label));
-      if (back) on(stepEl, "click", function () { goBackTo(stepDef.phase); });
-      inner.appendChild(stepEl);
+  function send() {
+    var text = st.draft.trim();
+    if (!text || st.thinking) return;
+    say("you", text);
+    st.draft = "";
+    round();
+  }
+
+  // --- what the reader picked, as their turn --------------------------------
+
+  function answersAsSaid() {
+    var items = (st.card && st.card.questions && st.card.questions.items) || [];
+    var said = [];
+    items.forEach(function (q) {
+      var got = st.answers[q.id];
+      if (Array.isArray(got)) got = got.join(" · ");
+      got = str(got).trim();
+      if (got) said.push(q.title + ": " + got);
     });
-    rail.appendChild(inner);
-    app.appendChild(rail);
+    return said.join("\n");
+  }
+
+  function submitAnswers() {
+    var said = answersAsSaid();
+    if (!said) return;
+    say("you", said);
+    round();
+  }
+
+  function skipAnswers() {
+    say("you", "skip -- decide for me");
+    round();
   }
 
   // --- drawing --------------------------------------------------------------
@@ -625,960 +222,682 @@
     app.textContent = "";
     if (st.screen === "loading") return drawLoading();
     if (st.screen === "signin") return drawSignin();
-    brandNode();
-    acctNode();
-    if (st.phase === "done") { drawDone(); return; }
-    // The rail appears once the exploration is under way -- the interest
-    // question stands alone, the way the reference opens.
-    if (st.phase !== "interest") railNode();
-    drawFlow();
-    if (st.profile) drawModal();
+    if (st.screen === "done") return drawDone();
+    drawTalk();
+  }
+
+  function column(parent) {
+    var wrap = el("div", "wrap");
+    var col = el("div", "col");
+    wrap.appendChild(col);
+    parent.appendChild(wrap);
+    return col;
+  }
+
+  function hero(col, note) {
+    var box = el("div", "hero rise");
+    box.appendChild(el("div", "hero-name", "Engelbart"));
+    if (note) box.appendChild(el("div", "hero-note", note));
+    col.appendChild(box);
+  }
+
+  function whoBar() {
+    if (!session || !session.user) return;
+    var bar = el("div", "who");
+    var line = el("span", "", session.user.email || "signed in");
+    var dot = el("span", "dot");
+    var out = el("button", "", "sign out");
+    on(out, "click", function () {
+      if (client) client.auth.signOut();
+      window.location.href = "/engelbart/signin";
+    });
+    bar.appendChild(dot);
+    bar.appendChild(line);
+    bar.appendChild(el("span", "", "·"));
+    bar.appendChild(out);
+    app.appendChild(bar);
   }
 
   function drawLoading() {
-    var wrap = el("div", "wrap");
-    var box = el("div", "loading");
-    box.appendChild(el("div", "done-word", "Engelbart"));
-    box.appendChild(el("div", "done-note", st.error || "Waking up…"));
-    wrap.appendChild(box);
-    app.appendChild(wrap);
+    var col = column(app);
+    hero(col, st.error || "Waking up…");
   }
 
+  // Signed out: setting a project up starts with an account, and the button
+  // is the whole of the screen.
   function drawSignin() {
-    brandNode();
-    var wrap = el("div", "wrap");
-    var gate = el("div", "gate in");
-    gate.appendChild(el("div", "gate-title", "Find your first research project"));
-    gate.appendChild(el("div", "gate-lede",
-      "Start from what you're curious about. Engelbart walks you out to a real"
-      + " Berkeley lab, shapes a concrete first project, and hands you one"
-      + " command to install it on your machine. It starts with your account."));
-    var go = el("a", "btn btn-dark gate-cta");
+    var col = column(app);
+    hero(col, "");
+    var card = el("div", "card rise");
+    var body = el("div", "card-body");
+    body.appendChild(el("div", "card-title", "Set up your first project"));
+    body.appendChild(el("div", "card-lede",
+      "Describe the work, approve a plan, and leave with one command that"
+      + " installs Engelbart on your machine and opens the project. It starts"
+      + " with your Engelbart account."));
+    var acts = el("div", "acts");
+    var go = el("a", "btn btn-on");
     go.setAttribute("href", "/engelbart/signin");
-    go.appendChild(el("span", "", "Sign in to begin"));
+    go.appendChild(el("span", "", "Sign in, then come back"));
     go.appendChild(el("span", "go", "›"));
-    gate.appendChild(go);
-    wrap.appendChild(gate);
-    app.appendChild(wrap);
+    acts.appendChild(go);
+    body.appendChild(acts);
+    card.appendChild(body);
+    col.appendChild(card);
   }
 
-  function drawFlow() {
-    var wrap = el("div", "wrap");
-    var stage = el("div", "stage");
-    wrap.appendChild(stage);
-    app.appendChild(wrap);
+  // The conversation.
+  function drawTalk() {
+    whoBar();
+    var col = column(app);
+    if (st.msgs.length <= 1 && !st.card) hero(col, "");
 
-    if (st.phase === "interest") { phaseInterest(stage); return; }
+    st.msgs.forEach(function (m, index) {
+      var cls = "msg rise " + (m.role === "you" ? "msg-you" : "msg-them");
+      if (index === 0 && m.role !== "you" && m.text === OPEN) cls += " msg-opening";
+      var box = el("div", cls);
+      box.appendChild(el("div", "lbl", m.role === "you" ? "you" : "engelbart"));
+      box.appendChild(el("div", "msg-body", m.text));
+      col.appendChild(box);
+    });
 
-    stage.appendChild(el("div", "spacer deep"));
-    contextLine(stage);
-    if (st.phase === "direction") phaseDirection(stage);
-    else if (st.phase === "lab") phaseLab(stage);
-    else if (st.phase === "explore") phaseExplore(stage);
-    else if (st.phase === "project") phaseProject(stage);
-    else if (st.phase === "generating") phaseGenerating(stage);
-    else if (st.phase === "path") phasePath(stage);
-  }
+    if (st.thinking) col.appendChild(generating());
 
-  function contextLine(stage) {
-    var wrap = el("div", "ctx-wrap");
-    var line = el("div", "ctx");
-    line.appendChild(el("span", "ctx-txt", st.interest));
-    on(line, "click", function () { goBackTo("interest"); });
-    wrap.appendChild(line);
-    var join = el("div", "ctx-join");
-    join.appendChild(el("i")); join.appendChild(el("b")); join.appendChild(el("i"));
-    wrap.appendChild(join);
-    stage.appendChild(wrap);
-  }
-
-  function generating(label) {
-    var box = el("div", "generating");
-    var dots = el("span", "dots");
-    for (var i = 0; i < 9; i++) {
-      var d = el("span");
-      d.style.animationDelay = (i % 3 + Math.floor(i / 3)) * 90 + "ms";
-      dots.appendChild(d);
+    if (st.error) {
+      var bad = el("div", "");
+      bad.appendChild(el("div", "err", st.error));
+      var again = el("div", "acts");
+      again.appendChild(btn("Try again", "btn-on", function () { round(); }));
+      bad.appendChild(again);
+      col.appendChild(bad);
     }
-    box.appendChild(dots);
-    box.appendChild(el("span", "", label || "thinking"));
+
+    var kind = st.card && st.card.card;
+    if (!st.thinking && kind === "questions") drawQuestions(col);
+    if (!st.thinking && kind === "plan") drawPlan(col);
+    if (!st.thinking && kind === "goals") drawGoals(col);
+    if (!st.thinking && kind === "todos") drawTodos(col);
+
+    drawComposer(app);
+  }
+
+  function generating() {
+    // Nine dots in a square, lit in turn: something is being made, which is
+    // what is actually happening.
+    var box = el("div", "think rise");
+    var grid = el("span", "dots");
+    for (var i = 0; i < 9; i++) {
+      var dot = el("span", "dot");
+      dot.style.animationDelay = (i % 3 + Math.floor(i / 3)) * 90 + "ms";
+      grid.appendChild(dot);
+    }
+    box.appendChild(grid);
+    box.appendChild(el("span", "", "generating"));
     return box;
   }
 
-  function errorNode(stage) {
-    if (st.error) stage.appendChild(el("div", "err center", st.error));
+  function cardBox(col, eyebrow, right) {
+    var card = el("div", "card rise");
+    var head = el("div", "card-head");
+    var line = el("div", "");
+    line.style.display = "flex";
+    line.style.alignItems = "baseline";
+    line.appendChild(el("span", "lbl", eyebrow));
+    if (right) line.appendChild(el("span", "lbl right", right));
+    head.appendChild(line);
+    head.appendChild(el("div", "rule"));
+    card.appendChild(head);
+    var body = el("div", "card-body");
+    card.appendChild(body);
+    col.appendChild(card);
+    return body;
   }
 
-  // --- interest -------------------------------------------------------------
+  // --- the question card, in its four shapes --------------------------------
 
-  function phaseInterest(stage) {
-    stage.appendChild(el("div", "spacer"));
-    stage.appendChild(el("div", "q0 in", "What are you interested in, and why?"));
-    var wrap = el("div", "field-wrap in");
-    var line = el("div", "eb-line");
-    var area = el("textarea", "eb-f eb-interest");
-    area.setAttribute("rows", "1");
-    area.setAttribute("spellcheck", "false");
-    area.setAttribute("placeholder", "in your own words…");
-    area.value = st.draft0;
-    on(area, "input", function () { st.draft0 = area.value; grow(area); });
-    on(area, "keydown", function (event) {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        submitInterest();
-      }
+  function drawQuestions(col) {
+    var set = st.card.questions;
+    var items = set.items || [];
+    var body = cardBox(col, set.eyebrow || "a few questions",
+                       items.length === 1 ? "1 question"
+                                          : items.length + " questions");
+    items.forEach(function (q) { body.appendChild(questionNode(q)); });
+
+    var acts = el("div", "acts");
+    var ready = items.some(function (q) {
+      var got = st.answers[q.id];
+      return Array.isArray(got) ? got.length : str(got).trim();
     });
-    line.appendChild(area);
-    wrap.appendChild(line);
-    wrap.appendChild(el("div", "hint", st.draft0.trim() ? "enter ↵" : ""));
-    stage.appendChild(wrap);
-    if (st.thinking) stage.appendChild(generating("reading Berkeley"));
-    errorNode(stage);
-    focusInto(area);
+    acts.appendChild(btn("Send answers", ready ? "btn-on" : "",
+                         submitAnswers, !ready));
+    acts.appendChild(btn("Skip", "", skipAnswers));
+    body.appendChild(acts);
   }
 
-  // --- area -----------------------------------------------------------------
-
-  function phaseDirection(stage) {
-    stage.appendChild(el("div", "reveal-label in",
-      "Your interest connects to a few research areas."));
-    var grid = el("div", "area-grid");
-    st.areas.forEach(function (area, i) {
-      var col = el("div", "area-col in");
-      col.style.animationDelay = (i * 80) + "ms";
-      var node = el("button", "area-node", area.label);
-      on(node, "click", function () { pickArea(i); });
-      col.appendChild(node);
-      var n = (area.labs || []).length;
-      var desc = area.summary
-        ? clip(area.summary, 90)
-        : n + (n === 1 ? " lab" : " labs");
-      col.appendChild(el("div", "area-desc", desc));
-      grid.appendChild(col);
-    });
-    stage.appendChild(grid);
-    if (st.thinking) stage.appendChild(generating("rethinking the areas"));
-    else {
-      var acts = el("div", "actions");
-      acts.style.justifyContent = "center";
-      acts.appendChild(btn("Show different areas", "btn-ghost", loadAreas));
-      stage.appendChild(acts);
+  function questionNode(q) {
+    var box = el("div", "q");
+    box.appendChild(el("div", "card-title", q.title));
+    if (q.subtitle) box.appendChild(el("div", "card-sub", q.subtitle));
+    else if (q.type === "select_all") {
+      box.appendChild(el("div", "card-sub", "select all that apply"));
     }
-    errorNode(stage);
-  }
-
-  // --- lab ------------------------------------------------------------------
-
-  // The picked area stays on screen as a small anchored pill (the reference
-  // collapses the area grid down to this) -- clicking it walks back.
-  function areaAnchor(stage) {
-    var area = st.areas[st.areaIdx];
-    if (!area) return;
-    var wrap = el("div", "anchor-wrap in");
-    wrap.appendChild(el("div", "cap", "area"));
-    var pill = el("button", "area-anchor", area.label);
-    on(pill, "click", function () { goBackTo("direction"); });
-    wrap.appendChild(pill);
-    stage.appendChild(wrap);
-    stage.appendChild(stemEl(18));
-  }
-
-  // One lab card, shared by the lab list and the dimmed row kept above the
-  // explore tree. `mode` "" | "dim" | "chosen".
-  function labCard(lab, i, mode) {
-    var name = lab.labName || ((lab.piName || "") + " Lab");
-    var card = el("button", "lab-card in" + (mode ? " " + mode : ""));
-    card.style.animationDelay = (i * 70) + "ms";
-    card.appendChild(el("div", "lab-logo", initials(name)));
-    card.appendChild(el("span", "lab-name", name));
-    var desc = lab.bio
-      ? clip(lab.bio, 96)
-      : (lab.interests || []).slice(0, 3).join(", ");
-    if (desc) card.appendChild(el("div", "lab-desc", desc));
-    // The chosen card in the explore row walks back to the lab list (the
-    // reference's behavior); any other card opens that lab.
-    if (mode === "chosen") on(card, "click", function () { goBackTo("lab"); });
-    else on(card, "click", function () { pickLab(lab.piId); });
-    return card;
-  }
-
-  function phaseLab(stage) {
-    areaAnchor(stage);
-    stage.appendChild(el("div", "reveal-label in", "Related labs"));
-    stage.appendChild(stemEl(14));
-    stage.appendChild(el("div", "h-rail draw"));
-    var grid = el("div", "labs-grid");
-    st.labs.forEach(function (lab, i) {
-      grid.appendChild(labCard(lab, i, ""));
-    });
-    stage.appendChild(grid);
-    if (st.thinking) stage.appendChild(generating("opening the lab"));
-    errorNode(stage);
-    if (!st.thinking) labAddSection(stage);
-  }
-
-  // "Don't see the lab you mean?": paste the lab's own web page and it becomes
-  // a real lab option -- the server reads the page, extracts the PI, students,
-  // projects, and papers it states, and opens the new lab like any other.
-  function labAddSection(stage) {
-    stage.appendChild(el("div", "ideas-label", "Don't see the lab you mean?"));
-
-    if (!st.labAddOpen) {
-      var openRow = el("div", "actions");
-      openRow.style.justifyContent = "center";
-      openRow.appendChild(btn("Add a lab by link", "btn-ghost", function () {
-        st.labAddOpen = true;
-        draw();
-      }));
-      stage.appendChild(openRow);
-      return;
-    }
-
-    var card = el("div", "own-card in");
-    card.appendChild(el("div", "cap own-cap", "The lab's web page"));
-
-    function field(cls, placeholder, value, set) {
-      var t = el("textarea", "eb-f own-field " + cls);
-      t.setAttribute("rows", "1");
-      t.setAttribute("spellcheck", "false");
-      t.setAttribute("placeholder", placeholder);
-      t.value = value;
-      on(t, "input", function () { set(t.value); grow(t); });
-      return t;
-    }
-
-    card.appendChild(field("labadd-url", "https:// — the lab's site, or its PI's page",
-      st.labAddUrl, function (v) { st.labAddUrl = v; }));
-    card.appendChild(field("labadd-hint", "What is it? e.g. \"Prof Lee's soft robotics lab\" (optional)",
-      st.labAddHint, function (v) { st.labAddHint = v; }));
-
-    if (st.labAddBusy) {
-      card.appendChild(generating("reading the lab's page"));
+    if (q.type === "mcq" || q.type === "select_all") {
+      box.appendChild(optionList(q));
     } else {
-      var acts = el("div", "actions own-acts");
-      acts.appendChild(btn("Add this lab", "btn-dark", addLab, { arrow: true }));
-      acts.appendChild(btn("Never mind", "btn-ghost", function () {
-        st.labAddOpen = false;
-        st.labAddError = "";
+      box.appendChild(writtenField(q));
+    }
+    return box;
+  }
+
+  function optionList(q) {
+    var many = q.type === "select_all";
+    var list = el("div", "");
+    (q.options || []).forEach(function (o) {
+      var picked = many
+        ? (st.answers[q.id] || []).indexOf(o.label) >= 0
+        : st.answers[q.id] === o.label;
+      var line = el("div", "opt");
+      line.setAttribute("data-on", picked ? "1" : "0");
+      var mark = el("span", "mark " + (many ? "mark-many" : "mark-one"),
+                    picked && many ? "✓" : "");
+      line.appendChild(mark);
+      var text = el("span", "opt-text");
+      text.appendChild(el("span", "opt-label", o.label));
+      if (o.why) text.appendChild(el("span", "opt-why", o.why));
+      line.appendChild(text);
+      on(line, "click", function () {
+        if (many) {
+          var held = (st.answers[q.id] || []).slice();
+          var at = held.indexOf(o.label);
+          if (at >= 0) held.splice(at, 1); else held.push(o.label);
+          st.answers[q.id] = held;
+        } else {
+          st.answers[q.id] = st.answers[q.id] === o.label ? "" : o.label;
+        }
         draw();
-      }));
-      card.appendChild(acts);
-    }
-    if (st.labAddError) card.appendChild(el("div", "err", st.labAddError));
-
-    stage.appendChild(card);
-  }
-
-  function clip(text, n) {
-    text = str(text).replace(/\s+/g, " ").trim();
-    return text.length > n ? text.slice(0, n - 1).trimEnd() + "…" : text;
-  }
-
-  // --- explore: the lab tree ------------------------------------------------
-
-  // A tree connector mirroring a centered row of n equal columns: one vertical
-  // tick at each column's center, joined by a horizontal rail between the first
-  // and last centers. `cell` is the column width PLUS its column gap -- a row of
-  // n such cells, centered, puts every tick exactly on a column's center. dir
-  // "down" draws the rail at the top (a split toward the row below); "up" draws
-  // it at the bottom (a merge from the row above).
-  function tieRow(n, cell, dir) {
-    var rowEl = el("div", "tie-row " + dir + " in");
-    for (var i = 0; i < n; i++) {
-      var t = el("div", "tie");
-      t.style.width = cell + "px";
-      if (i > 0) t.appendChild(el("i", "rail rail-l"));
-      if (i < n - 1) t.appendChild(el("i", "rail rail-r"));
-      t.appendChild(el("i", "tick"));
-      rowEl.appendChild(t);
-    }
-    return rowEl;
-  }
-
-  function stemEl(h) {
-    var s = el("div", "stem draw", "");
-    s.style.height = h + "px";
-    return s;
-  }
-
-  function phaseExplore(stage) {
-    var pi = (st.lab && st.lab.pi) || {};
-    var members = (st.lab && st.lab.members) || [];
-    var shown = members.slice(0, 6);
-
-    // The reference keeps the whole lab row on screen: the chosen lab reads a
-    // touch larger, its siblings dim to ghosts but stay clickable, and the
-    // tree hangs beneath the row.
-    areaAnchor(stage);
-    stage.appendChild(el("div", "cap explore-cap", "Related labs"));
-    if (st.labs.length) {
-      var row = el("div", "labs-grid explore-labs");
-      st.labs.forEach(function (lab, i) {
-        row.appendChild(labCard(lab, i, lab.piId === st.labSel ? "chosen" : "dim"));
       });
-      stage.appendChild(row);
-    }
-    stage.appendChild(stemEl(20));
-
-    var piBtn = el("button", "node-pi in");
-    piBtn.appendChild(el("div", "avatar avatar-pi", initials(pi.name)));
-    var line = el("div", "person-line");
-    line.appendChild(el("span", "person-name", pi.name));
-    line.appendChild(el("span", "person-tag", "PI"));
-    piBtn.appendChild(line);
-    piBtn.appendChild(el("div", "person-focus", "directs the lab’s research program"));
-    on(piBtn, "click", openPI);
-    stage.appendChild(piBtn);
-
-    // The lab as one connected tree: the PI's stem splits to the students, and
-    // their lines merge back into the ideas below. The mirrored connector
-    // geometry only holds while the students sit on ONE line, so the columns
-    // narrow as the lab grows -- comfortable 210px columns for a few students,
-    // tighter ones for four to six -- instead of ever wrapping to a second,
-    // disconnected row. Only when even the tight row cannot fit the viewport
-    // does the tier fall back to the plain labeled row.
-    var wide = shown.length <= 3;
-    var memberW = wide ? 210 : 150;
-    var memberGap = wide ? 40 : 22;
-    var cell = memberW + memberGap;
-    var viewport = window.innerWidth || 1280;
-    var ties = shown.length > 0 && shown.length * cell + 40 <= viewport;
-    if (shown.length) {
-      if (ties) {
-        stage.appendChild(stemEl(14));
-        stage.appendChild(tieRow(shown.length, cell, "down"));
-      } else {
-        stage.appendChild(el("div", "members-label", "PhD researchers"));
-      }
-      var mrow = el("div", "members-row");
-      if (ties) {
-        mrow.classList.add("one-line");
-        mrow.style.columnGap = memberGap + "px";
-      }
-      shown.forEach(function (m, i) {
-        var mBtn = el("button", "member in");
-        if (ties) mBtn.style.width = memberW + "px";
-        mBtn.style.animationDelay = (i * 60) + "ms";
-        mBtn.appendChild(el("div", "avatar avatar-m", initials(m.name)));
-        var ml = el("div", "person-line");
-        ml.appendChild(el("span", "person-name", m.name));
-        ml.appendChild(el("span", "person-tag", "PhD"));
-        mBtn.appendChild(ml);
-        // Verified role only -- students inherit the PI's interests in the data,
-        // so we never render those as a personal research focus.
-        if (m.title) mBtn.appendChild(el("div", "person-focus", clip(m.title, 60)));
-        on(mBtn, "click", function () { openMember(m); });
-        mrow.appendChild(mBtn);
-      });
-      stage.appendChild(mrow);
-      if (ties) {
-        stage.appendChild(tieRow(shown.length, cell, "up"));
-        stage.appendChild(stemEl(14));
-      }
-    } else {
-      stage.appendChild(stemEl(26));
-    }
-
-    stage.appendChild(el("div", "ideas-label", "Project ideas for this lab"));
-
-    if (st.ideasLoading) { stage.appendChild(generating("shaping ideas")); return; }
-    if (st.ideasError) {
-      stage.appendChild(el("div", "err center", st.ideasError));
-      var again = el("div", "actions");
-      again.style.justifyContent = "center";
-      again.appendChild(btn("Try again", "btn-ghost", loadIdeas));
-      stage.appendChild(again);
-      ownSection(stage);
-      return;
-    }
-
-    if (st.ideas.length > 1 && st.ideas.length * 268 + 40 <= (window.innerWidth || 1280)) {
-      stage.appendChild(stemEl(12));
-      stage.appendChild(tieRow(st.ideas.length, 268, "down"));
-    }
-    var grid = el("div", "ideas-grid" + (st.hoverIdea >= 0 ? " hovering" : ""));
-    st.ideas.forEach(function (idea, i) {
-      var col = el("div", "idea-col in" + (st.hoverIdea === i ? " hot" : ""));
-      col.style.animationDelay = (i * 70) + "ms";
-      var pill = el("button", "idea-pill", idea.title);
-      on(pill, "click", function () { pickIdea(i); });
-      on(col, "mouseenter", function () { setHover(i); });
-      on(col, "mouseleave", function () { setHover(-1); });
-      col.appendChild(pill);
-      if (idea.what) col.appendChild(el("div", "idea-desc", idea.what));
-      grid.appendChild(col);
+      list.appendChild(line);
     });
-    stage.appendChild(grid);
-
-    var again = el("div", "actions");
-    again.style.justifyContent = "center";
-    again.appendChild(btn("Regenerate ideas", "btn-ghost", loadIdeas));
-    stage.appendChild(again);
-
-    ownSection(stage);
+    return list;
   }
 
-  // "Or bring your own project": a quiet card under the generated ideas. The
-  // participant states the project in their own words, attaches background and
-  // (optionally) a paper -- link, PDF, or both -- then lands in the same
-  // project phase, where the refine chat is the brainstorming surface.
-  function ownSection(stage) {
-    stage.appendChild(el("div", "ideas-label", "Or bring your own project"));
+  function writtenField(q) {
+    var wrap = el("div", "field");
+    var long = q.type === "open";
+    var input = el(long ? "textarea" : "input", "f");
+    if (long) input.setAttribute("rows", "3");
+    else input.setAttribute("type", "text");
+    input.setAttribute("spellcheck", "false");
+    if (q.placeholder) input.setAttribute("placeholder", q.placeholder);
+    input.value = str(st.answers[q.id]);
+    on(input, "input", function () { st.answers[q.id] = input.value; });
+    on(input, "blur", draw);
+    wrap.appendChild(input);
+    return wrap;
+  }
 
-    if (!st.ownOpen) {
-      var openRow = el("div", "actions");
-      openRow.style.justifyContent = "center";
-      openRow.appendChild(btn("I have my own project idea", "btn-ghost", function () {
-        st.ownOpen = true;
+  // --- plan -----------------------------------------------------------------
+
+  function drawPlan(col) {
+    var plan = st.card.plan || {};
+    var body = cardBox(col, "plan");
+    body.appendChild(el("div", "card-title",
+                        "Here's what I think you're working on"));
+    str(plan.description).split("\n\n").forEach(function (para) {
+      if (!para.trim()) return;
+      body.appendChild(el("div", "prose", para.trim()));
+    });
+    if ((plan.unsure || []).length) {
+      var box = el("div", "inset");
+      box.appendChild(el("div", "lbl", "still unsure about"));
+      plan.unsure.forEach(function (line) {
+        var bul = el("div", "bullet");
+        bul.appendChild(el("span", "bullet-dot", "·"));
+        bul.appendChild(el("span", "", line));
+        box.appendChild(bul);
+      });
+      body.appendChild(box);
+    }
+    var ask = el("div", "card-title", "Is that basically right?");
+    ask.style.marginTop = "16px";
+    body.appendChild(ask);
+    var acts = el("div", "acts");
+    acts.appendChild(btn("Continue", "btn-on", function () {
+      st.plan = plan;
+      say("you", "Approved.");
+      round();
+    }));
+    acts.appendChild(btn("Add something", "", function () {
+      var field = document.querySelector(".composer .f");
+      if (field) field.focus();
+    }));
+    body.appendChild(acts);
+  }
+
+  // --- goals ----------------------------------------------------------------
+
+  function drawGoals(col) {
+    var goals = st.card.goals || [];
+    var typing = st.chosen === " other";
+    var label = typing ? st.other.trim() : st.chosen;
+    var body = cardBox(col, "goal");
+    body.appendChild(el("div", "card-title", "What should we focus on?"));
+
+    goals.forEach(function (g) {
+      var picked = st.chosen === g.label;
+      var line = el("div", "opt");
+      line.setAttribute("data-on", picked ? "1" : "0");
+      line.appendChild(el("span", "mark mark-one", ""));
+      var text = el("span", "opt-text");
+      text.appendChild(el("span", "opt-label", g.label));
+      if (g.why) text.appendChild(el("span", "opt-why", g.why));
+      line.appendChild(text);
+      on(line, "click", function () {
+        st.chosen = picked ? "" : g.label;
         draw();
-      }));
-      stage.appendChild(openRow);
-      return;
-    }
+      });
+      body.appendChild(line);
+    });
 
-    if (!st.ownDraft) {
-      st.ownDraft = {
-        title: "", description: "", information: "",
-        paperTitle: "", paperUrl: "", file: null
-      };
-    }
-    var d = st.ownDraft;
-    var card = el("div", "own-card in");
-
-    function area(cls, placeholder, rowsN, value, set) {
-      var t = el("textarea", "eb-f own-field " + cls);
-      t.setAttribute("rows", String(rowsN));
-      t.setAttribute("spellcheck", "false");
-      t.setAttribute("placeholder", placeholder);
-      t.value = value;
-      on(t, "input", function () { set(t.value); grow(t); });
-      return t;
-    }
-
-    card.appendChild(el("div", "cap own-cap", "Your project"));
-    card.appendChild(area("own-desc", "What do you want the project to be? Describe it in your own words.",
-      3, d.description, function (v) { d.description = v; }));
-    card.appendChild(area("own-title", "Give it a working title (optional)",
-      1, d.title, function (v) { d.title = v; }));
-    card.appendChild(area("own-info", "Anything else worth knowing — background, context, what you've tried (optional)",
-      2, d.information, function (v) { d.information = v; }));
-
-    card.appendChild(el("div", "cap own-cap", "Attach a paper (optional)"));
-    card.appendChild(area("own-paper-title", "Paper title", 1, d.paperTitle,
-      function (v) { d.paperTitle = v; }));
-    card.appendChild(area("own-paper-url", "Link — a DOI or URL", 1, d.paperUrl,
-      function (v) { d.paperUrl = v; }));
-
-    var fileRow = el("div", "own-file-row");
-    var file = el("input", "own-file");
-    file.setAttribute("type", "file");
-    file.setAttribute("accept", "application/pdf");
-    file.style.display = "none";
-    on(file, "change", function () {
-      d.file = (file.files && file.files[0]) || null;
+    var mine = el("div", "opt");
+    mine.setAttribute("data-on", typing ? "1" : "0");
+    mine.appendChild(el("span", "mark mark-one", ""));
+    var mineText = el("span", "opt-text");
+    mineText.appendChild(el("span", "opt-label", "Something else"));
+    mineText.appendChild(el("span", "opt-why",
+      "tell it what to start on instead and it will use that"));
+    mine.appendChild(mineText);
+    on(mine, "click", function () {
+      st.chosen = typing ? "" : " other";
       draw();
     });
-    fileRow.appendChild(file);
-    fileRow.appendChild(btn(d.file ? "Change PDF" : "Attach a PDF", "btn-ghost", function () {
-      file.click();
-    }));
-    fileRow.appendChild(el("span", "own-file-name",
-      d.file ? d.file.name : "no file attached"));
-    if (d.file) {
-      var drop = el("button", "own-file-clear", "×");
-      on(drop, "click", function () { d.file = null; draw(); });
-      fileRow.appendChild(drop);
-    }
-    card.appendChild(fileRow);
+    body.appendChild(mine);
 
-    if (st.ownBusy) {
-      card.appendChild(generating(d.file ? "attaching your paper" : "starting your project"));
-    } else {
-      var acts = el("div", "actions own-acts");
-      acts.appendChild(btn("Shape this project", "btn-dark", startOwnProject, { arrow: true }));
-      acts.appendChild(btn("Never mind", "btn-ghost", function () {
-        st.ownOpen = false;
-        st.ownError = "";
-        draw();
-      }));
-      card.appendChild(acts);
-    }
-    if (st.ownError) card.appendChild(el("div", "err", st.ownError));
-
-    stage.appendChild(card);
-  }
-
-  // Hover is a light touch: rerender only the ideas grid's hot/dim classes,
-  // not the whole tree, so pointing at a pill stays cheap.
-  function setHover(i) {
-    if (st.hoverIdea === i) return;
-    st.hoverIdea = i;
-    var grid = app.querySelector(".ideas-grid");
-    if (!grid) return;
-    grid.classList.toggle("hovering", i >= 0);
-    var cols = grid.querySelectorAll(".idea-col");
-    for (var k = 0; k < cols.length; k++) cols[k].classList.toggle("hot", k === i);
-  }
-
-  // --- project idea detail + inline refine ----------------------------------
-
-  function phaseProject(stage) {
-    var pi = (st.lab && st.lab.pi) || {};
-    var focus = el("div", "focus in");
-
-    focus.appendChild(el("div", "cap", "project idea"));
-
-    var titleLine = el("div", "focus-title-line");
-    var title = el("textarea", "eb-f focus-title");
-    title.setAttribute("rows", "1");
-    title.setAttribute("spellcheck", "false");
-    title.value = st.idea.title;
-    on(title, "input", function () { st.idea.title = title.value; grow(title); });
-    titleLine.appendChild(title);
-    focus.appendChild(titleLine);
-
-    var descLine = el("div", "focus-desc-line");
-    var desc = el("textarea", "eb-f focus-desc");
-    desc.setAttribute("rows", "2");
-    desc.setAttribute("spellcheck", "false");
-    desc.value = st.idea.description;
-    on(desc, "input", function () { st.idea.description = desc.value; grow(desc); });
-    descLine.appendChild(desc);
-    focus.appendChild(descLine);
-
-    if (st.idea.why) {
-      focus.appendChild(el("div", "cap focus-cap", "why this project"));
-      focus.appendChild(el("div", "focus-why", st.idea.why));
-    }
-
-    focus.appendChild(el("div", "cap focus-cap", "connected to"));
-    var meta = el("div", "focus-meta");
-    var link = el("button", "focus-link", pi.name || "the lab");
-    on(link, "click", openPI);
-    meta.appendChild(link);
-    focus.appendChild(meta);
-    if (pi.lab_name) focus.appendChild(el("div", "focus-sub", pi.lab_name));
-    if (st.idea.inspired) {
-      focus.appendChild(el("div", "focus-sub focus-inspired", "Based on: " + st.idea.inspired));
-    }
-
-    // An own-brought project shows what came with it: the attached paper (a
-    // real link when one was given) and the background they wrote.
-    if (st.own && (st.own.paper || st.own.information)) {
-      focus.appendChild(el("div", "cap focus-cap", "What you brought"));
-      if (st.own.paper) {
-        var pLine = el("div", "focus-sub");
-        pLine.appendChild(document.createTextNode("Paper: "));
-        if (st.own.paper.url) {
-          var pA = el("a", "own-paper-link", st.own.paper.title || "attached paper");
-          pA.setAttribute("href", st.own.paper.url);
-          pA.setAttribute("target", "_blank");
-          pA.setAttribute("rel", "noreferrer");
-          pLine.appendChild(pA);
-        } else {
-          pLine.appendChild(document.createTextNode(st.own.paper.title || "attached PDF"));
-        }
-        focus.appendChild(pLine);
-      }
-      if (st.own.information) {
-        focus.appendChild(el("div", "focus-sub", clip(st.own.information, 300)));
-      }
-    }
-
-    // Inline refine: a quiet conversation that edits the idea in place. It
-    // stays folded behind "Refine this idea" until asked for, the way the
-    // reference keeps the project card clean.
-    if (st.refOpen) {
-      var refine = el("div", "ref-block");
-      st.refMsgs.forEach(function (m) {
-        var msg = el("div", "ref-msg");
-        msg.appendChild(el("div", "ref-who", m.who === "you" ? "you" : "engelbart"));
-        msg.appendChild(el("div", "ref-text " + m.who, m.text));
-        refine.appendChild(msg);
-      });
-      if (st.refining) refine.appendChild(generating("refining"));
-      var inputLine = el("div", "ref-input-line");
-      var input = el("textarea", "eb-f ref-input");
-      input.setAttribute("rows", "1");
+    if (typing) {
+      var wrap = el("div", "field");
+      var input = el("input", "f");
+      input.setAttribute("type", "text");
       input.setAttribute("spellcheck", "false");
-      input.setAttribute("placeholder",
-        "make it more visual · feasible in two weeks · no model training…");
-      input.value = st.refDraft;
-      on(input, "input", function () { st.refDraft = input.value; grow(input); });
-      on(input, "keydown", function (event) {
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          sendRefine();
-        }
-      });
-      inputLine.appendChild(input);
-      refine.appendChild(inputLine);
-      refine.appendChild(el("div", "ref-note",
-        "say how to reshape it — or edit the name and description directly above"));
-      var doneActs = el("div", "actions");
-      doneActs.appendChild(btn("Done", "btn-dark", function () {
-        st.refOpen = false;
-        draw();
-      }));
-      refine.appendChild(doneActs);
-      focus.appendChild(refine);
-    } else {
-      var acts = el("div", "actions");
-      acts.appendChild(btn("Refine this idea", "btn-ghost", function () {
-        st.refOpen = true;
-        draw();
-      }));
-      acts.appendChild(btn("Generate the path", "btn-dark", generatePath, { arrow: true }));
-      acts.appendChild(btn("← back", "btn-bare", function () { goBackTo("explore"); }));
-      focus.appendChild(acts);
+      input.setAttribute("placeholder", "what to start on");
+      input.value = st.other;
+      on(input, "input", function () { st.other = input.value; });
+      on(input, "blur", draw);
+      wrap.appendChild(input);
+      body.appendChild(wrap);
     }
 
-    errorNode(focus);
-    stage.appendChild(focus);
+    if (label) {
+      var more = el("div", "rise");
+      more.style.marginTop = "14px";
+      more.appendChild(el("div", "lbl", "anything the rows should know"));
+      var box = el("div", "field");
+      var note = el("textarea", "f");
+      note.setAttribute("rows", "3");
+      note.setAttribute("spellcheck", "false");
+      note.setAttribute("placeholder",
+                        "constraints, what to leave alone, where to start…");
+      note.value = st.goalNote;
+      on(note, "input", function () { st.goalNote = note.value; });
+      box.appendChild(note);
+      more.appendChild(box);
+      body.appendChild(more);
+    }
+
+    var acts = el("div", "acts");
+    acts.appendChild(btn("Generate TODOs", label ? "btn-on" : "", function () {
+      st.goals = goals;
+      say("you", st.goalNote.trim()
+          ? label + "\n\n" + st.goalNote.trim() : label);
+      round();
+    }, !label));
+    body.appendChild(acts);
   }
 
-  // --- generating -----------------------------------------------------------
+  // --- todos, and the name ---------------------------------------------------
 
-  function phaseGenerating(stage) {
-    stage.appendChild(el("div", "focus in"))
-      .appendChild(el("div", "cap", "project idea"));
-    stage.appendChild(generating("generating"));
-  }
+  function drawTodos(col) {
+    var pieces = st.pieces;
+    var count = pieces.length
+      ? pieces.reduce(function (n, g) { return n + g.todos.length; }, 0)
+      : st.todos.length;
+    var body = cardBox(col, "todos",
+                       count === 1 ? "1 row" : count + " rows");
 
-  // --- the path -------------------------------------------------------------
-
-  function phasePath(stage) {
-    var pi = (st.lab && st.lab.pi) || {};
-    var path = el("div", "path");
-    path.appendChild(el("div", "path-head", "The Path Forward"));
-
-    // "Target {lab} led by {person}" -- both halves open the researcher modal.
-    // The objective still rides along in state and is saved with the path; the
-    // reference simply doesn't surface it here.
-    var targetLine = el("div", "path-target");
-    targetLine.appendChild(document.createTextNode("Target "));
-    var labLink = el("button", "focus-link", pi.lab_name || "this lab");
-    on(labLink, "click", openPI);
-    targetLine.appendChild(labLink);
-    targetLine.appendChild(document.createTextNode(" led by "));
-    var piLink = el("button", "focus-link", pi.name || "its PI");
-    on(piLink, "click", openPI);
-    targetLine.appendChild(piLink);
-    path.appendChild(targetLine);
-
-    LANES.forEach(function (lane) {
-      var block = el("div", "lane");
-      block.appendChild(el("div", "lane-name", LANE_LABEL[lane]));
-      // The reference annotates only the first lane.
-      if (lane === "brainstorm") {
-        block.appendChild(el("div", "lane-note", "This can change as you learn."));
-      }
-      var rows = el("div", "lane-rows");
-      st.lanes[lane].forEach(function (r) {
-        rows.appendChild(laneRow(lane, r));
+    if (pieces.length) {
+      pieces.forEach(function (piece) {
+        var head = el("div", "piece");
+        var name = el("input", "f piece-name");
+        name.setAttribute("type", "text");
+        name.setAttribute("spellcheck", "false");
+        name.value = piece.label;
+        on(name, "input", function () { piece.label = name.value; });
+        head.appendChild(name);
+        var drop = el("button", "x", "×");
+        on(drop, "click", function () {
+          st.pieces = st.pieces.filter(function (g) { return g !== piece; });
+          draw();
+        });
+        head.appendChild(drop);
+        body.appendChild(head);
+        var kids = el("div", "kids");
+        piece.todos.forEach(function (t) {
+          kids.appendChild(todoRow(t, piece.todos, function () {
+            piece.todos = piece.todos.filter(function (r) { return r !== t; });
+          }));
+        });
+        kids.appendChild(adder(function (text) {
+          piece.todos.push(row(text));
+        }));
+        body.appendChild(kids);
       });
-      rows.appendChild(laneAdder(lane));
-      block.appendChild(rows);
-      path.appendChild(block);
-    });
+    } else {
+      st.todos.forEach(function (t) {
+        body.appendChild(todoRow(t, st.todos, function () {
+          st.todos = st.todos.filter(function (r) { return r !== t; });
+        }));
+      });
+      body.appendChild(adder(function (text) { st.todos.push(row(text)); }));
+    }
 
-    path.appendChild(el("div", "cap name-cap", "name your project"));
-    var namerow = el("div", "namerow");
-    var name = el("input", "eb-f");
+    // The name, and the button that lives in it -- asked for here, by which
+    // point they have seen what the project is, so naming it is recognition
+    // rather than invention.
+    var nameWrap = el("div", "");
+    nameWrap.style.marginTop = "20px";
+    nameWrap.appendChild(el("div", "lbl", "name your project"));
+    var pill = el("div", "name-row");
+    var name = el("input", "f");
     name.setAttribute("type", "text");
     name.setAttribute("spellcheck", "false");
     name.setAttribute("placeholder", "a short name");
     name.value = st.name;
-    on(name, "input", function () { st.name = name.value; syncCreate(); });
-    namerow.appendChild(name);
-    var create = btn(st.saving ? "Saving…" : "Create project",
-      st.name.trim() && !st.saving ? "btn-dark" : "btn-dark",
-      createProject, { arrow: true, disabled: !st.name.trim() || st.saving });
-    create.setAttribute("data-create", "1");
-    namerow.appendChild(create);
-    path.appendChild(namerow);
+    var go = btn(st.saving ? "Working…" : "Create project",
+                 st.name.trim() && !st.saving ? "btn-on" : "",
+                 complete, !st.name.trim() || st.saving);
+    on(name, "input", function () {
+      st.name = name.value;
+      if (st.name.trim() && !st.saving) {
+        go.removeAttribute("disabled");
+        go.className = "btn btn-on";
+        if (!go.querySelector(".go")) go.appendChild(el("span", "go", "›"));
+        go.onclick = complete;
+      } else {
+        go.setAttribute("disabled", "disabled");
+        go.className = "btn";
+        var chev = go.querySelector(".go");
+        if (chev) chev.remove();
+      }
+    });
+    pill.appendChild(name);
+    pill.appendChild(go);
+    nameWrap.appendChild(pill);
+    body.appendChild(nameWrap);
 
-    var acts = el("div", "actions");
-    acts.appendChild(btn("Back to the idea", "btn-ghost", function () { goBackTo("project"); }));
-    acts.appendChild(btn("Regenerate path", "btn-ghost", generatePath));
-    path.appendChild(acts);
-
-    errorNode(path);
-    stage.appendChild(path);
+    if (st.error) body.appendChild(el("div", "err", st.error));
   }
 
-  // Toggle the Create button without redrawing the whole path (which would
-  // blur the name field mid-type).
-  function syncCreate() {
-    var b = app.querySelector("[data-create]");
-    if (!b) return;
-    if (st.name.trim() && !st.saving) {
-      b.removeAttribute("disabled");
-      if (!b.querySelector(".go")) b.appendChild(el("span", "go", "›"));
-      b.onclick = createProject;
-    } else {
-      b.setAttribute("disabled", "disabled");
-      b.onclick = null;
-    }
-  }
-
-  function laneRow(lane, r) {
-    var line = el("div", "eb-row");
-    line.appendChild(el("span", "eb-row-dot", "·"));
-    var body = el("div", "eb-row-body");
-    body.setAttribute("title", "Click to edit");
-    var parts = str(r.text).split("\n");
-    body.appendChild(el("div", "eb-row-main", parts[0]));
-    if (parts.length > 1 && parts.slice(1).join(" ").trim()) {
-      body.appendChild(el("div", "eb-row-sub", parts.slice(1).join(" ")));
-    }
-    // Click to edit in place; blur commits, and an emptied row is a delete.
-    on(body, "click", function () {
-      var edit = el("textarea", "eb-f eb-row-edit");
-      edit.setAttribute("rows", "1");
-      edit.setAttribute("spellcheck", "false");
-      edit.value = r.text;
-      on(edit, "input", function () { r.text = edit.value; grow(edit); });
-      on(edit, "keydown", function (event) {
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          edit.blur();
-        }
-      });
-      on(edit, "blur", function () {
-        if (!edit.value.trim()) {
-          st.lanes[lane] = st.lanes[lane].filter(function (o) { return o !== r; });
-        }
-        draw();
-      });
-      line.replaceChild(edit, body);
-      grow(edit);
-      edit.focus();
-    });
-    line.appendChild(body);
-    var x = el("button", "eb-x", "×");
-    on(x, "click", function () {
-      st.lanes[lane] = st.lanes[lane].filter(function (o) { return o !== r; });
-      draw();
-    });
+  function todoRow(t, list, drop) {
+    var line = el("div", "row");
+    line.appendChild(el("span", "bullet-dot", "·"));
+    var input = el("input", "f");
+    input.setAttribute("type", "text");
+    input.setAttribute("spellcheck", "false");
+    input.value = t.text;
+    on(input, "input", function () { t.text = input.value; });
+    line.appendChild(input);
+    var x = el("button", "x", "×");
+    on(x, "click", function () { drop(); draw(); });
     line.appendChild(x);
     return line;
   }
 
-  function laneAdder(lane) {
-    var line = el("div", "lane-add");
-    line.appendChild(el("span", "eb-row-dot", "·"));
-    var input = el("input", "eb-f");
+  function adder(add) {
+    var line = el("div", "row");
+    line.appendChild(el("span", "bullet-dot", "·"));
+    var input = el("input", "f");
     input.setAttribute("type", "text");
     input.setAttribute("spellcheck", "false");
-    input.setAttribute("placeholder", "add a step…");
+    input.setAttribute("placeholder", "add a row…");
     on(input, "keydown", function (event) {
       if (event.key !== "Enter") return;
       event.preventDefault();
       var text = input.value.trim();
       if (!text) return;
-      st.lanes[lane].push(row(text));
+      add(text);
       draw();
     });
     line.appendChild(input);
     return line;
   }
 
-  // --- the researcher / lab modal -------------------------------------------
-
-  function drawModal() {
-    var p = st.profile;
-    var overlay = el("div", "overlay");
-    on(overlay, "click", function (event) {
-      if (event.target === overlay) closeModal();
-    });
-    var modal = el("div", "modal");
-    var close = el("button", "modal-close", "×");
-    on(close, "click", closeModal);
-    modal.appendChild(close);
-
-    modal.appendChild(el("div", "modal-av", initials(p.name)));
-    modal.appendChild(el("div", "modal-name", p.name));
-    if (p.role) modal.appendChild(el("div", "modal-role", p.role));
-    if (p.lab) modal.appendChild(el("div", "modal-lab", p.lab));
-
-    if (p.bio) {
-      var s1 = el("div", "modal-sec");
-      s1.appendChild(el("div", "modal-cap", "short description"));
-      s1.appendChild(el("div", "modal-bio", p.bio));
-      modal.appendChild(s1);
-    }
-    if (p.why) {
-      var sw = el("div", "modal-sec");
-      sw.appendChild(el("div", "modal-cap", "Why this person"));
-      sw.appendChild(el("div", "modal-bio", p.why));
-      modal.appendChild(sw);
-    }
-    if (p.interests && p.interests.length) {
-      var s2 = el("div", "modal-sec");
-      s2.appendChild(el("div", "modal-cap", "research interests"));
-      s2.appendChild(el("div", "modal-interests", p.interests.join(" · ")));
-      if (p.interestsNote) s2.appendChild(el("div", "modal-lab", p.interestsNote));
-      modal.appendChild(s2);
-    } else if (p.interestsNote) {
-      var s2b = el("div", "modal-sec");
-      s2b.appendChild(el("div", "modal-cap", "Focus"));
-      s2b.appendChild(el("div", "modal-lab", p.interestsNote));
-      modal.appendChild(s2b);
-    }
-    if (p.works && p.works.length) {
-      var s3 = el("div", "modal-sec");
-      s3.appendChild(el("div", "modal-cap", p.worksLabel || "Selected work"));
-      p.works.forEach(function (w) {
-        var item = el("div", "modal-work");
-        item.appendChild(el("div", "modal-work-t", w.title));
-        if (w.description) item.appendChild(el("div", "modal-work-v", clip(w.description, 130)));
-        s3.appendChild(item);
+  // The one write. Save the approved project, then mint the install code, and
+  // move to the screen that hands it over.
+  function complete() {
+    if (!st.name.trim() || st.saving) return;
+    st.saving = true;
+    st.error = "";
+    draw();
+    var payload = {
+      name: st.name,
+      plan: st.plan || { description: "", unsure: [] },
+      goals: st.goals || [],
+      chosen: st.chosen === " other" ? st.other : st.chosen,
+      todos: st.todos.map(function (t) { return t.text; }),
+      subgoals: st.pieces.map(function (g) {
+        return { label: g.label,
+                 todos: g.todos.map(function (t) { return t.text; }) };
+      })
+    };
+    api("save", { payload: payload })
+      .then(function () { return issueCode(); })
+      .then(function (issued) {
+        forget();
+        st.saving = false;
+        st.made = { name: st.name.trim(), code: issued.code,
+                    expiresInSeconds: issued.expiresInSeconds };
+        st.screen = "done";
+        draw();
+      })
+      .catch(function (error) {
+        st.saving = false;
+        st.error = error.message || "the project could not be saved";
+        draw();
       });
-      modal.appendChild(s3);
-    }
-    if (p.url) {
-      var link = el("a", "modal-link", "visit personal site ↗");
-      link.setAttribute("href", p.url);
-      link.setAttribute("target", "_blank");
-      link.setAttribute("rel", "noopener noreferrer");
-      modal.appendChild(link);
-    }
-
-    overlay.appendChild(modal);
-    app.appendChild(overlay);
   }
 
-  // --- done: the install code -----------------------------------------------
-
-  function command() {
-    if (st.installKind === "curl") {
-      return "curl -fsSL " + CURL_INSTALL + " | sh -s -- --code " + st.made.code;
-    }
-    return "npx engelbart-cli --code " + st.made.code;
+  function issueCode() {
+    return fetch("/api/engelbart-device", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + (session && session.access_token)
+      },
+      body: JSON.stringify({ action: "issue" })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (value) {
+        if (!r.ok) throw new Error(value.error || "could not issue a setup code");
+        return value;
+      });
+    });
   }
 
-  function commandRow() {
-    var cmd = command();
+  // The command, copyable -- a command someone retypes is a command someone
+  // mistypes.
+  function commandRow(command) {
     var line = el("div", "cmd");
-    line.appendChild(el("span", "cmd-text", cmd));
+    line.appendChild(el("span", "cmd-text", command));
     var copy = el("button", "cmd-copy", "copy");
     on(copy, "click", function () {
       var done = function () {
         copy.textContent = "copied";
         setTimeout(function () { copy.textContent = "copy"; }, 1400);
       };
-      var fallback = function () {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(command).then(done, fallback);
+        } else fallback();
+      } catch (e) { fallback(); }
+      function fallback() {
         var probe = document.createElement("textarea");
-        probe.value = cmd;
+        probe.value = command;
         document.body.appendChild(probe);
         probe.select();
         try { document.execCommand("copy"); done(); }
         catch (e2) { copy.textContent = "select it"; }
         document.body.removeChild(probe);
-      };
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(cmd).then(done, fallback);
-        } else fallback();
-      } catch (e) { fallback(); }
+      }
     });
     line.appendChild(copy);
     return line;
   }
 
+  function step(parent, n, text) {
+    var line = el("div", "step");
+    line.appendChild(el("div", "step-n", n));
+    var body = el("div", "step-b");
+    body.appendChild(el("div", "step-t", text));
+    line.appendChild(body);
+    parent.appendChild(line);
+  }
+
+  // The last screen: the project is saved to the account, and the command is
+  // the whole of what is left to do.
   function drawDone() {
-    var wrap = el("div", "wrap");
-    var done = el("div", "done");
+    whoBar();
+    var col = column(app);
+    hero(col, "“" + str(st.made.name) + "” is ready to install.");
 
-    var heroBox = el("div", "done-hero");
-    heroBox.appendChild(el("div", "done-word", "Engelbart"));
-    heroBox.appendChild(el("div", "done-note",
-      "“" + str(st.made.name) + "” is ready to install."));
-    if (st.savedMode === "lanes") {
-      heroBox.appendChild(el("div", "done-note",
-        "Saved exactly as you drafted it — the structured generator was"
-        + " unavailable just now, so the phases were kept as flat steps."));
-    }
-    done.appendChild(heroBox);
-
-    var card = el("div", "card");
+    var card = el("div", "card rise");
     var head = el("div", "card-head");
-    head.appendChild(el("div", "cap cap-l", "Install it"));
-    head.appendChild(el("div", "card-rule"));
+    head.appendChild(el("span", "lbl", "install it"));
+    head.appendChild(el("div", "rule"));
     card.appendChild(head);
     var body = el("div", "card-body");
     body.appendChild(el("div", "card-lede",
       "Run this in a terminal on the machine you build on. It installs"
       + " Engelbart, connects this account, and opens your project — no"
       + " second sign-in."));
-    body.appendChild(commandRow());
-
-    var seg = el("div", "seg-row");
-    ["curl", "npx"].forEach(function (kind) {
-      var b = el("button", "seg " + (st.installKind === kind ? "on" : "off"), kind);
-      on(b, "click", function () { st.installKind = kind; draw(); });
-      seg.appendChild(b);
-    });
-    body.appendChild(seg);
-
-    // What each install command needs, so the reader knows why to pick one.
-    // curl is a self-contained binary (nothing preinstalled); npx needs Node.
+    body.appendChild(commandRow("npx engelbart-cli --code " + st.made.code));
     var mins = Math.round((st.made.expiresInSeconds || 900) / 60);
-    var note = st.installKind === "curl"
-      ? "No Node, npm, or Python needed."
-      : "Uses Node, which you already have if you run npx.";
-    body.appendChild(el("div", "step-t",
-      note + " The code works once and expires in " + mins
+    body.appendChild(el("div", "hint",
+      "The code works once and expires in " + mins
       + (mins === 1 ? " minute." : " minutes.")));
-
-    var acts = el("div", "actions");
-    acts.appendChild(btn("Get a new code", "btn-ghost", function () {
+    var acts = el("div", "acts");
+    acts.appendChild(btn("Get a new code", "", function () {
       issueCode().then(function (issued) {
         st.made.code = issued.code;
         st.made.expiresInSeconds = issued.expiresInSeconds;
         draw();
-      }).catch(function (error) { st.error = error.message; draw(); });
+      }).catch(function (error) {
+        st.error = error.message;
+        draw();
+      });
     }));
-    acts.appendChild(btn("Set up another", "btn-ghost", restart));
+    acts.appendChild(btn("Set up another", "", function () {
+      reset();
+      st.screen = "talk";
+      say("engelbart", OPEN);
+      draw();
+    }));
     body.appendChild(acts);
     if (st.error) body.appendChild(el("div", "err", st.error));
     card.appendChild(body);
-    done.appendChild(card);
+    col.appendChild(card);
 
-    var next = el("div", "card");
+    var next = el("div", "card rise");
     var nhead = el("div", "card-head");
-    nhead.appendChild(el("div", "cap cap-l", "Then, on your machine"));
-    nhead.appendChild(el("div", "card-rule"));
+    nhead.appendChild(el("span", "lbl", "then, on your machine"));
+    nhead.appendChild(el("div", "rule"));
     next.appendChild(nhead);
     var nbody = el("div", "card-body");
-    stepNode(nbody, "1", "Run the command above. Engelbart installs and connects this account.");
-    stepNode(nbody, "2", "Your project opens in the local workspace — its path already there.");
+    step(nbody, "1", "Run the command above. Engelbart installs and connects"
+      + " this account.");
+    step(nbody, "2", "Your project opens in the local workspace, its goals"
+      + " and rows already there.");
     next.appendChild(nbody);
-    done.appendChild(next);
-
-    wrap.appendChild(done);
-    app.appendChild(wrap);
+    col.appendChild(next);
   }
 
-  function stepNode(parent, n, text) {
-    var line = el("div", "step");
-    line.appendChild(el("div", "step-n", n));
-    line.appendChild(el("div", "step-t", text));
-    parent.appendChild(line);
+  function reset() {
+    st.msgs = [];
+    st.card = null;
+    st.answers = {};
+    st.shown = [];
+    st.plan = null;
+    st.goals = null;
+    st.chosen = "";
+    st.other = "";
+    st.goalNote = "";
+    st.todos = [];
+    st.pieces = [];
+    st.name = "";
+    st.made = null;
+    st.error = "";
+    forget();
   }
 
-  // Focus a freshly-drawn field only if nothing else is focused, so a redraw
-  // never steals the caret mid-type.
-  function focusInto(node) {
+  // --- the composer ---------------------------------------------------------
+
+  function drawComposer(parent) {
+    var foot = el("div", "foot");
+    var col = el("div", "col");
+    var first = st.msgs.length <= 1;
+    var box = el("div", "composer" + (first ? " composer-first" : ""));
+    var field = el("textarea", "f");
+    field.setAttribute("rows", "1");
+    field.setAttribute("spellcheck", "false");
+    field.setAttribute("aria-label", first
+      ? "What are you working on?" : "Message Engelbart");
+    field.setAttribute("placeholder", first
+      ? "What are you working on? Describe it however it comes out…"
+      : "or just talk — the card above still works");
+    field.value = st.draft;
+    on(field, "input", function () {
+      st.draft = field.value;
+      field.style.height = "auto";
+      field.style.height = Math.min(field.scrollHeight, 160) + "px";
+      var button = box.querySelector(".send");
+      if (!button) return;
+      if (st.draft.trim() && !st.thinking) {
+        button.removeAttribute("disabled");
+        button.className = "send send-on";
+      } else {
+        button.setAttribute("disabled", "disabled");
+        button.className = "send";
+      }
+    });
+    on(field, "keydown", function (event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        send();
+      }
+    });
+    box.appendChild(field);
+
+    var ready = !!st.draft.trim() && !st.thinking;
+    var button = el("button", "send" + (ready ? " send-on" : ""));
+    if (!ready) button.setAttribute("disabled", "disabled");
+    button.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24"'
+      + ' fill="none" stroke="currentColor" stroke-width="1.6"'
+      + ' stroke-linejoin="round"><path d="M3 20 L21 11 L4 4 L7 11 Z"></path>'
+      + '<path d="M7 11 L21 11"></path></svg>';
+    button.style.color = ready ? "var(--acc)" : "var(--fnt)";
+    on(button, "click", send);
+    box.appendChild(button);
+
+    col.appendChild(box);
+    foot.appendChild(col);
+    parent.appendChild(foot);
+
     if (document.activeElement === document.body) {
-      try { node.focus(); } catch (e) { /* not focusable yet */ }
+      try { field.focus(); } catch (e) { /* not focusable yet */ }
     }
   }
 
   try {
     if (window.matchMedia) {
-      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+      window.matchMedia("(prefers-color-scheme: dark)")
+        .addEventListener("change", draw);
     }
   } catch (e) { /* an old browser keeps the theme it opened with */ }
 
@@ -1591,9 +910,10 @@
       draw();
       return;
     }
+    restore();
     if (st.screen === "loading" || st.screen === "signin") {
-      st.screen = "flow";
-      st.phase = "interest";
+      st.screen = "talk";
+      if (!st.msgs.length) say("engelbart", OPEN);
     }
     draw();
   }
@@ -1608,7 +928,8 @@
       .then(function (config) {
         client = window.supabase.createClient(
           config.supabaseUrl, config.supabaseAnonKey,
-          { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+          { auth: { persistSession: true, autoRefreshToken: true,
+                    detectSessionInUrl: true } });
         client.auth.onAuthStateChange(function (_event, next) { enter(next); });
         return client.auth.getSession();
       })
