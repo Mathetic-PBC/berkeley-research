@@ -5,6 +5,7 @@
     "test": "node --test",
     "check": "find api engelbart -name '*.js' -print0 | xargs -0 -n1 node --check",
     "verify:proxy": "node scripts/verify-proxy.mjs",
-    "verify:exhaustion": "node scripts/verify-exhaustion.mjs"
+    "verify:exhaustion": "node scripts/verify-exhaustion.mjs",
+    "verify:pdf": "node scripts/verify-pdf.mjs"
   }
 }

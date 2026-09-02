@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in · Engelbart</title>
-  <meta name="description" content="Sign in to Engelbart, or create an account.">
+  <meta name="description" content="Sign in to Engelbart, or create an account with your invite code.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -40,7 +40,7 @@
         </svg>
       </div>
       <h1>Engelbart</h1>
-      <p id="page-def" class="def"><span class="def-login">Sign in to connect Engelbart.</span><span class="def-signup">Create an account; your invite code unlocks its Claude credit.</span><span class="def-pairing">A terminal is waiting for you to approve it.</span><span class="def-connected" id="def-connected">That terminal is connected.</span></p>
+      <p id="page-def" class="def"><span class="def-login">Sign in to connect Engelbart.</span><span class="def-signup">Your invite code reserves one account, and one Claude credit.</span><span class="def-pairing">A terminal is waiting for you to approve it.</span><span class="def-connected" id="def-connected">That terminal is connected.</span></p>
     </header>
 
     <section id="loading-panel" class="hidden" aria-live="polite">
@@ -71,23 +71,45 @@
       </div>
 
       <div id="signup-view" class="hidden">
-        <form id="password-signup-form" class="stack">
+        <form id="invite-form" class="stack">
+          <div class="field">
+            <label for="invite-code">Invite code</label>
+            <input id="invite-code" name="invite" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="EGB-0000-0000-0000-0000-0000" required>
+          </div>
           <div class="field">
             <label for="signup-email">Email</label>
             <input id="signup-email" name="email" type="email" autocomplete="email" required>
-          </div>
-          <div class="field">
-            <label for="signup-password">Pick a password</label>
-            <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
           </div>
           <button class="button" type="submit">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
               <path d="M21 3 L10 13"></path>
             </svg>
-            Create account</button>
-          <p id="signup-status" class="status" aria-live="polite"></p>
+            Check the code</button>
+          <p class="fine-print">The code holds this email for you for 30 minutes.</p>
+          <p id="invite-status" class="status" aria-live="polite"></p>
         </form>
+
+        <div id="signup-options" class="stack hidden">
+          <div class="field">
+            <label for="approved-email">Your email</label>
+            <input id="approved-email" type="email" readonly>
+          </div>
+          <form id="password-signup-form" class="stack">
+            <div class="field">
+              <label for="signup-password">Pick a password</label>
+              <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+            </div>
+            <button class="button" type="submit">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
+                <path d="M21 3 L10 13"></path>
+              </svg>
+              Create account</button>
+          </form>
+          <p class="switch"><button id="change-invite" class="link-button" type="button">Use a different code or email</button></p>
+          <p id="signup-status" class="status" aria-live="polite"></p>
+        </div>
       </div>
     </section>
 

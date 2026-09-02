@@ -4,6 +4,7 @@
   var shared = window.EngelbartShared;
   var client = null;
   var config = null;
+  var approvedEmail = "";
   var provisionedUser = "";
   var currentSession = null;
   // The installer sends the member here with ?code=; the browser half of the
@@ -21,8 +22,14 @@
     signupView: document.getElementById("signup-view"),
     loginForm: document.getElementById("login-form"),
     loginStatus: document.getElementById("login-status"),
+    inviteForm: document.getElementById("invite-form"),
+    inviteCode: document.getElementById("invite-code"),
     signupEmail: document.getElementById("signup-email"),
+    inviteStatus: document.getElementById("invite-status"),
+    signupOptions: document.getElementById("signup-options"),
+    approvedEmail: document.getElementById("approved-email"),
     passwordSignupForm: document.getElementById("password-signup-form"),
+    changeInvite: document.getElementById("change-invite"),
     signupStatus: document.getElementById("signup-status"),
     def: document.getElementById("page-def"),
     navAuth: document.getElementById("nav-auth"),
@@ -89,7 +96,7 @@
 
   var DEF = {
     login: "Sign in to connect Engelbart.",
-    signup: "Create an account; your invite code unlocks its Claude credit.",
+    signup: "Your invite code reserves one account, and one Claude credit.",
     session: "Use your own Claude access, or claim a Mathetic credit.",
   };
 
@@ -393,33 +400,75 @@
     showSession(result.data.session);
   });
 
-  el.passwordSignupForm.addEventListener("submit", async function (event) {
+  el.inviteCode.addEventListener("input", function () {
+    el.inviteCode.value = shared.normalizeInviteCode(el.inviteCode.value);
+  });
+
+  el.inviteForm.addEventListener("submit", async function (event) {
     event.preventDefault();
+    var inviteCode = shared.normalizeInviteCode(el.inviteCode.value);
     var email = shared.normalizeEmail(el.signupEmail.value);
-    if (!shared.isPlausibleEmail(email)) {
-      setStatus(el.signupStatus, "Enter a complete email address.", "error");
+
+    if (!shared.isPlausibleInviteCode(inviteCode) || !shared.isPlausibleEmail(email)) {
+      setStatus(el.inviteStatus, "Enter a complete invite code and email.", "error");
       return;
     }
+
+    setStatus(el.inviteStatus, "Checking invite…");
+    setBusy(el.inviteForm, true);
+    var result = await client.rpc("engelbart_redeem_invite", {
+      invite_code: inviteCode,
+      signup_email: email,
+    });
+    setBusy(el.inviteForm, false);
+
+    if (result.error || result.data !== true) {
+      setStatus(el.inviteStatus, "That invite is invalid, expired, or already reserved.", "error");
+      return;
+    }
+
+    approvedEmail = email;
+    el.approvedEmail.value = approvedEmail;
+    el.inviteForm.classList.add("hidden");
+    el.signupOptions.classList.remove("hidden");
+    setStatus(el.inviteStatus, "");
+  });
+
+  el.passwordSignupForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
     setStatus(el.signupStatus, "Creating account…");
     // Same ordering trap as the sign-in form above.
     var password = new FormData(el.passwordSignupForm).get("password");
     setBusy(el.passwordSignupForm, true);
     var result = await client.auth.signUp({
-      email: email,
+      email: approvedEmail,
       password: String(password || ""),
-      options: { emailRedirectTo: window.location.origin + "/engelbart/signin" },
+      options: { emailRedirectTo: window.location.origin + "/engelbart/setup" },
     });
     setBusy(el.passwordSignupForm, false);
-
     if (result.error) {
       setStatus(el.signupStatus, shared.safeMessage(result.error, "Could not create the account."), "error");
       return;
     }
     if (result.data.session) {
-      showSession(result.data.session);
+      // A terminal is waiting in this very tab: the pairing panel is the next
+      // thing, and navigating away would drop the installer's code.
+      if (pendingCode) {
+        showSession(result.data.session);
+        return;
+      }
+      // Otherwise setting up the first project is next, and it has its own page.
+      window.location.href = "/engelbart/setup";
       return;
     }
-    setStatus(el.signupStatus, "Check your email to confirm the account, then return here to sign in.", "success");
+    setStatus(el.signupStatus, "Check your email to confirm the account; the link opens your project setup.", "success");
+  });
+
+  el.changeInvite.addEventListener("click", function () {
+    approvedEmail = "";
+    el.inviteForm.classList.remove("hidden");
+    el.signupOptions.classList.add("hidden");
+    setStatus(el.signupStatus, "");
   });
 
   el.pairingApprove.addEventListener("click", function () { resolvePairing(true); });

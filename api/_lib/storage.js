@@ -62,6 +62,42 @@ async function removeObject(path, options = {}) {
   });
 }
 
+// One stored PDF's bytes, for the analysis call. Read with the service role
+// straight from the bucket; never handed to a browser.
+async function downloadObject(path, options = {}) {
+  const env = options.env || process.env;
+  const config = supabaseConfig(env);
+  const fetchImpl = options.fetchImpl || global.fetch;
+  const response = await fetchImpl(`${config.url}/storage/v1/object/${PAPERS_BUCKET}/${encodeURI(path)}`, {
+    headers: { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` },
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    const error = new Error("The stored paper could not be read");
+    error.statusCode = 502;
+    throw error;
+  }
+  // Refuse an oversized object on its declared length, before the body is
+  // buffered: `options.maxBytes` bytes is what the caller can afford to hold.
+  // A missing or unparseable header reads as 0, so the post-read check below
+  // stays the real bound.
+  const maxBytes = Number(options.maxBytes) || 0;
+  const declared = response.headers && typeof response.headers.get === "function"
+    ? Number(response.headers.get("content-length")) : 0;
+  if (maxBytes > 0 && Number.isFinite(declared) && declared > maxBytes) {
+    const error = new Error("That PDF is larger than the analysis can take");
+    error.statusCode = 413;
+    throw error;
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (maxBytes > 0 && bytes.length > maxBytes) {
+    const error = new Error("That PDF is larger than the analysis can take");
+    error.statusCode = 413;
+    throw error;
+  }
+  return bytes;
+}
+
 module.exports = {
   PAPERS_BUCKET,
   VIEW_TTL_SECONDS,
@@ -69,4 +105,5 @@ module.exports = {
   signedUploadUrl,
   signedViewUrl,
   removeObject,
+  downloadObject,
 };
