@@ -9,7 +9,7 @@ const CREDS = { apiKey: "k", baseUrl: "https://p", models: ["all-proxy-models"] 
 function modelSaying(reply, capture) {
   return async function fetchImpl(url, init) {
     const body = JSON.parse(init.body);
-    if (capture) capture.push({ url, body, headers: init.headers });
+    if (capture) capture.push({ url, body, headers: init.headers, signal: init.signal });
     return { ok: true, status: 200,
       async json() { return { content: [{ type: "text", text: JSON.stringify(reply) }] }; } };
   };
@@ -41,6 +41,26 @@ test("normalizeAnalysis keeps 2-4 areas of exactly five levelled questions", () 
   assert.equal(OM.normalizeAnalysis({ title: "t", date: "2023-05-01", areas: [] }), null);
   assert.equal(OM.normalizeAnalysis({ title: "t", date: "2023", areas: [
     { area: "one", questions: fiveQuestions() }] }), null);                 // fewer than two
+
+  // Every field the model writes reaches a later prompt, so every one is capped.
+  const big = OM.normalizeAnalysis({
+    title: "t".repeat(200), one_liner: "o", date: "2024-05-01 is my best guess",
+    areas: [
+      { area: "a".repeat(200), parent_field: "p".repeat(200), project_role: "r".repeat(900),
+        granularity_rationale: "g".repeat(900),
+        questions: [0, 25, 50, 75, 100].map((level) => ({
+          level, question: "q".repeat(900), sample_response: "s".repeat(2000) })) },
+      { area: "B", questions: fiveQuestions() },
+    ],
+  });
+  assert.equal(big.date, null);                                  // prose is not a date
+  assert.equal(big.title.length, 60);
+  assert.equal(big.areas[0].area.length, 80);
+  assert.equal(big.areas[0].parent_field.length, 80);
+  assert.equal(big.areas[0].project_role.length, 300);
+  assert.equal(big.areas[0].granularity_rationale.length, 300);
+  assert.equal(big.areas[0].questions[0].question.length, 600);
+  assert.equal(big.areas[0].questions[0].sample_response.length, 1200);
 });
 
 test("normalizeGrade snaps to the ladder and bounds the rationale", () => {
@@ -87,9 +107,11 @@ test("analyze sends the PDF as a document block where the paper tag sits, and bi
     pdfBase64: "JVBERi0=", urls: [{ url: "https://x.org", text: "page text" }],
   }, CREDS, { fetchImpl: modelSaying(reply, calls) });
   assert.equal(out.areas.length, 2);
-  const { body, headers } = calls[0];
+  const { body, headers, signal } = calls[0];
   assert.equal(headers.Authorization, "Bearer k");
   assert.equal(body.max_tokens, 8192);
+  assert.equal(body.model, "claude-sonnet-4-5-20250929");
+  assert.ok(signal instanceof AbortSignal);
   const blocks = body.messages[0].content;
   const doc = blocks.findIndex((b) => b.type === "document");
   assert.ok(doc > 0 && doc < blocks.length - 1);
@@ -109,6 +131,22 @@ test("analyze with text instead of a PDF sends one text block", async () => {
   const blocks = calls[0].body.messages[0].content;
   assert.equal(blocks.length, 1);
   assert.match(blocks[0].text, /<phd_student_paper>\s*paper words\s*<\/phd_student_paper>/);
+});
+
+test("page text cannot rewrite the prompt it is spliced into", async () => {
+  const calls = [];
+  const reply = { title: "T", one_liner: "o", date: null, areas: [
+    { area: "A", questions: fiveQuestions() }, { area: "B", questions: fiveQuestions() }] };
+  // $&, $` and $' are replacement patterns: a fetched page carrying them can
+  // paste the prompt back into itself unless the replacement is a function.
+  const hostile = "price $' and $` and $&";
+  await OM.analyze({ familiarityLabel: "f", familiarityDesc: "", depthLabel: "d", depthDesc: "",
+    pdfBase64: "JVBERi0=", urls: [{ url: "https://shop.example", text: hostile }] },
+    CREDS, { fetchImpl: modelSaying(reply, calls) });
+  const blocks = calls[0].body.messages[0].content;
+  const tail = blocks[blocks.length - 1].text;
+  assert.equal(tail.split(hostile).length - 1, 1);
+  assert.equal(tail.split("## Project summary").length - 1, 1);
 });
 
 test("grade asks haiku and analyze asks sonnet", async () => {

@@ -68,7 +68,9 @@ function text(value) {
 // --- analysis ---------------------------------------------------------------
 
 function normalizeDate(value) {
-  const s = one(value, 10);
+  // Bounded, then matched whole: truncating first would read "2024-05-01 is
+  // my best guess" as a date the model never committed to.
+  const s = one(value, 40);
   if (!/^\d{4}(-\d{2}(-\d{2})?)?$/.test(s)) return null;
   const [, m, d] = s.split("-").map(Number);
   if (m !== undefined && (m < 1 || m > 12)) return null;
@@ -121,7 +123,9 @@ async function analyze(input, credentials, options = {}) {
   const urls = (Array.isArray(input.urls) ? input.urls : [])
     .map((u) => `${one(u.url, 500)}\n${long(u.text, MAX_PAGE_TEXT)}`.trim()).filter(Boolean)
     .join("\n\n") || "(none supplied)";
-  const tail = after.replace("%URLS%", urls);
+  // The function form: page text we fetched is data, and $&, $` or $' in it
+  // would otherwise paste the prompt back into the tag it sits inside.
+  const tail = after.replace("%URLS%", () => urls);
   const content = input.pdfBase64
     ? [text(before),
        { type: "document", source: { type: "base64", media_type: "application/pdf", data: input.pdfBase64 } },

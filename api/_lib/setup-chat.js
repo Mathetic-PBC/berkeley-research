@@ -465,7 +465,7 @@ function normalizePayload(value) {
 // The dated id of one model family the account may use; the bare alias a
 // member's own subscription understands is not one the gateway answers to.
 function pickModel(models, family = "sonnet") {
-  const want = FALLBACKS[family] ? family : "sonnet";
+  const want = Object.hasOwn(FALLBACKS, family) ? family : "sonnet";
   for (const name of Array.isArray(models) ? models : []) {
     if (typeof name === "string" && name.includes(want) && /\d{8}/.test(name)) return name;
   }
