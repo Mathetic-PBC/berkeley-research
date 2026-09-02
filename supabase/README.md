@@ -8,7 +8,7 @@ account records. They cannot be applied with the public anon key in
 ## Apply
 
 1. Authenticate the Supabase CLI as `founders@mathetic.com` and link project `tynpqxepuyyvxqdwzhkj`, or run both migration files in timestamp order in that project's SQL editor.
-2. In **Authentication → Hooks → Before User Created**, select the Postgres function `public.engelbart_before_user_created`. (Since the open-signup migration this hook allows every signup — it stays registered only so existing hook configuration keeps working; the invite is enforced at the credit claim instead.)
+2. In **Authentication → Hooks → Before User Created**, select the Postgres function `public.engelbart_before_user_created`. (Restored by `20260902100000`: the hook refuses a signup whose email has no live invite reservation.)
 3. In **Authentication → URL Configuration**, allow `https://berkeley.mathetic.com/engelbart` and the Vercel preview URL used for testing.
 
 The second migration revokes anonymous invite generation and grants it only to
