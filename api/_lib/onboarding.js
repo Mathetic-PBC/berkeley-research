@@ -442,8 +442,9 @@ async function saveProfile(user, reader, options) {
 }
 
 async function create(user, row, calibrations, body, options = {}) {
-  // Nothing left to write on a repeat, so nothing left to fail.
-  if (row.status === "created") return { ok: true, pending_setup_id: row.pending_setup_id, profile_saved: true };
+  // Nothing left to write on a repeat, so nothing left to fail -- and nothing
+  // written means nothing claimed: no `profile_saved` verdict on this branch.
+  if (row.status === "created") return { ok: true, pending_setup_id: row.pending_setup_id };
   const values = {};
   if (body && "project_name" in body) values.project_name = one(body.project_name, 80);
   if (body && "goal_chosen" in body) values.goal_chosen = one(body.goal_chosen, 200);
