@@ -115,6 +115,9 @@
     "api/engelbart-setup.js": {
       "maxDuration": 120
     },
+    "api/engelbart-onboarding.js": {
+      "maxDuration": 120
+    },
     "api/engelbart-curator.js": {
       "maxDuration": 60
     }

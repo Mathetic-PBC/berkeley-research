@@ -217,6 +217,8 @@ test("create maps the record to the pending payload, writes the profile, and is 
   assert.equal(db.tables.engelbart_onboardings[0].status, "created");
   const twice = await OB.create(USER, db.tables.engelbart_onboardings[0], [], { project_name: "other" }, db.options);
   assert.equal(twice.ok, true);
+  // A repeat writes nothing, so it claims nothing about the profile.
+  assert.equal("profile_saved" in twice, false);
   assert.equal(db.rpcs.filter((r) => r.name === "engelbart_save_pending_setup").length, 1);
 });
 
