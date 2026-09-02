@@ -43,7 +43,8 @@ const MIN_QUESTION_ROUNDS = 1;
 // The proxy serves dated model ids only (see scripts/verify-proxy.mjs); the
 // bare alias a member's own subscription understands is not one the gateway
 // answers to. Picked when the account's model list names no sonnet of its own.
-const FALLBACK_MODEL = "claude-sonnet-4-5-20250929";
+const FALLBACKS = { sonnet: "claude-sonnet-4-5-20250929", haiku: "claude-haiku-4-5-20251001" };
+const FALLBACK_MODEL = FALLBACKS.sonnet;
 const MAX_REPLY_TOKENS = 4096;
 const TURN_TIMEOUT_MS = 90 * 1000;
 
@@ -461,13 +462,14 @@ function normalizePayload(value) {
   return out;
 }
 
-function pickModel(models) {
+// The dated id of one model family the account may use; the bare alias a
+// member's own subscription understands is not one the gateway answers to.
+function pickModel(models, family = "sonnet") {
+  const want = FALLBACKS[family] ? family : "sonnet";
   for (const name of Array.isArray(models) ? models : []) {
-    if (typeof name === "string" && name.includes("sonnet") && /\d{8}/.test(name)) {
-      return name;
-    }
+    if (typeof name === "string" && name.includes(want) && /\d{8}/.test(name)) return name;
   }
-  return FALLBACK_MODEL;
+  return FALLBACKS[want];
 }
 
 // One JSON object out of whatever the model wrote around it.
