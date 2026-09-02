@@ -62,8 +62,9 @@
       pfile: null,      // { name, meta, id, token } once uploaded; { name, meta, uploading } meanwhile
       pover: false, popen: null, plink: "", prepo: "", pfam: 0.2, psending: false,
       draft: "",
-      // Task 8 adds: fIdx, fam{}, fAnswer, followUp, qIdx, answers{}, goalPick, goalOther, todos[], newTodo, projName,
-      // askBtn, askOpen, askQuote, askText, asks[], made
+      fIdx: 0, fam: {}, fAnswers: {}, followUp: null, lastGrade: null,
+      qIdx: 0, goalPick: "", goalOther: "", goalOtherOn: false, todos: [], newTodo: "", projName: "",
+      askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null
     },
     busy: "",           // what is being generated, for the indicator
     error: ""
@@ -108,7 +109,14 @@
   // One write per Continue. The row comes back and replaces ours.
   function save(step, fields) {
     return api("step", { step: step, fields: fields || {} }).then(function (out) {
+      // A reply read before the paper's reading landed must not un-finish
+      // it: the reading reports straight into this state, and the row it
+      // was read from may be older than what this tab already knows.
+      var was = st.row;
       st.row = out.onboarding;
+      if (was && (was.analysis_status === "done" || was.analysis_status === "error") && st.row.analysis_status !== "done") {
+        st.row.analysis_status = was.analysis_status; st.row.analysis = was.analysis; st.row.analysis_error = was.analysis_error;
+      }
       return out;
     });
   }
@@ -535,18 +543,393 @@
     acts.appendChild(button); box.appendChild(acts);
   }
 
-  // Steps 6-10 are drawn by the second half of this file (Task 8); until then
-  // they show the generating indicator.
   function generating(content, text) { var w = el("div", "ob-wait"); w.appendChild(dots()); w.appendChild(el("div", "ob-wait-t", text)); content.appendChild(w); }
-  // Task 8: a reload can land here with a paper on the row and
-  // analysis_status === "none" (the tab closed between the paper step's
-  // sources and its analysis run) -- send api("analysis", {run: true}) then.
-  function drawTopics(c) { generating(c, "Still reading your paper"); }
-  function drawDetails(c) { generating(c, "Writing your questions"); }
-  function drawFocus(c) { generating(c, "Writing goals"); }
-  function drawTodos(c) { generating(c, "Writing todos"); }
-  function drawDone(c) { generating(c, "Done"); }
-  var askPanel = null;
+
+  // --- 6 Topics ------------------------------------------------------------------
+  //
+  // Per area: a familiarity slider and the question at its level. Answering
+  // sends it for grading; a grade that disagrees brings one follow-up at the
+  // level it found. Two questions per area is the cap.
+
+  var poll = null;
+  function readingUpdate(read) {
+    if (!read || read.analysis_status === "superseded") return;
+    st.row.analysis_status = read.analysis_status;
+    if (read.analysis) st.row.analysis = read.analysis;
+    st.row.analysis_error = read.analysis_error || "";
+    draw();
+  }
+  function startReading(body) {
+    st.row.analysis_status = "running"; st.row.analysis_error = "";
+    api("analysis", body).then(readingUpdate).catch(function (e) {
+      st.row.analysis_status = "error"; st.row.analysis_error = e.message; draw();
+    });
+  }
+  function pollAnalysis() {
+    if (poll) return;
+    poll = setInterval(function () {
+      if (st.step !== 6 || (st.row && st.row.analysis_status === "done")) { clearInterval(poll); poll = null; return; }
+      api("analysis").then(function (out) {
+        if (out.analysis_status !== "running") { clearInterval(poll); poll = null; }
+        readingUpdate(out);
+      }).catch(function () {});
+    }, 3000);
+  }
+
+  function famOf(i) { var v = st.ui.fam[i]; return typeof v === "number" ? v : 0.2; }
+  function levelOf(i) { return LADDER[snap(famOf(i), 5)].level; }
+  function answeredArea(i) { return st.cals.some(function (c) { return Number(c.area_index) === i && c.answered_at; }); }
+
+  function drawTopics(content) {
+    var r = st.row;
+    if (r.analysis_status === "none" && r.paper_id) {
+      // The tab closed between the paper step's sources and its run.
+      startReading({ run: true });
+    }
+    if (r.analysis_status === "error") {
+      var box = stepBox(content, "Step 7 of 10", "The paper could not be read");
+      box.appendChild(el("div", "ob-sub", r.analysis_error || "Something went wrong while reading it."));
+      var acts = el("div", "ob-actions");
+      acts.appendChild(cta("Try again", false, function () { startReading({ retry: true }); draw(); }));
+      box.appendChild(acts); return;
+    }
+    if (r.analysis_status !== "done" || !r.analysis) {
+      var w = el("div", "ob-wait"); w.appendChild(dots());
+      w.appendChild(el("div", "ob-wait-t", "Still reading your paper"));
+      w.appendChild(el("div", "ob-wait-s", "Questions about it come next."));
+      content.appendChild(w); pollAnalysis(); return;
+    }
+    var a = r.analysis, areas = a.areas, fi = Math.min(st.ui.fIdx || 0, areas.length - 1), area = areas[fi];
+    var box2 = el("div", "ob-step");
+    box2.appendChild(el("div", "ob-count", "Step 7 of 10 · Topics"));
+    box2.appendChild(el("div", "ob-title", "How familiar are you with what the paper leans on?"));
+    var paper = el("div", "ob-paper"); paper.appendChild(el("div", "ob-paper-icon"));
+    var pt = el("div", "ob-grow"), line = el("div", "ob-paper-line");
+    line.appendChild(el("span", "ob-paper-title", a.title)); line.appendChild(el("span", "ob-paper-venue", a.date || ""));
+    pt.appendChild(line); pt.appendChild(el("div", "ob-paper-sum", a.one_liner)); paper.appendChild(pt); box2.appendChild(paper);
+
+    var card = el("div", "ob-area");
+    var head = el("div", "ob-area-head");
+    head.appendChild(el("span", "ob-area-n", (fi + 1) + " / " + areas.length));
+    head.appendChild(el("div", "ob-area-name", area.area)); card.appendChild(head);
+    if (area.project_role) card.appendChild(el("div", "ob-area-role", area.project_role));
+    var follow = st.ui.followUp && st.ui.followUp.area === fi ? st.ui.followUp : null;
+    var level = follow ? follow.question_level : levelOf(fi);
+    var q = area.questions.filter(function (x) { return x.level === level; })[0] || area.questions[0];
+    var key = fi + ":" + level, answer = st.ui.fAnswers[key] || "";
+    // Only the question is shown; the sample answers in the analysis stay unseen.
+    card.appendChild(slider({ stops: LADDER, pos: famOf(fi), ends: ["Beginner", "Expert"],
+      onCommit: function (v) { if (follow) return; st.ui.fam[fi] = v; draw(); } }));
+    var qbox = el("div");
+    qbox.appendChild(el("div", "ob-q-label", follow ? "One more, at the level your answer showed" : "Question"));
+    qbox.appendChild(el("div", "ob-q", q.question));
+    var ab = attr(el("div", "ob-answer"), "data-filled", answer.trim() ? "1" : "0");
+    var input = el("input"); input.value = answer; input.placeholder = "one sentence is enough…"; input.spellcheck = false; input.setAttribute("autofocus", "");
+    on(input, "input", function () { st.ui.fAnswers[key] = input.value; ab.setAttribute("data-filled", input.value.trim() ? "1" : "0"); next.disabled = !input.value.trim() || !!st.busy; });
+    on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    ab.appendChild(input); qbox.appendChild(ab);
+    var lastGrade = st.ui.lastGrade && st.ui.lastGrade.area === fi ? st.ui.lastGrade : null;
+    if (lastGrade) { var g = el("div", "ob-grade"); g.appendChild(el("span", "tag", "Graded")); g.appendChild(el("span", "", lastGrade.text)); qbox.appendChild(g); }
+    card.appendChild(qbox); box2.appendChild(card);
+
+    var last = fi === areas.length - 1;
+    function labelFor(lvl) { var hit = LADDER.filter(function (l) { return l.level === lvl; })[0]; return hit ? hit.label.toLowerCase() : String(lvl); }
+    function advance() {
+      st.ui.followUp = null; st.ui.lastGrade = null;
+      if (last) save(7, {}).then(function () { go(7); }).catch(fail); else { st.ui.fIdx = fi + 1; draw(); }
+    }
+    function submit() {
+      var said = (st.ui.fAnswers[key] || "").trim(); if (!said || st.busy) return;
+      st.busy = "grading"; draw();
+      api("answer", { area_index: fi, question_level: level, self_level: levelOf(fi), answer: said }).then(function (out) {
+        st.busy = "";
+        st.cals = st.cals.filter(function (c) { return !(Number(c.area_index) === fi && Number(c.question_level) === level); });
+        st.cals.push({ area_index: fi, question_level: level, answered_at: new Date().toISOString(), graded_level: out.graded_level });
+        if (out.follow_up && !follow) {
+          st.ui.followUp = { area: fi, question_level: out.follow_up.question_level };
+          st.ui.lastGrade = { area: fi, text: "Your answer read as “" + labelFor(out.graded_level) + "”" + (out.grade_rationale ? " — " + out.grade_rationale : "") };
+          draw(); return;
+        }
+        advance();
+      }).catch(fail);
+    }
+    var nav = el("div", "ob-nav");
+    var back = el("button", "ob-arrow", "←"); back.type = "button";
+    if (fi === 0) back.setAttribute("disabled", "disabled"); else on(back, "click", function () { st.ui.followUp = null; st.ui.fIdx = fi - 1; draw(); });
+    nav.appendChild(back);
+    var pd = el("span", "ob-pdots");
+    areas.forEach(function (_, i) {
+      var d = attr(attr(el("span", "ob-pdot"), "data-on", i === fi ? "1" : "0"), "data-done", answeredArea(i) ? "1" : "0");
+      on(d, "click", function () { st.ui.followUp = null; st.ui.fIdx = i; draw(); }); pd.appendChild(d);
+    });
+    nav.appendChild(pd);
+    var next = cta(st.busy === "grading" ? "Grading…" : last && !follow ? "On to the project" : "Next", !answer.trim() || !!st.busy, submit);
+    nav.appendChild(next); box2.appendChild(nav); content.appendChild(box2);
+  }
+
+  // --- 7 Details ---------------------------------------------------------------
+
+  function drawDetails(content) {
+    var r = st.row;
+    if (!r.details || !r.details.questions) {
+      if (!st.busy) { st.busy = "details"; api("details").then(function (d) { st.busy = ""; st.row.details = d; st.ui.qIdx = 0; draw(); }).catch(fail); }
+      generating(content, "Writing your questions"); return;
+    }
+    var qs = r.details.questions, qi = Math.min(st.ui.qIdx || 0, qs.length - 1), q = qs[qi], answers = r.details.answers || {};
+    var ans = answers[q.id];
+    var box = el("div", "ob-step");
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", "Step 8 of 10 · Details")); head.appendChild(el("span", "ob-count", (qi + 1) + " of " + qs.length)); box.appendChild(head);
+    if (r.details.intro) { var intro = el("div", "ob-intro"); intro.appendChild(el("span", "tag", "Taken into account")); intro.appendChild(el("span", "t", r.details.intro)); box.appendChild(intro); }
+    box.appendChild(el("div", "ob-question", q.title));
+    if (q.hint) box.appendChild(el("div", "ob-sub", q.hint));
+    var lastQ = qi >= qs.length - 1;
+    function empty(v) { return v == null || v === "" || (Array.isArray(v) && !v.length) || (typeof v === "string" && !v.trim()); }
+    function persist(value) {
+      var f = {}; f[q.id] = value == null ? null : value;
+      return save(lastQ ? 8 : 7, { details_answers: f }).then(function () { if (lastQ) go(8); else { st.ui.qIdx = qi + 1; draw(); } }).catch(fail);
+    }
+    function setAns(v) { answers[q.id] = v; r.details.answers = answers; draw(); }
+    var nextBtn;
+    if (q.kind === "short") {
+      var draft = typeof ans === "string" ? ans : "";
+      box.appendChild(field(draft, q.placeholder || "", function (v) { draft = v; nextBtn.disabled = !v.trim(); }, function () { if (draft.trim()) persist(draft.trim()); }, true));
+      nextBtn = cta(lastQ ? "Pick a focus" : "Next", !draft.trim(), function () { if (draft.trim()) persist(draft.trim()); });
+    } else {
+      var opts = el("div", "ob-opts"), multi = q.kind === "multi", cur = Array.isArray(ans) ? ans : [];
+      (q.options || []).forEach(function (label) {
+        var on_ = multi ? cur.indexOf(label) >= 0 : ans === label;
+        opts.appendChild(option(label, on_, function () { if (multi) setAns(on_ ? cur.filter(function (x) { return x !== label; }) : cur.concat([label])); else setAns(on_ ? null : label); }, multi));
+      });
+      box.appendChild(opts);
+      if (multi) box.appendChild(el("div", "ob-multi-note", "Pick all that apply."));
+      nextBtn = cta(lastQ ? "Pick a focus" : "Next", empty(ans), function () { if (!empty(ans)) persist(ans); });
+    }
+    var nav = attr(el("div", "ob-nav"), "data-rule", "1");
+    var back = el("button", "ob-arrow", "←"); back.type = "button";
+    if (qi === 0) back.setAttribute("disabled", "disabled"); else on(back, "click", function () { st.ui.qIdx = qi - 1; draw(); });
+    nav.appendChild(back);
+    var pd = el("span", "ob-pdots");
+    qs.forEach(function (_, i) { var d = attr(el("span", "ob-pdot"), "data-on", i === qi ? "1" : "0"); on(d, "click", function () { st.ui.qIdx = i; draw(); }); pd.appendChild(d); });
+    nav.appendChild(pd);
+    var end = el("div", "ob-nav-end");
+    var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
+    end.appendChild(on(skip, "click", function () { persist(null); }));
+    end.appendChild(nextBtn); nav.appendChild(end); box.appendChild(nav);
+    content.appendChild(box);
+  }
+
+  // --- 8 Focus -----------------------------------------------------------------
+
+  function drawFocus(content) {
+    var r = st.row;
+    if (st.busy === "todos") { generating(content, "Writing todos"); return; }
+    if (!r.goals || !r.goals.goals) {
+      if (!st.busy) { st.busy = "goals"; api("goals").then(function (g) { st.busy = ""; st.row.goals = g; draw(); }).catch(fail); }
+      generating(content, "Writing goals"); return;
+    }
+    var box = el("div", "ob-step");
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", "Step 9 of 10 · Focus")); head.appendChild(el("span", "ob-count", "One goal")); box.appendChild(head);
+    box.appendChild(el("div", "ob-question", "What should the first project be about?"));
+    box.appendChild(el("div", "ob-sub", "Pick one. The rest can be later projects."));
+    var list = el("div", "ob-opts");
+    var rows = r.goals.goals.concat([{ label: "Something else", why: "tell it what to start on instead and it will use that", other: true }]);
+    rows.forEach(function (g) {
+      var on_ = g.other ? st.ui.goalOtherOn : (!st.ui.goalOtherOn && st.ui.goalPick === g.label);
+      var row = attr(el("div", "ob-goal"), "data-on", on_ ? "1" : "0"); row.appendChild(el("span", "ob-mark"));
+      var t = el("span", "ob-grow"); t.appendChild(el("span", "ob-goal-label", g.label)); t.appendChild(el("span", "ob-goal-why", g.why)); row.appendChild(t);
+      on(row, "click", function () { if (g.other) { st.ui.goalOtherOn = !on_; st.ui.goalPick = ""; } else { st.ui.goalOtherOn = false; st.ui.goalPick = on_ ? "" : g.label; } draw(); });
+      list.appendChild(row);
+    });
+    box.appendChild(list);
+    var gen;
+    if (st.ui.goalOtherOn) box.appendChild(field(st.ui.goalOther || "", "what to start on instead…", function (v) { st.ui.goalOther = v; gen.disabled = !v.trim(); }, null));
+    var chosen = st.ui.goalOtherOn ? str(st.ui.goalOther).trim() : st.ui.goalPick;
+    var acts = el("div", "ob-actions");
+    gen = cta("Write todos", !chosen, function () {
+      var goal = st.ui.goalOtherOn ? str(st.ui.goalOther).trim() : st.ui.goalPick;
+      if (!goal) return;
+      st.busy = "todos"; draw();
+      api("todos", { goal: goal }).then(function (out) {
+        st.busy = ""; st.row.goal_chosen = goal; st.ui.todos = out.todos.slice();
+        st.ui.projName = st.ui.projName || out.name || ""; st.row.step = Math.max(st.row.step || 0, 9); go(9);
+      }).catch(fail);
+    });
+    acts.appendChild(gen); box.appendChild(acts); content.appendChild(box);
+  }
+
+  // --- 9 Todos -----------------------------------------------------------------
+
+  function issueCode() {
+    return post(DEVICE_API, { action: "issue" }).then(function (v) {
+      st.ui.made = { code: v.code, expiresInSeconds: v.expiresInSeconds }; return v;
+    });
+  }
+
+  function drawTodos(content) {
+    if (st.busy === "create") { generating(content, "Making " + (st.ui.projName || "your project")); return; }
+    var todos = st.ui.todos || [], n = todos.length, canAdd = n < 4;
+    var box = el("div", "ob-step");
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", "Step 10 of 10 · Todos")); head.appendChild(el("span", "ob-count", n + " of 4")); box.appendChild(head);
+    box.appendChild(el("div", "ob-cap", "Goal")); box.appendChild(el("div", "ob-goal-title", st.row.goal_chosen));
+    var rows = el("div", "ob-rows");
+    todos.forEach(function (t, i) {
+      var row = el("div", "ob-trow"); row.appendChild(el("span", "dash", "–"));
+      var input = el("input"); input.value = t; input.spellcheck = false;
+      on(input, "input", function () { todos[i] = input.value; create.disabled = off(); }); row.appendChild(input);
+      var x = el("button", "x", "×"); x.type = "button";
+      row.appendChild(on(x, "click", function () { todos.splice(i, 1); draw(); })); rows.appendChild(row);
+    });
+    if (canAdd) {
+      var add = el("div", "ob-trow"); add.appendChild(el("span", "dash", "–"));
+      var ni = el("input"); ni.value = st.ui.newTodo || ""; ni.placeholder = "add a todo…"; ni.spellcheck = false;
+      on(ni, "input", function () { st.ui.newTodo = ni.value; });
+      on(ni, "keydown", function (e) { if (e.key === "Enter" && ni.value.trim()) { e.preventDefault(); todos.push(ni.value.trim()); st.ui.newTodo = ""; draw(); } });
+      add.appendChild(ni); rows.appendChild(add);
+    }
+    box.appendChild(rows);
+    box.appendChild(el("div", "ob-hint", n < 2 ? "At least two todos." : n >= 4 ? "Four is the cap — keep the first project small." : "Edit, remove, or add up to " + (4 - n) + " more."));
+    function clean() { return todos.map(function (t) { return str(t).trim(); }).filter(Boolean); }
+    function off() { var c = clean(); return c.length < 2 || c.length > 4 || !str(st.ui.projName).trim(); }
+    var name = el("div", "ob-namerow");
+    var input = el("input"); input.value = st.ui.projName || ""; input.placeholder = "project name…"; input.spellcheck = false;
+    on(input, "input", function () { st.ui.projName = input.value; create.disabled = off(); }); name.appendChild(input);
+    var create = el("button", "ob-pill"); create.type = "button";
+    create.appendChild(el("span", "", "Create project ")); create.appendChild(el("span", "", "›"));
+    if (off()) create.setAttribute("disabled", "disabled");
+    on(create, "click", function () {
+      if (off()) return;
+      var rowsClean = clean(), pname = st.ui.projName.trim();
+      st.busy = "create"; draw();
+      api("create", { project_name: pname, goal_chosen: st.row.goal_chosen, todos: rowsClean })
+        .then(function () { return issueCode(); })
+        .then(function () { st.busy = ""; st.row.status = "created"; st.row.project_name = pname; st.row.todos = rowsClean; go(10); })
+        .catch(fail);
+    });
+    name.appendChild(create); box.appendChild(name); content.appendChild(box);
+  }
+
+  // --- 10 Done -----------------------------------------------------------------
+
+  function drawDone(content) {
+    var r = st.row, box = el("div", "ob-step ob-done");
+    box.appendChild(el("span", "ob-check", "✓"));
+    box.appendChild(el("div", "ob-done-t", (r.project_name || "Your project") + " is made"));
+    var d = DEPTHS.filter(function (x) { return x.key === r.depth; })[0];
+    box.appendChild(el("div", "ob-done-s", "One goal and " + (r.todos || []).length + " todos, written for " + (r.name || "you") + " — explanations " + (d ? d.phrase : "in everyday language") + "."));
+    if (!st.ui.made) {
+      if (st.busy !== "code") { st.busy = "code"; issueCode().then(function () { st.busy = ""; draw(); }).catch(fail); }
+      generating(box, "Getting your install code");
+    } else {
+      var cmd = "npx engelbart-cli --code " + st.ui.made.code, row = el("div", "ob-cmd");
+      row.appendChild(el("span", "ob-cmd-text", cmd));
+      var copy = el("button", "ob-cmd-copy", "Copy"); copy.type = "button";
+      on(copy, "click", function () {
+        if (!navigator.clipboard) return;
+        navigator.clipboard.writeText(cmd).then(function () { copy.textContent = "Copied"; setTimeout(function () { copy.textContent = "Copy"; }, 1400); }, function () {});
+      });
+      row.appendChild(copy); box.appendChild(row);
+      var mins = Math.round((st.ui.made.expiresInSeconds || 900) / 60);
+      box.appendChild(el("div", "ob-done-s", "Run that in a terminal on the machine you build on. It installs Engelbart, connects this account, and opens the project — no second sign-in. The code works once and expires in " + mins + " minutes."));
+    }
+    var acts = el("div", "ob-done-acts");
+    var again = el("button", "ob-ghost", "Get a new code"); again.type = "button";
+    acts.appendChild(on(again, "click", function () { st.ui.made = null; draw(); }));
+    var another = el("button", "ob-ghost", "Set up another"); another.type = "button";
+    acts.appendChild(on(another, "click", function () {
+      api("open", { fresh: true }).then(function (o) {
+        st.ui.fam = {}; st.ui.fAnswers = {}; st.ui.followUp = null; st.ui.lastGrade = null; st.ui.fIdx = 0; st.ui.qIdx = 0;
+        st.ui.goalPick = ""; st.ui.goalOther = ""; st.ui.goalOtherOn = false; st.ui.todos = []; st.ui.projName = "";
+        st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.draft = "";
+        adopt(o); draw();
+      }).catch(fail);
+    }));
+    box.appendChild(acts); content.appendChild(box);
+  }
+
+  // --- Ask about this ----------------------------------------------------------
+  //
+  // From Topics on, selecting text in the content column offers a question
+  // about it; the answer comes back at the reader's register and can be
+  // re-asked one stop simpler or deeper.
+
+  var QUICK = ["What does this mean?", "Why does this matter?", "Give me an example", "Is this too much for a first project?"];
+  if (document.addEventListener) document.addEventListener("mouseup", function (e) {
+    if (e.target && e.target.closest && e.target.closest("[data-askbtn]")) return;
+    setTimeout(function () {
+      var sel = window.getSelection ? window.getSelection() : null, t = sel ? sel.toString().trim() : "", c = document.getElementById("content");
+      if (!t || t.length < 3 || !c || !sel.rangeCount || !c.contains(sel.anchorNode) || st.step < 6 || st.step > 9) { if (st.ui.askBtn) { st.ui.askBtn = null; draw(); } return; }
+      var r = sel.getRangeAt(0).getBoundingClientRect(), cr = c.getBoundingClientRect();
+      st.ui.askBtn = { text: t.slice(0, 240), x: r.left - cr.left + r.width / 2, y: r.top - cr.top }; draw();
+    }, 0);
+  });
+
+  function askPanel(body) {
+    var content = body.children[0];
+    if (st.ui.askBtn && !st.ui.askOpen && content) {
+      var b = attr(el("button", "ob-askbtn", "Ask about this"), "data-askbtn", "1"); b.type = "button";
+      b.style.left = st.ui.askBtn.x + "px"; b.style.top = st.ui.askBtn.y + "px";
+      on(b, "click", function () {
+        st.ui.askQuote = st.ui.askBtn.text; st.ui.askOpen = true; st.ui.askBtn = null; st.ui.askText = "";
+        var s = window.getSelection ? window.getSelection() : null; if (s && s.removeAllRanges) s.removeAllRanges(); draw();
+      });
+      content.appendChild(b);
+    }
+    if (st.ui.askOpen) {
+      var panel = el("div", "ob-ask"); panel.appendChild(el("div", "ob-ask-cap", "Asking about"));
+      panel.appendChild(el("div", "ob-ask-quote", "“" + st.ui.askQuote + "”"));
+      var quick = el("div", "ob-seeds");
+      QUICK.forEach(function (q) { var bt = el("button", "ob-seed", q); bt.type = "button"; quick.appendChild(on(bt, "click", function () { sendAsk(q); })); });
+      panel.appendChild(quick);
+      var row = el("div", "ob-ask-row"), input = el("input");
+      input.value = st.ui.askText || ""; input.placeholder = "or ask your own question…"; input.setAttribute("autofocus", "");
+      var send = el("button", "ob-pill", "Ask"); send.type = "button";
+      if (!(st.ui.askText || "").trim()) send.setAttribute("disabled", "disabled");
+      on(input, "input", function () { st.ui.askText = input.value; send.disabled = !input.value.trim(); });
+      on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); sendAsk(); } if (e.key === "Escape") { st.ui.askOpen = false; draw(); } });
+      on(send, "click", function () { sendAsk(); });
+      row.appendChild(input); row.appendChild(send); panel.appendChild(row);
+      var cancelRow = el("div", "ob-ask-cancel"), cancel = el("button", "ob-tiny", "cancel"); cancel.type = "button";
+      cancelRow.appendChild(on(cancel, "click", function () { st.ui.askOpen = false; draw(); })); panel.appendChild(cancelRow);
+      body.appendChild(panel);
+    }
+    var asks = st.ui.asks || [];
+    if (asks.length) {
+      var list = el("div", "ob-asked"); list.appendChild(el("div", "ob-asked-cap", "Asked"));
+      asks.forEach(function (k) {
+        var item = el("div", "ob-ask-item"); item.appendChild(el("div", "quote", "“" + k.quote + "”")); item.appendChild(el("div", "q", k.question));
+        if (k.thinking) { var th = el("div", "ob-ask-think"); th.appendChild(dots()); item.appendChild(th); }
+        else {
+          item.appendChild(el("div", "a", k.answer));
+          var tools = el("div", "ob-ask-tools"), keys = DEPTHS.map(function (x) { return x.key; }), di = Math.max(0, keys.indexOf(k.level));
+          tools.appendChild(el("span", "ob-tiny", DEPTHS[di].label));
+          var simpler = el("button", "ob-tiny", "simpler"); simpler.type = "button";
+          if (di === 0) simpler.setAttribute("disabled", "disabled"); else on(simpler, "click", function () { reask(k, DEPTHS[di - 1].key); });
+          var deeper = el("button", "ob-tiny", "more detail"); deeper.type = "button";
+          if (di === DEPTHS.length - 1) deeper.setAttribute("disabled", "disabled"); else on(deeper, "click", function () { reask(k, DEPTHS[di + 1].key); });
+          tools.appendChild(simpler); tools.appendChild(deeper);
+          var rm = el("button", "ob-tiny ob-ask-rm", "×"); rm.type = "button";
+          on(rm, "click", function () { st.ui.asks = st.ui.asks.filter(function (x) { return x !== k; }); draw(); }); tools.appendChild(rm);
+          item.appendChild(tools);
+        }
+        list.appendChild(item);
+      });
+      body.appendChild(list);
+    }
+  }
+
+  function sendAsk(text) {
+    var question = str(text || st.ui.askText).trim(); if (!question) return;
+    var k = { quote: st.ui.askQuote, question: question, thinking: true, level: st.row.depth || "everyday" };
+    st.ui.asks = [k].concat(st.ui.asks || []); st.ui.askOpen = false; st.ui.askText = ""; draw();
+    api("ask", { step: st.step, quote: k.quote, question: question }).then(function (out) { k.thinking = false; k.answer = out.answer; k.level = out.level || k.level; draw(); })
+      .catch(function (e) { k.thinking = false; k.answer = e.message; draw(); });
+  }
+
+  function reask(k, level) {
+    k.thinking = true; draw();
+    api("ask", { step: st.step, quote: k.quote, question: k.question, level: level }).then(function (out) { k.thinking = false; k.answer = out.answer; k.level = out.level || level; draw(); })
+      .catch(function (e) { k.thinking = false; k.answer = e.message; draw(); });
+  }
 
   // --- boot --------------------------------------------------------------------
 

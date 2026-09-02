@@ -65,14 +65,18 @@ const settle = async (turns = 8) => { for (let i = 0; i < turns; i += 1) await n
 // Picking an option lets the choice show for 180ms before it is written.
 const afterThePause = async () => { await new Promise((r) => setTimeout(r, 220)); await settle(); };
 
-const ANALYSIS = { title: "Zebra Tuning", one_liner: "It tunes zebras.", areas: [{ area: "A" }, { area: "B" }] };
+function five(tag) { return [0, 25, 50, 75, 100].map((level) => ({ level, question: `${tag} question at ${level}`, sample_response: `SAMPLE-${tag}-${level}` })); }
+const ANALYSIS = { title: "Zebra Tuning", one_liner: "It tunes zebras.", date: "2024",
+  areas: [{ area: "A", project_role: "core", questions: five("A") }, { area: "B", project_role: "code", questions: five("B") }] };
+const DETAILS = { intro: "", questions: [{ id: "who", kind: "choice", title: "Who is it for?", options: ["Just me", "A team"] }], answers: {} };
+const GOALS = { goals: [1, 2, 3, 4].map((n) => ({ label: `Goal ${n}`, short: `g${n}`, why: `why ${n}` })) };
 const PAPER = "22222222-2222-2222-2222-222222222222";
 
 // A row far enough along that any step can be drawn from it.
 function fullRow(extra) {
   return { step: 0, name: "Ada", year: "First year", major: "Physics", depth: "some",
     paper_id: PAPER, paper_title: "Zebra Tuning", paper_familiarity: 2, project_draft: "a thing",
-    analysis: ANALYSIS, analysis_status: "done", details: { questions: [{ id: "q" }], answers: {} },
+    analysis: ANALYSIS, analysis_status: "done", details: DETAILS,
     goal_chosen: "a goal", todos: ["one", "two"], ...extra };
 }
 
@@ -106,7 +110,14 @@ function mount(options = {}) {
       if (body.action === "step") { row = { ...row, ...body.fields, step: body.step }; return answer({ onboarding: row }); }
       if (body.action === "sources") return answer({ ok: true, analysis_status: "none" });
       if (body.action === "analysis") return answer({ analysis_status: "done", analysis: ANALYSIS });
+      if (body.action === "answer") return answer({ graded_level: 50, grade_confidence: 0.8, grade_rationale: "fine" });
+      if (body.action === "details") return answer(DETAILS);
+      if (body.action === "goals") return answer(GOALS);
+      if (body.action === "todos") return answer({ todos: ["do a", "do b"], name: "zebra-runner" });
+      if (body.action === "ask") return answer({ answer: "Because.", level: "some" });
+      if (body.action === "create") return answer({ ok: true, pending_setup_id: "p" });
     }
+    if (url === "/api/engelbart-device") return answer({ code: "ABCD-EFGH-IJKL", expiresInSeconds: 900 });
     if (url === "/api/engelbart-setup") {
       if (body.action === "own_paper") {
         return answer({ id: PAPER, token: "tok", title: "paper",
@@ -125,14 +136,15 @@ function mount(options = {}) {
     getSession: () => Promise.resolve({ data: { session: { access_token: "jwt" } } }),
   } }) };
 
-  const sandbox = { window: win, fetch: fetchStub, setTimeout, clearTimeout, console, URL,
-    document: { getElementById: () => app, createElement: makeEl } };
+  const sandbox = { window: win, fetch: fetchStub, setTimeout, clearTimeout, setInterval, clearInterval, console, URL,
+    navigator: {}, document: { getElementById: () => app, createElement: makeEl } };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(SRC, sandbox, { filename: "engelbart/setup/setup.js" });
 
   return { app, actions, bodies, win,
     row: () => row,
-    title: () => textOf(one(app, "ob-title")) || textOf(one(app, "ob-wait-t")),
+    title: () => textOf(one(app, "ob-title")) || textOf(one(app, "ob-question")) || textOf(one(app, "ob-goal-title"))
+      || textOf(one(app, "ob-done-t")) || textOf(one(app, "ob-wait-t")),
     error: () => textOf(one(app, "ob-err")),
     cta: () => byClass(app, "ob-cta").pop(),
     input: () => find(app, (n) => n.tagName === "input" || n.tagName === "textarea")[0],
@@ -144,7 +156,7 @@ function mount(options = {}) {
 test("every step draws from the record, and none of them throws", async () => {
   const titles = ["What is your name?", "What year are you?", "What is your major?",
     "How technical should explanations be?", "Which paper are you building on?", "What's your project?",
-    "Still reading your paper", "Writing your questions", "Writing goals", "Writing todos"];
+    "How familiar are you with what the paper leans on?", "Who is it for?", "What should the first project be about?", "a goal"];
   for (let step = 0; step < titles.length; step += 1) {
     const page = mount({ row: fullRow({ step }) });
     await settle();
@@ -152,7 +164,7 @@ test("every step draws from the record, and none of them throws", async () => {
   }
   const done = mount({ row: fullRow({ step: 9, status: "created" }) });
   await settle();
-  assert.equal(done.title(), "Done");
+  assert.equal(done.title(), "Your project is made");
 });
 
 test("the walk from Name to Project writes every step as it goes", async () => {
@@ -196,7 +208,7 @@ test("the walk from Name to Project writes every step as it goes", async () => {
   page.cta().fire("click");
   await settle();
 
-  assert.equal(page.title(), "Still reading your paper");
+  assert.equal(page.title(), "How familiar are you with what the paper leans on?");
   assert.deepEqual(page.actions, ["open", "step", "step", "step", "step",
     "own_paper", "own_paper_saved", "sources", "analysis", "step", "step"]);
   assert.equal(page.row().name, "Ada");
@@ -305,4 +317,67 @@ test("typing a major narrows the seeds without replacing the field", async () =>
   field.value = ""; field.fire("input");
   assert.equal(byClass(page.app, "ob-seed").length, 6, "and they come back");
   assert.equal(page.cta().disabled, true);
+});
+
+// --- the second half: topics, details, focus, todos, done -----------------------
+
+test("topics are answered one area at a time, a disagreeing grade asks once more, and samples never show", async () => {
+  let calls = 0;
+  const page = mount({
+    row: fullRow({ step: 6, details: null, goals: null, todos: null, goal_chosen: "" }),
+    replies: { answer: () => { calls += 1; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
+      calls === 1 ? { graded_level: 25, grade_rationale: "recognises only", follow_up: { question_level: 25, question: "A question at 25" } }
+                 : { graded_level: 50 }) }); } },
+  });
+  await settle();
+  assert.equal(page.title(), "How familiar are you with what the paper leans on?");
+  assert.equal(textOf(one(page.app, "ob-q")), "A question at 0");
+  assert.doesNotMatch(page.app.textContent, /SAMPLE-/, "sample answers stay unseen");
+  const answerBox = () => find(page.app, (n) => n.tagName === "input" && n.placeholder === "one sentence is enough…")[0];
+  answerBox().value = "attention weights"; answerBox().fire("input");
+  page.cta().fire("click");
+  await settle();
+  assert.equal(textOf(one(page.app, "ob-q")), "A question at 25", "the follow-up is asked at the graded level");
+  assert.match(textOf(one(page.app, "ob-grade")), /can follow it/);
+  answerBox().value = "it weights inputs"; answerBox().fire("input");
+  page.cta().fire("click");
+  await settle();
+  assert.equal(textOf(one(page.app, "ob-area-name")), "B", "after the follow-up the next area is up");
+  assert.deepEqual(page.bodies.filter((b) => b.action === "answer").map((b) => [b.area_index, b.question_level]), [[0, 0], [0, 25]]);
+  answerBox().value = "tensors"; answerBox().fire("input");
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.title(), "Who is it for?", "the last area leads to the details questions");
+  assert.equal(page.actions.filter((a) => a === "details").length, 1);
+});
+
+test("details, focus, todos and done reach the install code", async () => {
+  const page = mount({ row: fullRow({ step: 7, goals: null, todos: null, goal_chosen: "", project_name: "" }) });
+  await settle();
+  assert.equal(page.title(), "Who is it for?");
+  byClass(page.app, "ob-opt")[0].fire("click");
+  await settle();
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.title(), "What should the first project be about?");
+  assert.equal(page.bodies.find((b) => b.action === "step" && b.fields.details_answers).fields.details_answers.who, "Just me");
+  byClass(page.app, "ob-goal")[1].fire("click");
+  await settle();
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.bodies.find((b) => b.action === "todos").goal, "Goal 2");
+  assert.equal(page.title(), "Goal 2");
+  const rows = find(page.app, (n) => n.tagName === "input" && n.placeholder !== "add a todo…" && n.placeholder !== "project name…");
+  assert.equal(rows.length, 2);
+  const nameBox = find(page.app, (n) => n.placeholder === "project name…")[0];
+  assert.equal(nameBox.value, "zebra-runner");
+  const create = one(page.app, "ob-pill");
+  assert.equal(create.disabled, false);
+  create.fire("click");
+  await settle();
+  assert.equal(page.title(), "zebra-runner is made");
+  assert.match(textOf(one(page.app, "ob-cmd-text")), /^npx engelbart-cli --code ABCD-EFGH-IJKL$/);
+  const made = page.bodies.find((b) => b.action === "create");
+  assert.deepEqual(made.todos, ["do a", "do b"]);
+  assert.equal(made.goal_chosen, "Goal 2");
 });

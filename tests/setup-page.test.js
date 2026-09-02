@@ -37,3 +37,12 @@ test("the stylesheet carries the reference tokens", () => {
   assert.match(css, /--gray-900:#171717/);
   assert.match(css, /@keyframes rise/);
 });
+
+test("the second half asks, grades, generates and creates", () => {
+  for (const action of ["analysis", "answer", "details", "goals", "todos", "ask", "create"]) {
+    assert.match(js, new RegExp(`api\\("${action}"`), action);
+  }
+  assert.match(js, /action: "issue"/);
+  assert.match(js, /npx engelbart-cli --code /);
+  assert.match(js, /Ask about this/);
+});
