@@ -77,7 +77,25 @@ async function downloadObject(path, options = {}) {
     error.statusCode = 502;
     throw error;
   }
-  return Buffer.from(await response.arrayBuffer());
+  // Refuse an oversized object on its declared length, before the body is
+  // buffered: `options.maxBytes` bytes is what the caller can afford to hold.
+  // A missing or unparseable header reads as 0, so the post-read check below
+  // stays the real bound.
+  const maxBytes = Number(options.maxBytes) || 0;
+  const declared = response.headers && typeof response.headers.get === "function"
+    ? Number(response.headers.get("content-length")) : 0;
+  if (maxBytes > 0 && Number.isFinite(declared) && declared > maxBytes) {
+    const error = new Error("That PDF is larger than the analysis can take");
+    error.statusCode = 413;
+    throw error;
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (maxBytes > 0 && bytes.length > maxBytes) {
+    const error = new Error("That PDF is larger than the analysis can take");
+    error.statusCode = 413;
+    throw error;
+  }
+  return bytes;
 }
 
 module.exports = {

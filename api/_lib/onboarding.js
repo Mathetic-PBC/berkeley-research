@@ -47,10 +47,17 @@ async function calibrationsOf(row, options) {
   return selectRows(CALIBRATIONS, `${eq("onboarding_id", row.id)}&select=*&order=asked_at.asc`, options);
 }
 
+// Every write asks for the representation back, so an empty answer means the
+// statement matched no row and the write was lost. Fail loudly rather than
+// edit the copy in memory and let the page mirror a record nobody holds.
+function wroteOne(rows) {
+  if (!Array.isArray(rows) || !rows[0]) throw fail("The onboarding record could not be updated", 502);
+  return rows[0];
+}
+
 async function patch(row, values, options) {
   const rows = await patchRows(TABLE, `${eq("id", row.id)}`, { ...values, updated_at: new Date().toISOString() }, options);
-  const updated = Array.isArray(rows) && rows[0] ? rows[0] : { ...row, ...values };
-  Object.assign(row, updated);
+  Object.assign(row, wroteOne(rows));
   return row;
 }
 
@@ -135,11 +142,15 @@ function analysisRunning(row, now = Date.now()) {
 }
 
 async function pageTexts(row, options) {
+  // Only the transport: a request-wide `signal` here would put both pages and
+  // the model call under one budget, so a slow first page would abort the
+  // analysis instead of being dropped. Each fetch keeps its own 15 s bound.
+  const at = { env: options && options.env, fetchImpl: options && options.fetchImpl };
   const out = [];
   for (const url of [row.project_url, row.repo_url]) {
     if (!url) continue;
     let text = "";
-    try { text = await PageFetch.fetchPageText(url, options); } catch { text = "(could not be fetched)"; }
+    try { text = await PageFetch.fetchPageText(url, at); } catch { text = "(could not be fetched)"; }
     out.push({ url, text });
   }
   return out;
@@ -148,7 +159,8 @@ async function pageTexts(row, options) {
 async function runAnalysis(user, row, credentials, options) {
   await patch(row, { analysis_status: "running", analysis_started_at: new Date().toISOString(), analysis_error: "" }, options);
   try {
-    const pdf = await Storage.downloadObject(Storage.paperObjectPath(row.paper_id), options);
+    const pdf = await Storage.downloadObject(Storage.paperObjectPath(row.paper_id),
+      { ...options, maxBytes: MAX_PDF_BYTES });
     if (pdf.length > MAX_PDF_BYTES) throw fail("That PDF is larger than 20 MB", 413);
     const familiarity = P.FAMILIARITY[Number(row.paper_familiarity) || 0];
     const depth = P.depthOf(row.depth) || P.DEPTHS[0];
@@ -173,7 +185,10 @@ async function sources(user, row, body, credentials, options = {}) {
   if (!paperId) throw fail("Add the paper first", 400);
   const expected = ownPaperToken(paperId, user.id, options.env);
   const given = String((body && body.paper_token) || "");
-  const ok = given.length === expected.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+  // Byte length, not character length: timingSafeEqual throws on a length
+  // mismatch, and a multibyte token of the same character count would reach it.
+  const ok = Buffer.byteLength(given) === expected.length
+    && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
   if (!ok) throw fail("That paper is not yours to analyse", 403);
   const familiarity = Number(body.paper_familiarity);
   if (!Number.isInteger(familiarity) || familiarity < 0 || familiarity > 4) throw fail("Say how familiar you are with the paper", 400);
@@ -216,6 +231,13 @@ async function answer(user, row, calibrations, body, credentials, options = {}) 
   const found = questionAt(row.analysis, areaIndex, level);
   if (!found) throw fail("That question is not in this analysis", 400);
   const prior = calibrations.filter((c) => Number(c.area_index) === areaIndex);
+  // Two questions per area is the whole diagnostic: the reader's own, and at
+  // most one follow-up. Re-answering either is allowed; a third is not, so the
+  // page cannot walk an area up level by level.
+  const answered = prior.filter((c) => c.answered_at);
+  if (answered.length >= 2 && !answered.some((c) => Number(c.question_level) === level)) {
+    throw fail("That area has been asked enough", 400);
+  }
   const existing = prior.find((c) => Number(c.question_level) === level);
   const values = { area: found.area.area, parent_field: found.area.parent_field, self_level: self,
     question: found.question.question, sample_response: found.question.sample_response,
@@ -223,19 +245,27 @@ async function answer(user, row, calibrations, body, credentials, options = {}) 
   let cal;
   if (existing) {
     const rows = await patchRows(CALIBRATIONS, `${eq("id", existing.id)}`, values, options);
-    cal = Object.assign(existing, rows[0] || values);
+    cal = Object.assign(existing, wroteOne(rows));
   } else {
+    // Upsert on the table's own unique key: a caller array that has gone stale
+    // must not turn a re-answer into a 409, which the page would show as the
+    // gateway's "credit exhausted" rather than as the answer landing.
     const rows = await insertRows(CALIBRATIONS, [{ onboarding_id: row.id, user_id: user.id, area_index: areaIndex,
-      question_level: level, ...values }], options);
-    cal = rows[0];
-    calibrations.push(cal);
+      question_level: level, ...values }], { ...options,
+      query: "on_conflict=onboarding_id,area_index,question_level",
+      prefer: "resolution=merge-duplicates,return=representation" });
+    cal = wroteOne(rows);
+    // By id, not by identity: the row came back over the wire, so it is never
+    // the same object the caller already holds for a re-answered question.
+    const at = calibrations.findIndex((c) => c.id === cal.id);
+    if (at < 0) calibrations.push(cal); else calibrations[at] = cal;
   }
   const graded = await OM.grade({ area: found.area.area, question: found.question.question, level,
     sample: found.question.sample_response, answer: said }, credentials, options);
   if (graded) {
     const rows = await patchRows(CALIBRATIONS, `${eq("id", cal.id)}`, { graded_level: graded.level,
       grade_confidence: graded.confidence, grade_rationale: graded.rationale }, options);
-    Object.assign(cal, rows[0] || {}, { graded_level: graded.level, grade_confidence: graded.confidence, grade_rationale: graded.rationale });
+    Object.assign(cal, wroteOne(rows));
   }
   const out = { graded_level: cal.graded_level, grade_confidence: cal.grade_confidence, grade_rationale: cal.grade_rationale };
   // One follow-up, at the level the grade found, when it disagrees with the
@@ -248,16 +278,19 @@ async function answer(user, row, calibrations, body, credentials, options = {}) 
   return out;
 }
 
-// Each area's level: the last answered question's graded level, else its
-// self-rating; null for an area never answered.
+// Each area's level: the most recently GRADED answer in it. Only when nothing
+// in the area was graded -- the grader was down for every answer -- does it
+// fall back to the last answered question's self-rating. A later ungraded
+// answer must not erase a grade the reader already earned.
 function areaLevels(analysisValue, calibrations) {
   const areas = analysisValue && Array.isArray(analysisValue.areas) ? analysisValue.areas : [];
   return areas.map((_, i) => {
     const mine = (calibrations || []).filter((c) => Number(c.area_index) === i && c.answered_at)
       .sort((a, b) => String(a.answered_at).localeCompare(String(b.answered_at)));
     if (!mine.length) return null;
-    const last = mine[mine.length - 1];
-    return last.graded_level == null ? Number(last.self_level) : Number(last.graded_level);
+    const graded = mine.filter((c) => c.graded_level != null);
+    if (graded.length) return Number(graded[graded.length - 1].graded_level);
+    return Number(mine[mine.length - 1].self_level);
   });
 }
 
@@ -353,6 +386,7 @@ async function todos(user, row, calibrations, body, credentials, options = {}) {
 }
 
 async function ask(user, row, calibrations, body, credentials, options = {}) {
+  requireOpen(row);
   const quote = one(body && body.quote, 240);
   const question = one(body && body.question, 300);
   if (!question) throw fail("Ask something first", 400);
@@ -391,25 +425,42 @@ function toPayload(row, calibrations) {
   return payload;
 }
 
+// The reader's profile in the workspace. Its table ships on its own schedule,
+// so a profile that will not save must not cost them the project they just
+// spent the whole setup on: log it and say so in the reply.
+async function saveProfile(user, reader, options) {
+  try {
+    await insertRows(PROFILES, [{ user_id: user.id, display_name: reader.name, year: reader.year,
+      major: reader.major, tech_level: reader.level, knowledge: reader.knowledge,
+      updated_at: new Date().toISOString() }], { ...options, query: "on_conflict=user_id",
+      prefer: "resolution=merge-duplicates,return=representation" });
+    return true;
+  } catch (error) {
+    console.error("engelbart-onboarding: profile not saved:", one(error && error.message, 200));
+    return false;
+  }
+}
+
 async function create(user, row, calibrations, body, options = {}) {
-  if (row.status === "created") return { ok: true, pending_setup_id: row.pending_setup_id };
+  // Nothing left to write on a repeat, so nothing left to fail.
+  if (row.status === "created") return { ok: true, pending_setup_id: row.pending_setup_id, profile_saved: true };
   const values = {};
   if (body && "project_name" in body) values.project_name = one(body.project_name, 80);
   if (body && "goal_chosen" in body) values.goal_chosen = one(body.goal_chosen, 200);
   if (body && Array.isArray(body.todos)) values.todos = body.todos.map((t) => one(t, 300)).filter(Boolean).slice(0, 4);
+  // Checked against what the record WOULD be, and only then written to it: a
+  // rejected create must leave the row exactly as the reader left it.
+  const merged = { ...row, ...values };
+  if (!merged.project_name) throw fail("Name this project first", 400);
+  if (!merged.goal_chosen) throw fail("Pick a goal first", 400);
+  if (!Array.isArray(merged.todos) || merged.todos.length < 2) throw fail("At least two todos", 400);
   Object.assign(row, values);
-  if (!row.project_name) throw fail("Name this project first", 400);
-  if (!row.goal_chosen) throw fail("Pick a goal first", 400);
-  if (!Array.isArray(row.todos) || row.todos.length < 2) throw fail("At least two todos", 400);
   const payload = SetupChat.normalizePayload(toPayload(row, calibrations));
   const saved = await rpc("engelbart_save_pending_setup", { p_user_id: user.id, p_payload: payload }, options);
   const pendingId = typeof saved === "string" ? saved : (saved && saved.id) || null;
-  await insertRows(PROFILES, [{ user_id: user.id, display_name: payload.reader.name, year: payload.reader.year,
-    major: payload.reader.major, tech_level: payload.reader.level, knowledge: payload.reader.knowledge,
-    updated_at: new Date().toISOString() }], { ...options, query: "on_conflict=user_id",
-    prefer: "resolution=merge-duplicates,return=representation" });
+  const profileSaved = await saveProfile(user, payload.reader, options);
   await patch(row, { ...values, status: "created", pending_setup_id: pendingId, step: 10 }, options);
-  return { ok: true, pending_setup_id: pendingId };
+  return { ok: true, pending_setup_id: pendingId, profile_saved: profileSaved };
 }
 
 module.exports = {
