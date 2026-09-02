@@ -136,7 +136,10 @@ test("step keeps only whitelisted fields, bounds them, and never moves step back
   assert.equal(back.onboarding.depth, "expert");                  // an unknown depth changes nothing
 });
 
-test("sources needs the paper token, then analyses to completion and stores the result", async () => {
+// Accepting the paper and reading it are two requests. This one only has to
+// be quick and right: the reader is waiting on it with their finger on
+// Continue, and nothing here may reach the model.
+test("sources needs the paper token, stores the paper, and does not read it", async () => {
   const db = fake({ model: { analysis: ANALYSIS } });
   const { onboarding } = await OB.open(USER, {}, db.options);
   await assert.rejects(OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: "bad", paper_familiarity: 2 }, CREDS, db.options),
@@ -144,15 +147,54 @@ test("sources needs the paper token, then analyses to completion and stores the 
   const token = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
   const out = await OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: token, project_url: "https://x.org/p",
     repo_url: "", paper_familiarity: 2 }, CREDS, db.options);
-  assert.equal(out.analysis_status, "done");
+  assert.deepEqual(out, { ok: true, analysis_status: "none" });
   const row = db.tables.engelbart_onboardings[0];
   assert.equal(row.paper_id, PAPER);
+  assert.equal(row.project_url, "https://x.org/p");
+  assert.equal(row.repo_url, "");
+  assert.equal(row.paper_familiarity, 2);
+  assert.equal(row.analysis, null);
+  assert.equal(row.paper_title, "");
+  assert.equal(row.analysis_status, "none");
+  assert.equal(row.analysis_error, "");
+  assert.equal(modelCalls(db), 0);
+});
+
+// The token only ever existed in the tab that uploaded the PDF. A reload has
+// to be able to send the same paper up again -- but only the same one.
+test("a paper already on the row needs no token; another one still does", async () => {
+  const db = fake({ model: { analysis: ANALYSIS } });
+  const { onboarding } = await OB.open(USER, {}, db.options);
+  const token = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
+  await OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: token, paper_familiarity: 2 }, CREDS, db.options);
+  const again = await OB.sources(USER, onboarding, { paper_id: PAPER, paper_familiarity: 4 }, CREDS, db.options);
+  assert.deepEqual(again, { ok: true, analysis_status: "none" });
+  assert.equal(db.tables.engelbart_onboardings[0].paper_familiarity, 4);
+  const other = "44444444-4444-4444-4444-444444444444";
+  await assert.rejects(OB.sources(USER, onboarding, { paper_id: other, paper_familiarity: 2 }, CREDS, db.options),
+    (e) => e.statusCode === 403);
+  assert.equal(db.tables.engelbart_onboardings[0].paper_id, PAPER);
+});
+
+test("analysis run reads the paper and the project page, and stores the result", async () => {
+  const db = fake({ model: { analysis: ANALYSIS } });
+  const { onboarding } = await OB.open(USER, {}, db.options);
+  const token = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
+  await OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: token, project_url: "https://x.org/p",
+    repo_url: "", paper_familiarity: 2 }, CREDS, db.options);
+  const out = await OB.analysis(USER, onboarding, { run: true }, CREDS, db.options);
+  assert.equal(out.analysis_status, "done");
+  const row = db.tables.engelbart_onboardings[0];
   assert.equal(row.paper_title, "Zebra Tuning");
   assert.equal(row.analysis.areas.length, 2);
   const modelCall = db.calls.find((c) => c.url.endsWith("/v1/messages"));
   const blocks = JSON.parse(modelCall.init.body).messages[0].content;
   assert.equal(blocks[1].type, "document");
   assert.match(blocks[2].text, /project page/);
+  // With no paper on the row there is nothing to read, and saying so is a 400.
+  const empty = fake({ model: { analysis: ANALYSIS } });
+  const { onboarding: bare } = await OB.open(USER, {}, empty.options);
+  await assert.rejects(OB.analysis(USER, bare, { run: true }, CREDS, empty.options), (e) => e.statusCode === 400);
 });
 
 test("a running analysis younger than three minutes is not started twice", async () => {
@@ -160,7 +202,7 @@ test("a running analysis younger than three minutes is not started twice", async
   const { onboarding } = await OB.open(USER, {}, db.options);
   Object.assign(db.tables.engelbart_onboardings[0], { paper_id: PAPER, analysis_status: "running",
     analysis_started_at: new Date().toISOString() });
-  const out = await OB.analysis(USER, db.tables.engelbart_onboardings[0], { retry: true }, CREDS, db.options);
+  const out = await OB.analysis(USER, db.tables.engelbart_onboardings[0], { run: true }, CREDS, db.options);
   assert.equal(out.analysis_status, "running");
   assert.equal(db.calls.filter((c) => c.url.endsWith("/v1/messages")).length, 0);
   db.tables.engelbart_onboardings[0].analysis_started_at = new Date(Date.now() - 200000).toISOString();

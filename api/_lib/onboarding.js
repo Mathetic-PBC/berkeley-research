@@ -179,27 +179,39 @@ async function runAnalysis(user, row, credentials, options) {
   }
 }
 
+// Accepting the paper is not reading it. This validates and stores, and
+// answers at once; the page then asks for the reading with `analysis {run}`
+// and walks on while it happens. Keeping the two apart is what stops a
+// minute-long model call from sitting under the reader's Continue.
 async function sources(user, row, body, credentials, options = {}) {
   requireOpen(row);
   const paperId = Curated.optUuid(body && body.paper_id);
   if (!paperId) throw fail("Add the paper first", 400);
-  const expected = ownPaperToken(paperId, user.id, options.env);
   const given = String((body && body.paper_token) || "");
-  // Byte length, not character length: timingSafeEqual throws on a length
-  // mismatch, and a multibyte token of the same character count would reach it.
-  const ok = Buffer.byteLength(given) === expected.length
-    && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
-  if (!ok) throw fail("That paper is not yours to analyse", 403);
+  // A reload loses the token the upload minted, but not the record: the paper
+  // already on this row was proven by the member who owns the row, so it stays
+  // proven with no token at all. Any other paper still has to show one.
+  const proven = Boolean(row.paper_id) && paperId === row.paper_id;
+  if (given || !proven) {
+    const expected = ownPaperToken(paperId, user.id, options.env);
+    // Byte length, not character length: timingSafeEqual throws on a length
+    // mismatch, and a multibyte token of the same character count would reach it.
+    const ok = Buffer.byteLength(given) === expected.length
+      && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+    if (!ok) throw fail("That paper is not yours to analyse", 403);
+  }
   const familiarity = Number(body.paper_familiarity);
   if (!Number.isInteger(familiarity) || familiarity < 0 || familiarity > 4) throw fail("Say how familiar you are with the paper", 400);
-  if (analysisRunning(row)) return { analysis_status: "running" };
   await patch(row, { paper_id: paperId, project_url: optionalUrl(body.project_url), repo_url: optionalUrl(body.repo_url),
-    paper_familiarity: familiarity, analysis: null, paper_title: "" }, options);
-  return runAnalysis(user, row, credentials, options);
+    paper_familiarity: familiarity, analysis: null, paper_title: "", analysis_status: "none", analysis_error: "" }, options);
+  return { ok: true, analysis_status: "none" };
 }
 
 async function analysis(user, row, body, credentials, options = {}) {
-  if (body && body.retry) {
+  // `run` is the page starting the reading it has just been told to expect;
+  // `retry` is the reader asking again after one failed. Both do the same
+  // work. Anything else is the poll: a row read, priced as one.
+  if (body && (body.run || body.retry)) {
     if (!row.paper_id) throw fail("Add the paper first", 400);
     if (analysisRunning(row)) return { analysis_status: "running" };
     return runAnalysis(user, row, credentials, options);

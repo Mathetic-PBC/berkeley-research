@@ -67,8 +67,11 @@ async function dispatch(user, body, d = {}) {
     return { ...out, credit: { status: credit.status, budgetUsd: credit.budgetUsd, spendUsd: credit.spendUsd } };
   }
   // Reading the analysis status is a row read, not a model call, and is priced
-  // like one: only the retry that re-runs the reader bills the key.
-  const needsModel = MODEL_ACTIONS.has(action) && !(action === "analysis" && !body.retry);
+  // like one: only the `run` that starts the reader, or the retry that runs it
+  // again, bills the key. `sources` no longer reads the paper, but it is the
+  // last step before the flow needs the model for everything, so the credit
+  // rule still stops there rather than three screens later.
+  const needsModel = MODEL_ACTIONS.has(action) && !(action === "analysis" && !(body.run || body.retry));
   const credentials = needsModel ? await memberCredentials(user, d) : null;
   const { onboarding: row, calibrations } = await OB.open(user, {}, options);
   if (action === "step") return OB.step(user, row, body, options);

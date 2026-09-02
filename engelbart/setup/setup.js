@@ -58,9 +58,9 @@
     step: 0,            // the step on screen (row.step is the furthest reached)
     ui: {
       yearOther: false, yearText: "",
-      depthPos: 0.25, depthTouched: false, depthDrag: false,
+      depthPos: 0.25, depthTouched: false,
       pfile: null,      // { name, meta, id, token } once uploaded; { name, meta, uploading } meanwhile
-      pover: false, popen: null, plink: "", prepo: "", pfam: 0.2, pdrag: false,
+      pover: false, popen: null, plink: "", prepo: "", pfam: 0.2, psending: false,
       draft: "",
       // Task 8 adds: fIdx, fam{}, fAnswer, followUp, qIdx, answers{}, goalPick, goalOther, todos[], newTodo, projName,
       // askBtn, askOpen, askQuote, askText, asks[], made
@@ -192,40 +192,77 @@
   }
 
   // --- the bar slider ----------------------------------------------------------
-  // opts = { stops: [{label, desc}], pos: 0-1, drag: bool, onPos(p), onDrag(bool), onCommit(p), ends: [a,b], grid: bool }
+  // opts = { stops: [{label, desc}], pos: 0-1, onCommit(p), ends: [a,b], grid: bool }
+  //
+  // The slider owns its drag. Redrawing the page on every pointermove would
+  // destroy the element under the finger mid-gesture, so nothing in here calls
+  // draw(): the bars, the rule, the thumb and the caption are repainted in
+  // place, and only the release -- which may land anywhere on the page, hence
+  // the window listeners -- reports the snapped position back to the step.
   function slider(opts) {
-    var n = opts.stops.length, idx = snap(opts.pos, n), box = el("div", "ob-slider");
-    var head = el("div");
-    head.appendChild(el("div", "ob-slider-name", opts.stops[idx].label));
-    head.appendChild(el("div", "ob-slider-desc", opts.stops[idx].desc));
-    box.appendChild(head);
-    var track = attr(el("div", "ob-track"), "data-drag", opts.drag ? "1" : "0");
-    var bars = el("div", "ob-bars");
+    var n = opts.stops.length, pos = opts.pos, box = el("div", "ob-slider");
+    var head = el("div"), name = el("div", "ob-slider-name"), desc = el("div", "ob-slider-desc");
+    head.appendChild(name); head.appendChild(desc); box.appendChild(head);
+    var track = attr(el("div", "ob-track"), "data-drag", "0");
+    var bars = el("div", "ob-bars"), fills = [];
     for (var b = 0; b < n; b++) {
       var bar = el("div", "ob-bar"); bar.style.height = (25 + 75 * (b / (n - 1))) + "%";
-      var fill = el("div", "ob-bar-fill"); fill.style.width = (Math.min(1, Math.max(0, opts.pos * n - b)) * 100).toFixed(1) + "%";
+      var fill = el("div", "ob-bar-fill"); fills.push(fill);
       bar.appendChild(fill); bars.appendChild(bar);
     }
     track.appendChild(bars);
     track.appendChild(el("div", "ob-line"));
-    var lineOn = el("div", "ob-line-on"); lineOn.style.width = (opts.pos * 100).toFixed(2) + "%"; track.appendChild(lineOn);
-    var thumb = el("div", "ob-thumb"); thumb.style.left = (opts.pos * 100).toFixed(2) + "%"; track.appendChild(thumb);
-    function pos(e) { var r = track.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); }
-    on(track, "pointerdown", function (e) { track.setPointerCapture(e.pointerId); opts.onDrag(true); opts.onPos(pos(e)); });
-    on(track, "pointermove", function (e) { if (opts.drag) opts.onPos(pos(e)); });
-    function up() { if (!opts.drag) return; opts.onDrag(false); opts.onCommit(Math.max(1, Math.min(n, Math.ceil(opts.pos * n))) / n); }
-    on(track, "pointerup", up); on(track, "pointercancel", up);
+    var lineOn = el("div", "ob-line-on"); track.appendChild(lineOn);
+    var thumb = el("div", "ob-thumb"); track.appendChild(thumb);
     box.appendChild(track);
+    var stopButtons = [];
     if (opts.grid) {
       var stops = attr(el("div", "ob-stops"), "data-n", String(n));
       opts.stops.forEach(function (s, i) {
-        var bt = attr(el("button", "ob-stop", s.label), "data-on", i === idx ? "1" : "0");
-        on(bt, "click", function () { opts.onCommit((i + 1) / n); }); stops.appendChild(bt);
+        var bt = el("button", "ob-stop", s.label); bt.type = "button";
+        on(bt, "click", function () { pos = (i + 1) / n; paint(); opts.onCommit(pos); });
+        stopButtons.push(bt); stops.appendChild(bt);
       });
       box.appendChild(stops);
     } else {
       var ends = el("div", "ob-ends"); ends.appendChild(el("span", "", opts.ends[0])); ends.appendChild(el("span", "", opts.ends[1])); box.appendChild(ends);
     }
+
+    function paint() {
+      var idx = snap(pos, n);
+      name.textContent = opts.stops[idx].label;
+      desc.textContent = opts.stops[idx].desc;
+      fills.forEach(function (f, i) { f.style.width = (Math.min(1, Math.max(0, pos * n - i)) * 100).toFixed(1) + "%"; });
+      lineOn.style.width = (pos * 100).toFixed(2) + "%";
+      thumb.style.left = (pos * 100).toFixed(2) + "%";
+      stopButtons.forEach(function (bt, i) { bt.setAttribute("data-on", i === idx ? "1" : "0"); });
+    }
+    paint();
+
+    function at(e) { var r = track.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); }
+    var dragging = false;
+    function move(e) { if (!dragging) return; pos = at(e); paint(); }
+    function end() {
+      if (!dragging) return;
+      dragging = false;
+      track.setAttribute("data-drag", "0");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      pos = Math.max(1, Math.min(n, Math.ceil(pos * n))) / n;
+      paint();
+      opts.onCommit(pos);
+    }
+    on(track, "pointerdown", function (e) {
+      dragging = true;
+      track.setAttribute("data-drag", "1");
+      pos = at(e); paint();
+      // On window, not on the track: a finger that has left the track still
+      // has to be able to let go, and the release is what commits.
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    });
     return box;
   }
 
@@ -282,7 +319,14 @@
     row.appendChild(el("span", "ob-opt-text", label)); on(row, "click", pick); return row;
   }
 
-  function fail(error) { st.busy = ""; st.error = error.message || "something went wrong"; draw(); }
+  // A session that has expired mid-setup is not an error to read: the record
+  // is safe on the server, and signing in again comes back to this step.
+  function fail(error) {
+    st.busy = "";
+    if (error && error.status === 401) { st.screen = "signin"; st.error = ""; draw(); return; }
+    st.error = (error && error.message) || "something went wrong";
+    draw();
+  }
 
   // 0 Name
   function drawName(content) {
@@ -324,26 +368,38 @@
     var box = stepBox(content, "Step 3 of 10", "What is your major?");
     var major = str(st.row.major);
     var next = function () { if (!major.trim()) return; save(3, { major: major.trim() }).then(function () { go(3); }).catch(fail); };
-    box.appendChild(field(major, "start typing…", function (v) { major = v; st.row.major = v; draw(); }, next));
-    var typed = major.trim().toLowerCase(), seeds = el("div", "ob-seeds");
-    MAJORS.filter(function (m) { var low = m.toLowerCase(); return low !== typed && (!typed || low.indexOf(typed) >= 0); }).slice(0, 6)
-      .forEach(function (m) {
-        seeds.appendChild(on(el("button", "ob-seed", m), "click", function () {
-          st.row.major = m; draw(); setTimeout(function () { save(3, { major: m }).then(function () { go(3); }).catch(fail); }, 180);
-        }));
-      });
+    var seeds = el("div", "ob-seeds");
+    var acts = el("div", "ob-actions"), button = cta("Continue", !major.trim(), next);
+    // Only the seeds change as they type. Redrawing the step per keystroke
+    // would replace the field under the cursor and put the caret at the end.
+    function fillSeeds() {
+      seeds.textContent = "";
+      var typed = major.trim().toLowerCase();
+      MAJORS.filter(function (m) { var low = m.toLowerCase(); return low !== typed && (!typed || low.indexOf(typed) >= 0); }).slice(0, 6)
+        .forEach(function (m) {
+          var bt = el("button", "ob-seed", m); bt.type = "button";
+          on(bt, "click", function () {
+            st.row.major = m; draw(); setTimeout(function () { save(3, { major: m }).then(function () { go(3); }).catch(fail); }, 180);
+          });
+          seeds.appendChild(bt);
+        });
+    }
+    box.appendChild(field(major, "start typing…", function (v) {
+      major = v; st.row.major = v; button.disabled = !v.trim(); fillSeeds();
+    }, next));
+    fillSeeds();
     box.appendChild(seeds);
-    var acts = el("div", "ob-actions"); acts.appendChild(cta("Continue", !major.trim(), next)); box.appendChild(acts);
+    acts.appendChild(button); box.appendChild(acts);
   }
 
   // 3 Explanations
   function drawDepth(content) {
     var box = stepBox(content, "Step 4 of 10", "How technical should explanations be?");
     var panel = el("div", "ob-panel");
-    panel.appendChild(slider({ stops: DEPTHS, pos: st.ui.depthPos, drag: st.ui.depthDrag, grid: true,
-      onPos: function (p) { st.ui.depthPos = p; st.ui.depthTouched = true; draw(); },
-      onDrag: function (d) { st.ui.depthDrag = d; },
-      onCommit: function (p) { st.ui.depthPos = p; st.ui.depthDrag = false; st.ui.depthTouched = true; st.row.depth = DEPTHS[depthIndex()].key; draw(); } }));
+    panel.appendChild(slider({ stops: DEPTHS, pos: st.ui.depthPos, grid: true,
+      onCommit: function (p) {
+        st.ui.depthPos = p; st.ui.depthTouched = true; st.row.depth = DEPTHS[snap(p, DEPTHS.length)].key; draw();
+      } }));
     box.appendChild(panel);
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
     acts.appendChild(el("span", "ob-hint", st.ui.depthTouched ? "You can change this later." : "Everyday is the default · drag to change · you can adjust it later"));
@@ -362,7 +418,8 @@
     setupApi({ action: "own_paper", title: name, wantsUpload: true }).then(function (made) {
       // Straight from the browser to Storage, with the anon key the curator's
       // uploader also sends; the token proves this paper was made for us.
-      var key = made.upload && made.upload.anonKey;
+      if (!made.upload || !made.upload.uploadUrl) throw new Error("the server did not offer an upload");
+      var key = made.upload.anonKey;
       return fetch(made.upload.uploadUrl, {
         method: "PUT",
         headers: { "Content-Type": "application/pdf", "x-upsert": "true", apikey: key, Authorization: "Bearer " + key },
@@ -395,7 +452,8 @@
       txt.appendChild(el("div", "ob-file-name", p.name));
       txt.appendChild(el("div", "ob-file-meta", p.uploading ? "Uploading…" : p.meta));
       row.appendChild(txt);
-      row.appendChild(on(el("button", "ob-link", "Replace"), "click", function () { st.ui.pfile = null; draw(); }));
+      var replace = el("button", "ob-link", "Replace"); replace.type = "button";
+      row.appendChild(on(replace, "click", function () { st.ui.pfile = null; draw(); }));
       stack.appendChild(row);
     }
     [{ key: "plink", label: "Project page" }, { key: "prepo", label: "GitHub" }].forEach(function (r) {
@@ -412,19 +470,42 @@
       inner.appendChild(input); body.appendChild(inner); wrap.appendChild(body); stack.appendChild(wrap);
     });
     card.appendChild(stack);
-    card.appendChild(slider({ stops: FAMILIARITY, pos: st.ui.pfam, drag: st.ui.pdrag, ends: ["Beginner", "Expert"],
-      onPos: function (v) { st.ui.pfam = v; draw(); }, onDrag: function (d) { st.ui.pdrag = d; },
-      onCommit: function (v) { st.ui.pfam = v; st.ui.pdrag = false; draw(); } }));
+    // The slider keeps its own position while it is being dragged; this only
+    // has to hear the stop it settled on.
+    card.appendChild(slider({ stops: FAMILIARITY, pos: st.ui.pfam, ends: ["Beginner", "Expert"],
+      onCommit: function (v) { st.ui.pfam = v; } }));
     var acts = el("div", "ob-actions");
-    var ready = !!(p && p.id && !p.uploading);
-    acts.appendChild(cta("Continue", !ready, function () {
+    var ready = !!(p && p.id && !p.uploading) && !st.ui.psending;
+    acts.appendChild(cta(st.ui.psending ? "Sending" : "Continue", !ready, function () {
+      // Accepting the paper is awaited -- it is quick, and a refusal has to
+      // keep the reader here, on the step that can fix it. Reading the paper
+      // is not: that is a minute of model, and they walk on through it.
       var sources = { action: "sources", paper_id: p.id, paper_token: p.token,
         project_url: st.ui.plink.trim(), repo_url: st.ui.prepo.trim(), paper_familiarity: snap(st.ui.pfam, 5) };
-      st.row.analysis_status = "running";
-      // Not awaited: the reader moves on while the paper is read.
-      api(sources).then(function (out) { st.row.analysis_status = out.analysis_status; if (out.analysis_error) st.row.analysis_error = out.analysis_error; draw(); })
-        .catch(function (e) { st.row.analysis_status = "error"; st.row.analysis_error = e.message; draw(); });
-      save(5, {}).then(function () { go(5); }).catch(fail);
+      st.ui.psending = true; st.error = ""; draw();
+      api(sources).then(function (out) {
+        st.ui.psending = false;
+        if (out && out.onboarding) st.row = out.onboarding;
+        else {
+          st.row.paper_id = sources.paper_id;
+          st.row.project_url = sources.project_url;
+          st.row.repo_url = sources.repo_url;
+          st.row.paper_familiarity = sources.paper_familiarity;
+        }
+        st.row.analysis_status = "running";
+        st.row.analysis_error = "";
+        // Not awaited: the reader has left this step by the time it answers,
+        // so it reports into the rail and never through fail().
+        api("analysis", { run: true }).then(function (read) {
+          st.row.analysis_status = read.analysis_status;
+          if (read.analysis) st.row.analysis = read.analysis;
+          st.row.analysis_error = read.analysis_error || "";
+          draw();
+        }).catch(function (e) {
+          st.row.analysis_status = "error"; st.row.analysis_error = e.message; draw();
+        });
+        return save(5, {}).then(function () { go(5); });
+      }).catch(function (e) { st.ui.psending = false; fail(e); });
     }));
     card.appendChild(acts); box.appendChild(card);
   }
@@ -454,6 +535,9 @@
   // Steps 6-10 are drawn by the second half of this file (Task 8); until then
   // they show the generating indicator.
   function generating(content, text) { var w = el("div", "ob-wait"); w.appendChild(dots()); w.appendChild(el("div", "ob-wait-t", text)); content.appendChild(w); }
+  // Task 8: a reload can land here with a paper on the row and
+  // analysis_status === "none" (the tab closed between the paper step's
+  // sources and its analysis run) -- send api("analysis", {run: true}) then.
   function drawTopics(c) { generating(c, "Still reading your paper"); }
   function drawDetails(c) { generating(c, "Writing your questions"); }
   function drawFocus(c) { generating(c, "Writing goals"); }

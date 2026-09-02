@@ -61,12 +61,16 @@ test("an unknown action is a 400", async () => {
 // Reading the state of an analysis costs nothing, so it must not be priced
 // like a model call: a member whose key is spent still has to be able to see
 // that the paper was read, and how it went.
-test("polling the analysis never touches the credit key; a retry does", async () => {
+test("polling the analysis never touches the credit key; run and retry do", async () => {
   const refuse = async () => { throw new Error("credentialsFor must not be called for a poll"); };
   const poll = await handler.dispatch(USER, { action: "analysis" }, deps({ credentialsFor: refuse }));
   assert.equal(poll.analysis_status, "none");
-  await assert.rejects(handler.dispatch(USER, { action: "analysis", retry: true }, deps({
-    credentialsFor: async () => ({ status: "exhausted" }) })), (e) => e.statusCode === 409);
+  // `run` is the page starting the reading the paper step has just asked for:
+  // it is a model call and is priced as one, exactly like the reader's retry.
+  for (const body of [{ action: "analysis", run: true }, { action: "analysis", retry: true }]) {
+    await assert.rejects(handler.dispatch(USER, body, deps({
+      credentialsFor: async () => ({ status: "exhausted" }) })), (e) => e.statusCode === 409);
+  }
 });
 
 // The row a spent key must never hide: the setup is finished, the pairing code
