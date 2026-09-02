@@ -439,6 +439,29 @@ function normalizePaperRef(value) {
   return { paper_id: id, title: one(source.title, MAX_TITLE), url };
 }
 
+const READER_LEVELS = ["plain", "some", "full", "expert"];
+const KNOWLEDGE_LEVELS = [0, 25, 50, 75, 100];
+
+// Who the project is for, as the workspace's reader profile stores it, plus
+// what the diagnostic found they already know. Bounded like everything else
+// in the payload; dropped whole when it is not an object.
+function normalizeReader(value) {
+  if (!value || typeof value !== "object") return null;
+  const level = String(value.level || "").trim().toLowerCase();
+  const knowledge = (Array.isArray(value.knowledge) ? value.knowledge : []).map((k) => {
+    if (!k || typeof k !== "object") return null;
+    const area = one(k.area, 80);
+    const lvl = Number(k.level);
+    if (!area || !KNOWLEDGE_LEVELS.includes(lvl)) return null;
+    return { area, parent_field: one(k.parent_field, 80), level: lvl, project_role: one(k.project_role, 300) };
+  }).filter(Boolean).slice(0, 4);
+  return {
+    name: one(value.name, 60), year: one(value.year, 40), major: one(value.major, 80),
+    level: READER_LEVELS.includes(level) ? level : "",
+    knowledge,
+  };
+}
+
 // The approved payload, bounded before it is stored: the table must never
 // hold unbounded model output. The CLI re-normalizes again on import.
 function normalizePayload(value) {
@@ -459,6 +482,9 @@ function normalizePayload(value) {
   // Optional: the project's structured research provenance.
   const provenance = normalizeProvenance(value.provenance);
   if (provenance) out.provenance = provenance;
+  // Optional: who the project is for, and what they already know.
+  const reader = normalizeReader(value.reader);
+  if (reader) out.reader = reader;
   return out;
 }
 
@@ -573,6 +599,7 @@ module.exports = {
   normalizePayload,
   normalizePaperRef,
   normalizeProvenance,
+  normalizeReader,
   pickModel,
   stageOf,
   turn,

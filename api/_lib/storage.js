@@ -62,6 +62,24 @@ async function removeObject(path, options = {}) {
   });
 }
 
+// One stored PDF's bytes, for the analysis call. Read with the service role
+// straight from the bucket; never handed to a browser.
+async function downloadObject(path, options = {}) {
+  const env = options.env || process.env;
+  const config = supabaseConfig(env);
+  const fetchImpl = options.fetchImpl || global.fetch;
+  const response = await fetchImpl(`${config.url}/storage/v1/object/${PAPERS_BUCKET}/${encodeURI(path)}`, {
+    headers: { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` },
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    const error = new Error("The stored paper could not be read");
+    error.statusCode = 502;
+    throw error;
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
 module.exports = {
   PAPERS_BUCKET,
   VIEW_TTL_SECONDS,
@@ -69,4 +87,5 @@ module.exports = {
   signedUploadUrl,
   signedViewUrl,
   removeObject,
+  downloadObject,
 };

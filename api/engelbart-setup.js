@@ -113,8 +113,8 @@ function ownContext(value) {
 // Proof that THIS member created THIS paper through own_paper just now, so the
 // pdf-recording step cannot be pointed at an arbitrary canonical paper. The
 // curator endpoints stay curator-gated; this is the member-scoped equivalent.
-function ownPaperToken(paperId, userId) {
-  return crypto.createHmac("sha256", encryptionKey())
+function ownPaperToken(paperId, userId, env = process.env) {
+  return crypto.createHmac("sha256", encryptionKey(env))
     .update(`own-paper:${paperId}:${userId}`).digest("base64url");
 }
 
@@ -480,3 +480,4 @@ async function handler(req, res) {
 }
 
 module.exports = handler;
+module.exports.ownPaperToken = ownPaperToken;
