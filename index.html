@@ -40,6 +40,20 @@
   .hero-actions .cta svg { width:22px; height:22px; }
   .hero-actions .text-cta { background:#17150F; color:#FBFAF6; }
   .hero-actions .text-cta:hover { background:#B8500A; color:#FBFAF6; border-color:#B8500A; }
+  .more { margin-top:-2px; }
+  .more summary {
+    width:max-content; margin:0 auto; padding:8px 4px; cursor:pointer; list-style:none;
+    display:flex; align-items:center; gap:7px; color:#5D594F; font-family:Helvetica, Arial, sans-serif;
+    font-size:14px; font-weight:600; line-height:1.4;
+  }
+  .more summary::-webkit-details-marker { display:none; }
+  .more summary:hover { color:#B8500A; }
+  .more summary:focus-visible { outline:2px solid #B8500A; outline-offset:3px; border-radius:2px; }
+  .more summary svg { width:14px; height:14px; transition:transform 160ms ease; }
+  .more[open] summary svg { transform:rotate(180deg); }
+  .more .when-open, .more[open] .when-closed { display:none; }
+  .more[open] .when-open { display:inline; }
+  .more-content { display:flex; flex-direction:column; gap:22px; padding-top:18px; }
   .sign { margin:8px 0 0; font-style:italic; color:#3A372E; }
   .people { display:flex; gap:32px; flex-wrap:wrap; margin-top:10px; }
   .person { display:flex; gap:14px; align-items:center; }
@@ -53,6 +67,7 @@
     .letter-inner { font-size:17px; line-height:1.65; gap:18px; }
     .letter-inner h2 { font-size:26px; }
     .steps { gap:14px; }
+    .more-content { gap:18px; }
     /* A thumb reaches the whole button, and the two of us stack rather than
        squeezing a name into a two-character column. */
     .cta { width:100%; }
@@ -83,40 +98,43 @@
         Join Discord
       </a>
     </div>
-    <p>We're volunteering at Berkeley this week to help STEM undergrads land their first research position during their first few weeks on campus. We got into research by working on side projects while in university and sending them to PhD students and professors we wanted to work with. Similarly, we'll work with you (for free) to build a free project that helps you land your first research position within the next couple weeks.</p>
-    <p>We're meeting with undergrads every day this week, so if you'd like to learn about undergrad research at Berkeley and get started on a project to build up your resumé and begin doing research with a professor, we'd love to chat! We can also get you set up with $25 of Claude Code credits to help you build your first project!</p>
-    <p>Book a time for an in-person chat with us on campus this week. We can grab coffee and</p>
-    <ol class="steps">
-      <li><span class="n">1.</span><span>find some interesting labs and professors you'd like to do research with,</span></li>
-      <li><span class="n">2.</span><span>pick out a cool project you'd like to start building to impress a professor,</span></li>
-      <li><span class="n">3.</span><span>help you begin building the project from scratch using <em>Engelbart</em>, our open-source AI creation tool for student researchers.</span></li>
-    </ol>
-    <p>This is totally free, we just want to see more people get into research early on :)</p>
-    <div>
-      <a class="cta" href="https://cal.com/team/mathetic/berkeley-research-chat" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#17150F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
-          <path d="M21 3 L10 13"></path>
+    <details class="more">
+      <summary>
+        <span class="when-closed">See more</span>
+        <span class="when-open">Show less</span>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m4 6 4 4 4-4"></path>
         </svg>
-        Schedule a meeting</a>
-    </div>
-    <p class="sign">&lt;3 Hudson and David</p>
-    <div class="people">
-      <div class="person">
-        <img src="uploads/hudson.jpeg" alt="Hudson" width="76" height="76">
-        <div class="who">
-          <div class="name">Hudson</div>
-          <div class="role">cognitive science researcher</div>
+      </summary>
+      <div class="more-content">
+        <p>We're volunteering at Berkeley this week to help STEM undergrads land their first research position during their first few weeks on campus. We got into research by working on side projects while in university and sending them to PhD students and professors we wanted to work with. Similarly, we'll work with you (for free) to build a free project that helps you land your first research position within the next couple weeks.</p>
+        <p>We're meeting with undergrads every day this week, so if you'd like to learn about undergrad research at Berkeley and get started on a project to build up your resumé and begin doing research with a professor, we'd love to chat! We can also get you set up with $25 of Claude Code credits to help you build your first project!</p>
+        <p>Book a time for an in-person chat with us on campus this week. We can grab coffee and</p>
+        <ol class="steps">
+          <li><span class="n">1.</span><span>find some interesting labs and professors you'd like to do research with,</span></li>
+          <li><span class="n">2.</span><span>pick out a cool project you'd like to start building to impress a professor,</span></li>
+          <li><span class="n">3.</span><span>help you begin building the project from scratch using <em>Engelbart</em>, our open-source AI creation tool for student researchers.</span></li>
+        </ol>
+        <p>This is totally free, we just want to see more people get into research early on :)</p>
+        <p class="sign">&lt;3 Hudson and David</p>
+        <div class="people">
+          <div class="person">
+            <img src="uploads/hudson.jpeg" alt="Hudson" width="76" height="76">
+            <div class="who">
+              <div class="name">Hudson</div>
+              <div class="role">cognitive science researcher</div>
+            </div>
+          </div>
+          <div class="person">
+            <img src="uploads/david.png" alt="David" width="76" height="76">
+            <div class="who">
+              <div class="name">David</div>
+              <div class="role">computer science researcher</div>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="person">
-        <img src="uploads/david.png" alt="David" width="76" height="76">
-        <div class="who">
-          <div class="name">David</div>
-          <div class="role">computer science researcher</div>
-        </div>
-      </div>
-    </div>
+    </details>
   </div>
 </section>
 
