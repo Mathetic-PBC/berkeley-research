@@ -43,6 +43,6 @@ test("the second half asks, grades, generates and creates", () => {
     assert.match(js, new RegExp(`api\\("${action}"`), action);
   }
   assert.match(js, /action: "issue"/);
-  assert.match(js, /npx engelbart-cli --code /);
+  assert.match(js, /bunx engelbart-cli --code /);
   assert.match(js, /Ask about this/);
 });

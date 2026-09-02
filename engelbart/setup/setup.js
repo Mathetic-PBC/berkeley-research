@@ -810,6 +810,18 @@
 
   // --- 10 Done -----------------------------------------------------------------
 
+  function cmdRow(box, label, cmd) {
+    box.appendChild(el("div", "ob-cap", label));
+    var row = el("div", "ob-cmd");
+    row.appendChild(el("span", "ob-cmd-text", cmd));
+    var copy = el("button", "ob-cmd-copy", "Copy"); copy.type = "button";
+    on(copy, "click", function () {
+      if (!navigator.clipboard) return;
+      navigator.clipboard.writeText(cmd).then(function () { copy.textContent = "Copied"; setTimeout(function () { copy.textContent = "Copy"; }, 1400); }, function () {});
+    });
+    row.appendChild(copy); box.appendChild(row);
+  }
+
   function drawDone(content) {
     var r = st.row, box = el("div", "ob-step ob-done");
     box.appendChild(el("span", "ob-check", "✓"));
@@ -820,16 +832,14 @@
       if (st.busy !== "code") { st.busy = "code"; issueCode().then(function () { st.busy = ""; draw(); }).catch(fail); }
       generating(box, "Getting your install code");
     } else {
-      var cmd = "npx engelbart-cli --code " + st.ui.made.code, row = el("div", "ob-cmd");
-      row.appendChild(el("span", "ob-cmd-text", cmd));
-      var copy = el("button", "ob-cmd-copy", "Copy"); copy.type = "button";
-      on(copy, "click", function () {
-        if (!navigator.clipboard) return;
-        navigator.clipboard.writeText(cmd).then(function () { copy.textContent = "Copied"; setTimeout(function () { copy.textContent = "Copy"; }, 1400); }, function () {});
-      });
-      row.appendChild(copy); box.appendChild(row);
+      var code = st.ui.made.code;
+      // Mac and Linux run the npm package through bun; Windows takes the
+      // PowerShell installer, which redeems the same code (the npm package
+      // does not install on Windows).
+      cmdRow(box, "Mac or Linux", "bunx engelbart-cli --code " + code);
+      cmdRow(box, "Windows (PowerShell)", "& ([scriptblock]::Create((irm https://berkeley.mathetic.com/engelbart/install.ps1))) --code " + code);
       var mins = Math.round((st.ui.made.expiresInSeconds || 900) / 60);
-      box.appendChild(el("div", "ob-done-s", "Run that in a terminal on the machine you build on. It installs Engelbart, connects this account, and opens the project — no second sign-in. The code works once and expires in " + mins + " minutes."));
+      box.appendChild(el("div", "ob-done-s", "Run the one for your machine in a terminal. It installs Engelbart, connects this account, and opens the project — no second sign-in. The code works once and expires in " + mins + " minutes."));
     }
     var acts = el("div", "ob-done-acts");
     var again = el("button", "ob-ghost", "Get a new code"); again.type = "button";

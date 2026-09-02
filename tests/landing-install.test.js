@@ -8,7 +8,7 @@ const vm = require('node:vm');
 
 const ROOT = path.join(__dirname, '..');
 const STANDARD = 'curl -fsSL https://berkeley.mathetic.com/engelbart/install.sh | sh';
-const DEVELOPER = 'npx engelbart-cli';
+const DEVELOPER = 'bunx engelbart-cli';
 
 function fakeElement(mode) {
   const listeners = {};

@@ -27,7 +27,7 @@
   if (copyButton && copyIcon && commandText) {
     var commands = {
       standard: "curl -fsSL https://berkeley.mathetic.com/engelbart/install.sh | sh",
-      developer: "npx engelbart-cli"
+      developer: "bunx engelbart-cli"
     };
     var installMode = "standard";
     var copyTimer = null;

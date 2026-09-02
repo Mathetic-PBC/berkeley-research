@@ -376,7 +376,7 @@ test("details, focus, todos and done reach the install code", async () => {
   create.fire("click");
   await settle();
   assert.equal(page.title(), "zebra-runner is made");
-  assert.match(textOf(one(page.app, "ob-cmd-text")), /^npx engelbart-cli --code ABCD-EFGH-IJKL$/);
+  assert.match(textOf(one(page.app, "ob-cmd-text")), /^bunx engelbart-cli --code ABCD-EFGH-IJKL$/);
   const made = page.bodies.find((b) => b.action === "create");
   assert.deepEqual(made.todos, ["do a", "do b"]);
   assert.equal(made.goal_chosen, "Goal 2");
