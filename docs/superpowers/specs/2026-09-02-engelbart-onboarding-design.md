@@ -60,8 +60,8 @@ member's key is the only model credential anywhere in the flow.
 | --- | --- | --- | --- |
 | `open` | `{fresh?}` | Finds the member's `open` onboarding or creates one; `fresh:true` after a `created` row starts another. Calls `credentialsFor` so a keyless account fails here, not at step 7. | `{onboarding, calibrations, credit:{status,budgetUsd,spendUsd}}` |
 | `step` | `{step, fields}` | PATCH of whitelisted fields (§3.1) and `step = max(step, given)`. | `{onboarding}` |
-| `sources` | `{paper_id, paper_token, project_url?, repo_url?, paper_familiarity}` | Stores the sources, marks `analysis_status=running`, then runs the analysis to completion in the same invocation (§5.1) and writes `done` or `error`. A call while `running` and younger than 180 s is a no-op answering `running`. | `{analysis_status}` |
-| `analysis` | `{retry?}` | Poll. `retry:true` re-runs the analysis for the stored paper (no token needed: the paper was proven at `sources`), subject to the same 180 s running guard. | `{analysis_status, analysis?, analysis_error?}` |
+| `sources` | `{paper_id, paper_token?, project_url?, repo_url?, paper_familiarity}` | Validates (token required unless `paper_id` already equals the row's — the paper was proven once), stores the sources, clears any earlier analysis, sets `analysis_status=none`. Returns at once; it does not run the model. | `{ok, analysis_status}` |
+| `analysis` | `{run?, retry?}` | Poll. `run:true` (sent by the page right after `sources`, and by Topics when it finds `none`) or `retry:true` runs the analysis for the stored paper to completion in this invocation (§5.1), subject to the 180 s running guard; the invocation finishes even if the tab is gone. | `{analysis_status, analysis?, analysis_error?}` |
 | `answer` | `{area_index, question_level, self_level, answer}` | Upserts the calibration row, grades it (§5.2), and decides whether a follow-up is due. | `{graded_level, grade_confidence, grade_rationale, follow_up?:{question_level, question}}` |
 | `details` | `{regenerate?}` | Generates the Details questions once; returns the stored set afterwards. | `{intro, questions}` |
 | `goals` | `{regenerate?}` | Generates the four Focus goals once. | `{goals}` |
@@ -172,13 +172,15 @@ values. Steps and their numbers follow the reference:
 - **4 Paper.** PDF required (`application/pdf`, ≤ 20 MB; Anthropic's own
   limit is 32 MB / 100 pages). Upload: `own_paper {title, wantsUpload}` →
   PUT to the signed URL → `own_paper_saved`. Project page and GitHub URLs
-  optional. Familiarity: five-stop bar slider. Continue = `sources`, sent
-  without awaiting; the page moves to 5. The rail shows "Reading your
-  paper in the background" while `running`.
+  optional. Familiarity: five-stop bar slider. Continue awaits `sources`
+  (fast: validation and storage; an error keeps the reader on Paper), then
+  fires `analysis {run:true}` without awaiting and moves to 5. The rail
+  shows "Reading your paper in the background" while `running`.
 - **5 Project.** Free-text draft, PATCHed.
-- **6 Topics.** If `analysis_status` is not `done`, the waiting screen
-  polls `analysis` every 3 s (`error` shows Retry, which sends
-  `analysis {retry:true}`). Then, per area in order: the area name, its `project_role`,
+- **6 Topics.** If `analysis_status` is `none` with a paper stored (the
+  run request never reached the server), send `analysis {run:true}` once.
+  While not `done`, the waiting screen polls `analysis` every 3 s (`error`
+  shows Retry, which sends `analysis {retry:true}`). Then, per area in order: the area name, its `project_role`,
   a five-stop familiarity slider, and the question at the slider's level.
   Moving the slider before answering swaps the question. Answering sends
   `answer`; the response either advances (dot turns filled) or shows one
@@ -326,13 +328,13 @@ signup path needs. The signin page restores the invite form from
 | --- | --- |
 | no key / credit exhausted / blocked | 409 at `open` or at the model action; the page shows the message and a link to the account page |
 | analysis error | Topics shows the error and Retry (`analysis {retry:true}`) |
-| analysis stuck `running` > 180 s | treated as dead; `sources` or `analysis {retry:true}` re-runs |
+| analysis stuck `running` > 180 s | treated as dead; `analysis {run\|retry:true}` re-runs |
 | grading error | `graded_level` null; self-rating stands; no follow-up |
 | details / goals / todos error | inline error with Try again |
 | reload anywhere | `open` → resume at the stored step |
 | duplicate project name | unchanged: `hc setup-import` reports it on the machine |
 | `create` twice | second call is a no-op; the page re-issues a code |
-| paper token mismatch | 403 from `sources` |
+| paper token mismatch (a paper other than the row's) | 403 from `sources` |
 
 ## 10. Verification
 
