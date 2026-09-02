@@ -156,10 +156,26 @@ async function pageTexts(row, options) {
   return out;
 }
 
+// A minute is long enough for the reader to go back and attach a different
+// paper. The row is re-read at the end of the run, and a run whose paper is no
+// longer the row's paper writes nothing at all: neither its answer nor its
+// error belongs to the paper that is there now.
+async function supersededBy(row, paperId, options) {
+  try {
+    const rows = await selectRows(TABLE, `${eq("id", row.id)}&select=id,paper_id&limit=1`, options);
+    const now = rows && rows[0];
+    return Boolean(now) && String(now.paper_id) !== String(paperId);
+  } catch (error) {
+    // A row that cannot be read is not evidence of a newer paper; write as before.
+    return false;
+  }
+}
+
 async function runAnalysis(user, row, credentials, options) {
+  const mine = row.paper_id;
   await patch(row, { analysis_status: "running", analysis_started_at: new Date().toISOString(), analysis_error: "" }, options);
   try {
-    const pdf = await Storage.downloadObject(Storage.paperObjectPath(row.paper_id),
+    const pdf = await Storage.downloadObject(Storage.paperObjectPath(mine),
       { ...options, maxBytes: MAX_PDF_BYTES });
     if (pdf.length > MAX_PDF_BYTES) throw fail("That PDF is larger than 20 MB", 413);
     const familiarity = P.FAMILIARITY[Number(row.paper_familiarity) || 0];
@@ -170,9 +186,11 @@ async function runAnalysis(user, row, credentials, options) {
       pdfBase64: pdf.toString("base64"),
       urls: await pageTexts(row, options),
     }, credentials, options);
+    if (await supersededBy(row, mine, options)) return { analysis_status: "superseded" };
     await patch(row, { analysis, analysis_status: "done", paper_title: analysis.title }, options);
     return { analysis_status: "done", analysis };
   } catch (error) {
+    if (await supersededBy(row, mine, options)) return { analysis_status: "superseded" };
     await patch(row, { analysis_status: "error", analysis_error: one(error.message, 300) || "analysis failed" }, options);
     if (error.statusCode === 409) throw error;
     return { analysis_status: "error", analysis_error: row.analysis_error };
@@ -202,8 +220,11 @@ async function sources(user, row, body, credentials, options = {}) {
   }
   const familiarity = Number(body.paper_familiarity);
   if (!Number.isInteger(familiarity) || familiarity < 0 || familiarity > 4) throw fail("Say how familiar you are with the paper", 400);
+  // `analysis_started_at` goes with the status: a run that was in flight for
+  // the old paper must leave no trace that reads as this paper's run.
   await patch(row, { paper_id: paperId, project_url: optionalUrl(body.project_url), repo_url: optionalUrl(body.repo_url),
-    paper_familiarity: familiarity, analysis: null, paper_title: "", analysis_status: "none", analysis_error: "" }, options);
+    paper_familiarity: familiarity, analysis: null, paper_title: "", analysis_status: "none",
+    analysis_error: "", analysis_started_at: null }, options);
   return { ok: true, analysis_status: "none" };
 }
 

@@ -497,6 +497,9 @@
         // Not awaited: the reader has left this step by the time it answers,
         // so it reports into the rail and never through fail().
         api("analysis", { run: true }).then(function (read) {
+          // A run the server superseded was reading a paper this row no longer
+          // has: it answers about nothing, so nothing here changes.
+          if (read.analysis_status === "superseded") return;
           st.row.analysis_status = read.analysis_status;
           if (read.analysis) st.row.analysis = read.analysis;
           st.row.analysis_error = read.analysis_error || "";

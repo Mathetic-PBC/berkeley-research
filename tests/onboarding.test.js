@@ -197,6 +197,44 @@ test("analysis run reads the paper and the project page, and stores the result",
   await assert.rejects(OB.analysis(USER, bare, { run: true }, CREDS, empty.options), (e) => e.statusCode === 400);
 });
 
+// A minute of reading is long enough for the reader to walk back and attach a
+// different paper. The run that was already in flight answers about a paper the
+// row no longer has, and must land nowhere.
+test("a run whose paper was replaced mid-read writes nothing", async () => {
+  const db = fake({ model: { analysis: ANALYSIS } });
+  let release = null;
+  let reached = null;
+  const held = new Promise((resolve) => { release = resolve; });
+  const arrived = new Promise((resolve) => { reached = resolve; });
+  const inner = db.options.fetchImpl;
+  const options = { ...db.options, fetchImpl: async (url, init) => {
+    if (String(url).endsWith("/v1/messages")) { reached(); await held; }
+    return inner(url, init);
+  } };
+  const { onboarding } = await OB.open(USER, {}, options);
+  const token = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
+  await OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: token, paper_familiarity: 2 }, CREDS, options);
+  const reading = OB.analysis(USER, onboarding, { run: true }, CREDS, options);
+  await arrived;
+  assert.equal(db.tables.engelbart_onboardings[0].analysis_status, "running");
+
+  // Back on the paper step, a different PDF.
+  const other = "55555555-5555-5555-5555-555555555555";
+  await OB.sources(USER, onboarding, { paper_id: other, paper_token: setupHandler.ownPaperToken(other, USER.id, ENV),
+    paper_familiarity: 3 }, CREDS, options);
+  release();
+
+  assert.deepEqual(await reading, { analysis_status: "superseded" });
+  const row = db.tables.engelbart_onboardings[0];
+  assert.equal(row.paper_id, other);
+  assert.equal(row.analysis, null);
+  assert.equal(row.paper_title, "");
+  assert.equal(row.analysis_error, "");
+  assert.equal(row.analysis_started_at, null);
+  // "none" until the second run says otherwise -- not the first run's "done".
+  assert.equal(row.analysis_status, "none");
+});
+
 test("a running analysis younger than three minutes is not started twice", async () => {
   const db = fake({ model: { analysis: ANALYSIS } });
   const { onboarding } = await OB.open(USER, {}, db.options);
