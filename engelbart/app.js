@@ -451,8 +451,13 @@
       return;
     }
     if (result.data.session) {
-      // The account exists and is signed in: setting up the first project is
-      // the next thing, and it has its own page.
+      // A terminal is waiting in this very tab: the pairing panel is the next
+      // thing, and navigating away would drop the installer's code.
+      if (pendingCode) {
+        showSession(result.data.session);
+        return;
+      }
+      // Otherwise setting up the first project is next, and it has its own page.
       window.location.href = "/engelbart/setup";
       return;
     }

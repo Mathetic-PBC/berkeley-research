@@ -20,3 +20,11 @@ test("the invite is reserved through engelbart_redeem_invite and signup lands on
   assert.match(app, /emailRedirectTo: window\.location\.origin \+ "\/engelbart\/setup"/);
   assert.match(app, /window\.location\.href = "\/engelbart\/setup"/);
 });
+
+test("a signup inside a pairing tab stays on the page for the pairing panel", () => {
+  const branch = app.indexOf("if (pendingCode)");
+  const redirect = app.indexOf('window.location.href = "/engelbart/setup"');
+  assert.ok(branch !== -1, "the signup handler must branch on the pending pairing code");
+  assert.ok(branch < redirect, "the pairing branch must come before the setup redirect");
+  assert.match(app, /if \(pendingCode\) \{\n\s*showSession\(result\.data\.session\);/);
+});
