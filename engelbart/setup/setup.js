@@ -97,7 +97,15 @@
 
   function fresh() { return "x" + Math.random().toString(36).slice(2, 8); }
 
-  function row(text) { return { id: fresh(), text: str(text) }; }
+  // A row, wrapped for editing. Idempotent on purpose: an already-wrapped row
+  // handed back here would otherwise be stringified into "[object Object]",
+  // and several callers rebuild rows from state that may already be wrapped.
+  function row(text) {
+    if (text && typeof text === "object") {
+      return { id: str(text.id) || fresh(), text: str(text.text) };
+    }
+    return { id: fresh(), text: str(text) };
+  }
 
   // --- persistence ----------------------------------------------------------
 
@@ -230,9 +238,15 @@
         // four cards: a later turn asks for what comes after them, not for a
         // plan that is already on screen.
         st.shown = ["questions", "plan", "goals", "todos"];
+        // st.card holds what the SERVER would have sent, not the wrapped
+        // working copy: restore() rebuilds st.pieces from it by wrapping
+        // every row, and wrapping an already-wrapped row stringifies it.
         st.card = { card: "todos", say: "",
                     todos: st.todos.map(function (t) { return t.text; }),
-                    subgoals: st.pieces };
+                    subgoals: st.pieces.map(function (g) {
+                      return { label: g.label,
+                               todos: g.todos.map(function (t) { return t.text; }) };
+                    }) };
         say("engelbart", briefSaid(st.sources));
         remember();
         draw();
