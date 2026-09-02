@@ -103,6 +103,10 @@
       "destination": "/engelbart/setup/index.html"
     },
     {
+      "source": "/engelbart/lab-search",
+      "destination": "/engelbart/lab-search/index.html"
+    },
+    {
       "source": "/engelbart/admin",
       "destination": "/engelbart/admin/index.html"
     },
@@ -123,6 +127,11 @@
     }
   },
   "redirects": [
+    {
+      "source": "/lab-search",
+      "destination": "/engelbart/lab-search",
+      "permanent": false
+    },
     {
       "source": "/engelbart/install.sh",
       "destination": "https://github.com/divadbaroon/claude-plugins/releases/download/engelbart-latest/install.sh",

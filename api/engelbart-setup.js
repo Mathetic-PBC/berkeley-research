@@ -255,6 +255,38 @@ async function handler(req, res) {
     // service-role curator RPCs the admin uses -- a PI, their students, their
     // projects, and their papers (authored to the PI, so lab views carry them).
     // Model-billed to the member, like every generation step.
+    // A pasted brief becomes the whole project. The links inside it are
+    // fetched here -- best effort, in parallel, each one bounded by the same
+    // guard and timeout "add a lab by link" uses -- and handed to the model as
+    // sources. A link that will not load is reported to the model as unread
+    // rather than failing the paste: a brief is still a brief without one of
+    // its pages, and the member gets `unsure` about it instead of an error.
+    if (action === "brief") {
+      const { credentials } = await memberCredentials(req);
+      const text = String(body.text || "").slice(0, SetupChat.MAX_BRIEF_TEXT);
+      const links = PageFetch.linksIn(text);
+      const sources = await Promise.all(links.map(async (url) => {
+        try {
+          return { url, text: await PageFetch.fetchPageText(url) };
+        } catch (error) {
+          // page-fetch's own messages are already the friendly ones ("that
+          // page answered 404"); publicError would flatten a 502 into "the
+          // service is unavailable", which is not what went wrong.
+          return { url, error: String(error.message || "could not be read").slice(0, 200) };
+        }
+      }));
+      const made = await SetupChat.fromBrief({ text, sources, credentials });
+      if (!made.ok) {
+        const error = new Error(made.error);
+        error.statusCode = 422;
+        throw error;
+      }
+      return sendJson(res, 200, {
+        payload: made.payload,
+        sources: sources.map((s) => ({ url: s.url, read: !s.error, error: s.error || "" })),
+      });
+    }
+
     if (action === "add_lab") {
       const { credentials } = await memberCredentials(req);
       const pageUrl = PageFetch.safeHttpUrl(body.url);

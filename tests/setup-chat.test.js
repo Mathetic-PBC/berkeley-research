@@ -181,3 +181,144 @@ test("a gateway refusal surfaces as an error, never as an empty card", async () 
     (error) => error.statusCode === 409,
   );
 });
+
+test("a second round of questions is open while the plan is due, and only one", () => {
+  // The stage never moves backwards -- the plan stays due throughout -- but
+  // the model is allowed to ask once more before it has to write one.
+  assert.deepEqual(SetupChat.allowedCards([]), ["questions"]);
+  assert.deepEqual(SetupChat.allowedCards(["questions"]), ["plan", "questions"]);
+  assert.equal(SetupChat.stageOf(["questions"]), "plan");
+  // Two rounds spent: the door is shut and the plan is the only card left.
+  assert.deepEqual(SetupChat.allowedCards(["questions", "questions"]), ["plan"]);
+  // Past the plan, the order is strict again.
+  assert.deepEqual(SetupChat.allowedCards(["questions", "plan"]), ["goals"]);
+});
+
+test("a follow-up questions card at the plan stage is drawn, not discarded", async () => {
+  // The regression this covers: with only `plan` allowed, this card was thrown
+  // away, its questions survived as prose, `shown` never grew, and the reader
+  // was asked the same thing every round with nothing to answer.
+  const calls = [];
+  const result = await SetupChat.turn({
+    transcript: [{ role: "you", text: "machine learning" }],
+    shown: ["questions"],
+    credentials: CREDENTIALS,
+  }, {
+    fetchImpl: modelSaying([{
+      say: "One thing first.",
+      card: "questions",
+      questions: { eyebrow: "the task", items: [{ title: "Predicting what?", type: "free" }] },
+    }], calls),
+  });
+  assert.equal(calls.length, 1, "a permitted card is never retried");
+  assert.equal(result.ok, true);
+  assert.equal(result.card, "questions");
+  assert.equal(result.questions.items.length, 1);
+  // The plan is still what the stage is waiting for.
+  assert.equal(result.due, "plan");
+  assert.match(calls[0].body.messages[0].content, /this is the round it is open on/);
+});
+
+test("the last round of questions spent, the model is told to write the plan anyway", async () => {
+  const calls = [];
+  const result = await SetupChat.turn({
+    transcript: [{ role: "you", text: "machine learning" }],
+    shown: ["questions", "questions"],
+    credentials: CREDENTIALS,
+  }, {
+    fetchImpl: modelSaying([
+      { say: "Still unclear.", card: "questions",
+        questions: { eyebrow: "again", items: [{ title: "Predicting what?", type: "free" }] } },
+      { say: "Here is what I think.", card: "plan",
+        plan: { description: "a classifier over student behaviour", unsure: ["which behaviour"] } },
+    ], calls),
+  });
+  assert.match(calls[0].body.messages[0].content, /asked every round of questions there is/);
+  // A third round is out of turn now, so it is discarded and retried.
+  assert.equal(calls.length, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.card, "plan");
+  assert.equal(result.plan.unsure.length, 1);
+});
+
+test("prose when a card is due is pushed once more before it is let through", async () => {
+  // Nothing drawn means `shown` does not grow, which means the same card is
+  // due next round: this is the loop that talked at the reader forever.
+  const calls = [];
+  const result = await SetupChat.turn({
+    transcript: [{ role: "you", text: "i approve" }],
+    shown: ["questions"],
+    credentials: CREDENTIALS,
+  }, {
+    fetchImpl: modelSaying([
+      { say: "I need to understand more first.", card: "none" },
+      { say: "Here is what I think.", card: "plan",
+        plan: { description: "a classifier over student behaviour", unsure: [] } },
+    ], calls),
+  });
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].body.messages[0].content, /replied with prose and no card/);
+  assert.equal(result.ok, true);
+  assert.equal(result.card, "plan");
+});
+
+test("prose twice over keeps the words rather than losing the round", async () => {
+  const result = await SetupChat.turn({
+    transcript: [{ role: "you", text: "hello" }],
+    shown: ["questions"],
+    credentials: CREDENTIALS,
+  }, {
+    fetchImpl: modelSaying([{ say: "kept words", card: "none" }]),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.card, "none");
+  assert.equal(result.say, "kept words");
+});
+
+test("a brief becomes a whole project in one pass", async () => {
+  const calls = [];
+  const result = await SetupChat.fromBrief({
+    text: "Sagar Karandikar https://sagark.org/ — try the hardware agent paper",
+    sources: [
+      { url: "https://arxiv.org/abs/2606.27350", text: "Chia: agents that design hardware." },
+      { url: "https://github.com/ucb-bar/chia.git", error: "That page answered 404" },
+    ],
+    credentials: CREDENTIALS,
+  }, {
+    fetchImpl: modelSaying([{
+      name: "Chia hardware agents",
+      plan: { description: "Compare LLMs on one hardware spec.", unsure: ["which baseline"] },
+      goals: [{ label: "A reproducible comparison", why: "it is the claim" }],
+      chosen: "A reproducible comparison",
+      subgoals: [{ label: "Read the paper", todos: ["Read the Chia paper end to end"] }],
+    }], calls),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.payload.name, "Chia hardware agents");
+  assert.equal(result.payload.goals.length, 1);
+  assert.equal(result.payload.subgoals[0].todos.length, 1);
+  assert.equal(result.payload.plan.unsure[0], "which baseline");
+  const prompt = calls[0].body.messages[0].content;
+  // Both the brief and the fetched pages reach the model, and a link that
+  // would not load is declared rather than quietly dropped.
+  assert.match(prompt, /Sagar Karandikar/);
+  assert.match(prompt, /agents that design hardware/);
+  assert.match(prompt, /could not be read: That page answered 404/);
+});
+
+test("a brief with nothing in it never reaches the model", async () => {
+  const calls = [];
+  const result = await SetupChat.fromBrief({ text: "   ", credentials: CREDENTIALS }, {
+    fetchImpl: modelSaying([{ name: "x" }], calls),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(calls.length, 0);
+});
+
+test("a reply with no plan and no goals is refused, not saved as an empty project", async () => {
+  const result = await SetupChat.fromBrief({
+    text: "some links", credentials: CREDENTIALS,
+  }, { fetchImpl: modelSaying([{ name: "Only a name" }]) });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /did not read as a project/);
+});

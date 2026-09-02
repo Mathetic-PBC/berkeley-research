@@ -39,6 +39,10 @@ const KINDS = ["mcq", "select_all", "free", "open"];
 const CHOICES = ["mcq", "select_all"];
 const ORDER = ["questions", "plan", "goals", "todos"];
 const MIN_QUESTION_ROUNDS = 1;
+// FORM offers "questions again if the answers opened something" and forbids a
+// third round. The stage machine has to allow exactly that many, or the model
+// is invited to ask a question it is then not allowed to draw.
+const MAX_QUESTION_ROUNDS = 2;
 
 // The proxy serves dated model ids only (see scripts/verify-proxy.mjs); the
 // bare alias a member's own subscription understands is not one the gateway
@@ -47,6 +51,56 @@ const FALLBACKS = { sonnet: "claude-sonnet-4-5-20250929", haiku: "claude-haiku-4
 const FALLBACK_MODEL = FALLBACKS.sonnet;
 const MAX_REPLY_TOKENS = 4096;
 const TURN_TIMEOUT_MS = 90 * 1000;
+
+// The brief: a member pastes what they were sent -- a name, some links, a
+// sentence about the paper, a suggested task -- and the whole project is
+// written from it in one pass, instead of being drawn out a card at a time.
+// The pages behind the links are fetched and handed over as sources, so the
+// model reads them rather than guessing from the URL.
+const MAX_BRIEF_TEXT = 6000;
+const MAX_SOURCE_TEXT = 6000;
+
+const BRIEF_FORM = [
+  "Someone has pasted the brief they were given for a research project --",
+  "usually a person to work with, a paper, a repository, and a sentence or",
+  "two about what might be worth trying. The pages behind their links have",
+  "been fetched for you and are quoted below. Read the brief AND the",
+  "sources, and write the whole project in one reply.",
+  "",
+  "Reply with ONE JSON object and nothing else:",
+  "",
+  '  {"name": "<a short name for the project, in their terms>",',
+  '   "plan": {"description": "<a couple of short paragraphs: what this work',
+  '                            is and what done looks like, written so they',
+  '                            could argue with it>",',
+  '            "unsure": ["<something the brief did not settle, in their',
+  '                        terms>"]},',
+  '   "goals": [{"label": "<an outcome, not a task>",',
+  '              "why": "<why this one is worth starting on>"}],',
+  '   "chosen": "<the label of the goal to start on>",',
+  '   "subgoals": [{"label": "<a piece of the chosen goal>",',
+  '                 "todos": ["<one row of work in that piece>"]}]}',
+  "",
+  "Write it for whoever was handed this brief: someone who has not read the",
+  "paper yet and has not opened the repository. The brief itself usually",
+  "says how to start -- read the paper, then the code, then find a task --",
+  "and that ordering is theirs, so keep it rather than inventing your own.",
+  "",
+  "Ground everything in what you were actually given. Name the real paper,",
+  "the real repository, the real person, the real system, using the names",
+  "the sources use. Where a link could not be read you are told so: work",
+  "from the brief's own words about it and put what you could not check in",
+  "`unsure` rather than inventing a finding, a result, or an API.",
+  "",
+  "A goal is an outcome someone could tell you they had reached. A TODO row",
+  "is one piece of work, in the imperative, that a coding agent could pick",
+  "up and finish. Neither is a phase, a heading or a category. Two to four",
+  "subgoals is usually the shape of it.",
+  "",
+  "`unsure` is what tells them whether you understood the brief or guessed",
+  "at it, so write the real gaps -- the ambiguous task, the result you",
+  "cannot see, the thing only their advisor knows -- and not none.",
+];
 
 // Verbatim from setup_chat.py FORM. Any edit belongs there first.
 const FORM = [
@@ -158,6 +212,21 @@ function stageOf(shown) {
     if (!drawn.includes(card)) return card;
   }
   return "none";
+}
+
+// The cards the model may draw this round. Normally that is just the one that
+// is due -- but while the plan is what comes next, a second round of questions
+// is still open, because the first round's answers can genuinely open the thing
+// the plan turns on. FORM promises that round; without it the model has no way
+// to ask, so it asks in prose instead, the card is discarded as out of turn,
+// and the reader is asked the same question every round while nothing is ever
+// drawn and no stage is ever reached.
+function allowedCards(shown) {
+  const due = stageOf(shown);
+  const rounds = (Array.isArray(shown) ? shown : [])
+    .filter((card) => card === "questions").length;
+  if (due === "plan" && rounds < MAX_QUESTION_ROUNDS) return [due, "questions"];
+  return [due];
 }
 
 function compose(transcript, extra) {
@@ -542,13 +611,28 @@ async function callModel(prompt, credentials, options = {}) {
 async function turn(input, options = {}) {
   const transcript = Array.isArray(input.transcript) ? input.transcript : [];
   const due = stageOf(input.shown);
+  const open = allowedCards(input.shown);
+  const second = open.includes("questions") && due !== "questions";
   const extra = due in DUE ? [
     "", "# The card you are writing now", "",
     `Whatever else you say, on this reply you ${DUE[due]}.`,
     "The reader is stepped through four cards in one order --",
     "questions, plan, goals, todos -- and a card out of turn is not",
     "drawn at all, so naming a different one costs them the round.",
-  ] : [];
+  ].concat(second ? [
+    "",
+    "One exception, and this is the round it is open on: if the answers so",
+    "far genuinely opened something the plan turns on, draw ONE more",
+    "questions card instead. This is the last round on which you may. Do",
+    "not take it to put off a plan you could already write.",
+  ] : due === "plan" ? [
+    "",
+    "You have asked every round of questions there is. Write the plan now,",
+    "from what they have actually told you -- and put what you still could",
+    "not settle in `unsure`, which is what that list is for. Asking again",
+    "in prose is not a card and draws nothing: they would see the question",
+    "and have no way to answer it.",
+  ] : []) : [];
   let raw;
   try {
     raw = await callModel(compose(transcript, extra).join("\n") + "\n", input.credentials, options);
@@ -557,42 +641,91 @@ async function turn(input, options = {}) {
     return { ok: false, error: one(error.message, 200) || "The model could not be reached" };
   }
   let card = normalizeCard(raw);
-  if (card.card !== "none" && card.card !== due) {
+
+  // A reply that draws nothing -- prose, or a card out of turn, which is
+  // discarded -- leaves `shown` exactly as it was, so the same card is due
+  // again next round, and the round after that. That is the loop: the reader
+  // is talked at forever and never handed anything to answer. Push back once,
+  // plainly, whether or not the reply came with words; keeping prose is not
+  // worth a conversation that cannot end.
+  if (due in DUE && !open.includes(card.card)) {
     const kept = card.say;
-    if (!kept) {
-      try {
-        raw = await callModel(compose(transcript, extra.concat([
-          "", `You just replied with a ${card.card} card when the card`
-          + ` due is ${due}. That reply was discarded. Write the ${due}`
-          + " card.",
-        ])).join("\n") + "\n", input.credentials, options);
-      } catch { raw = {}; }
-      card = normalizeCard(raw);
-    }
-    if (card.card !== due) {
-      card = {
-        ...card,
-        card: "none",
-        questions: { eyebrow: "", items: [] },
-        plan: { description: "", unsure: [] },
-        goals: [],
-        todos: [],
-        subgoals: [],
-      };
-      card.say = card.say || kept;
-    }
+    const why = card.card === "none"
+      ? ["You replied with prose and no card. Nothing was drawn, so they have",
+         `nothing to answer and the ${due} card is still what is due.`]
+      : [`You just replied with a ${card.card} card when the card due is`,
+         `${due}. That reply was discarded, so nothing was drawn and they`,
+         "have nothing to answer."];
+    try {
+      raw = await callModel(compose(transcript, extra.concat([""], why, [
+        `Reply again, with the ${due} card itself` + (second
+          ? " -- or, if what you need is genuinely open, the one further"
+            + " round of questions as a questions card."
+          : ", filled in from what they have already told you."),
+      ])).join("\n") + "\n", input.credentials, options);
+    } catch { raw = {}; }
+    const retried = normalizeCard(raw);
+    card = open.includes(retried.card) ? retried : {
+      ...retried,
+      card: "none",
+      questions: { eyebrow: "", items: [] },
+      plan: { description: "", unsure: [] },
+      goals: [],
+      todos: [],
+      subgoals: [],
+      say: retried.say || kept,
+    };
   }
+
   if (!card.say && card.card === "none") {
     return { ok: false, error: "the model answered with nothing" };
   }
   return { ...card, ok: true, due };
 }
 
+// The whole project from one paste. Unlike turn(), there is no card order to
+// hold to and nothing to discard: one call, one payload, which the browser
+// then shows for editing before anything is saved.
+async function fromBrief(input, options = {}) {
+  const text = String(input.text == null ? "" : input.text).slice(0, MAX_BRIEF_TEXT).trim();
+  if (!text) {
+    return { ok: false, error: "Paste the brief first" };
+  }
+  const sources = Array.isArray(input.sources) ? input.sources : [];
+  const lines = BRIEF_FORM.concat(["", "# The brief they pasted", "", text, ""]);
+  if (sources.length) {
+    lines.push("# What is behind their links", "");
+    for (const source of sources) {
+      lines.push(`## ${String(source.url || "")}`, "");
+      lines.push(source.error
+        ? `(this one could not be read: ${source.error})`
+        : String(source.text || "").slice(0, MAX_SOURCE_TEXT), "");
+    }
+  }
+  let raw;
+  try {
+    raw = await callModel(lines.join("\n") + "\n", input.credentials, options);
+  } catch (error) {
+    if (error.statusCode === 409) throw error;
+    return { ok: false, error: one(error.message, 200) || "The model could not be reached" };
+  }
+  const payload = normalizePayload(raw);
+  if (!payload.plan.description && !payload.goals.length) {
+    return { ok: false, error: "That did not read as a project brief" };
+  }
+  return { ok: true, payload };
+}
+
 module.exports = {
+  BRIEF_FORM,
   FALLBACK_MODEL,
   FORM,
   MAX_TURNS,
+  MAX_BRIEF_TEXT,
+  MAX_QUESTION_ROUNDS,
   MIN_QUESTION_ROUNDS,
+  allowedCards,
+  fromBrief,
   ORDER,
   compose,
   normalizeCard,
