@@ -27,9 +27,9 @@ const ANALYSIS = { title: "Zebra Tuning", one_liner: "It tunes zebras.", date: "
 // keyed per table; PATCH/GET filters understand `col=eq.value` only.
 // `emptyPatch` makes every PATCH match nothing (a lost write); `failTable`
 // makes one table's writes answer 500.
-function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = false, failTable = "" } = {}) {
+function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = false, failTable = "", dead = [] } = {}) {
   const tables = { engelbart_onboardings: [], engelbart_onboarding_calibrations: [],
-    engelbart_onboarding_asks: [], hc_profiles: [] };
+    engelbart_onboarding_asks: [], engelbart_onboarding_turns: [], hc_profiles: [] };
   const calls = [];
   const rpcs = [];
   let ids = 0;
@@ -75,7 +75,14 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
         hit.forEach((r) => Object.assign(r, body));
         return json(hit);
       }
+      if (method === "DELETE") {
+        const keep = rows.filter((r) => !match(r, u.search));
+        rows.splice(0, rows.length, ...keep);
+        return json(null, 204);
+      }
     }
+    // A link check: HEAD anywhere else. `dead` lists the URLs that answer 404.
+    if (method === "HEAD") return { ok: !dead.includes(url), status: dead.includes(url) ? 404 : 200, async text() { return ""; } };
     if (u.pathname.startsWith("/storage/v1/object/")) return { ok: true, status: 200, async arrayBuffer() { return pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength); }, async text() { return ""; } };
     if (u.pathname === "/v1/messages") {
       const text = body.messages[0].content.map((b) => b.text || "").join("\n");
@@ -83,7 +90,13 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
         : /calibration question/.test(text) ? model.grade
         : /Ask 3 or 4 questions/.test(text) ? model.details
         : /exactly four goals/.test(text) ? model.goals
-        : /TODO rows/.test(text) ? model.todos : model.ask;
+        : /identify the concrete inputs and outputs/.test(text) ? model.assets
+        : /locus of problem solving would lie/.test(text) ? model.leveled
+        : /You are brainstorming with them/.test(text) ? (typeof model.brainstorm === "function" ? model.brainstorm(text) : model.brainstorm)
+        : /The thing they are asking about/.test(text) ? model.assetAsk
+        : /Choose ONE direction|Revise the direction/.test(text) ? (typeof model.direction === "function" ? model.direction(text) : model.direction)
+        : /exactly three subgoals|Revise the three subgoals/.test(text) ? model.subgoals
+        : /Write the TODO rows for that first piece/.test(text) ? model.todos : model.ask;
       return json({ content: [{ type: "text", text: reply === undefined ? "I could not do that." : JSON.stringify(reply) }] });
     }
     if (u.hostname === "x.org") return { ok: true, status: 200, headers: { get: () => "text/html" }, async text() { return "<p>project page</p>"; } };
@@ -101,8 +114,11 @@ async function ready(db, extra = {}) {
   const { onboarding } = await OB.open(USER, {}, db.options);
   Object.assign(db.tables.engelbart_onboardings[0], { name: "Maya", year: "Second year", major: "CogSci",
     depth: "technical", paper_id: PAPER, paper_title: "Zebra Tuning", project_url: "https://x.org/p",
-    project_draft: "A tool", analysis: ANALYSIS, analysis_status: "done",
-    goals: { goals: [1, 2, 3, 4].map((n) => ({ label: `G${n}`, short: `s${n}`, why: `w${n}` })) }, ...extra });
+    project_draft: "A tool", analysis: ANALYSIS, analysis_status: "done", assets_status: "none", leveled_status: "none",
+    goals: { goals: [1, 2, 3, 4].map((n) => ({ label: `G${n}`, short: `s${n}`, why: `w${n}` })) },
+    direction: { title: "G2", what_you_would_make: "A tool", why_it_fits: "fits" },
+    subgoals: [{ label: "P1", description: "d1", why: "w1" }, { label: "P2", description: "d2", why: "w2" }, { label: "P3", description: "d3", why: "w3" }],
+    ...extra });
   db.tables.engelbart_onboarding_calibrations.push({ id: "cal-1", onboarding_id: onboarding.id, user_id: USER.id,
     area_index: 0, question_level: 50, self_level: 50, graded_level: 50, answered_at: "2026-09-02T00:00:00Z" });
   return db.tables.engelbart_onboardings[0];
@@ -120,6 +136,75 @@ test("open creates one live row and finds it again; a created row is shown, fres
   const fresh = await OB.open(USER, { fresh: true }, db.options);
   assert.equal(fresh.onboarding.status, "open");
   assert.notEqual(fresh.onboarding.id, first.onboarding.id);
+});
+
+// The profile is asked once: a second setup starts at the paper with the
+// four answers carried over, and says so, so the page counts from there.
+test("a member who finished a setup starts the next one at the paper with their profile", async () => {
+  const db = fake();
+  const first = await OB.open(USER, {}, db.options);
+  assert.equal(first.profile_reused, false, "a first setup asks everything");
+  Object.assign(db.tables.engelbart_onboardings[0], { status: "created", name: "Maya", year: "Second year", major: "CogSci", depth: "technical", step: 10 });
+  const shown = await OB.open(USER, {}, db.options);
+  assert.equal(shown.onboarding.status, "created");
+  assert.equal(shown.profile_reused, false, "the finished setup is shown as it was walked");
+  const next = await OB.open(USER, { fresh: true }, db.options);
+  assert.equal(next.onboarding.status, "open");
+  assert.equal(next.profile_reused, true);
+  assert.equal(next.onboarding.step, 4);
+  assert.deepEqual([next.onboarding.name, next.onboarding.year, next.onboarding.major, next.onboarding.depth],
+    ["Maya", "Second year", "CogSci", "technical"]);
+  assert.equal(next.onboarding.paper_id, undefined, "and nothing past the profile comes with it");
+  // Opening again finds the same row, still counted from the paper.
+  const again = await OB.open(USER, {}, db.options);
+  assert.equal(again.onboarding.id, next.onboarding.id);
+  assert.equal(again.profile_reused, true);
+});
+
+test("an open row without a profile is filled from the finished setup on open", async () => {
+  const db = fake();
+  db.tables.engelbart_onboardings.push(
+    { id: "old", user_id: USER.id, status: "created", step: 10, name: "Maya", year: "Second year", major: "CogSci", depth: "some", created_at: "2026-01-01" },
+    { id: "live", user_id: USER.id, status: "open", step: 1, name: "M", year: "", major: "", depth: "", created_at: "2026-02-01" });
+  const out = await OB.open(USER, {}, db.options);
+  assert.equal(out.onboarding.id, "live");
+  assert.equal(out.profile_reused, true);
+  assert.equal(out.onboarding.name, "M", "what the row already says stands");
+  assert.equal(out.onboarding.year, "Second year");
+  assert.equal(out.onboarding.depth, "some");
+  assert.equal(out.onboarding.step, 4);
+});
+
+// Test mode's two buttons: the account keeps its membership and credit and
+// loses only what it said here.
+test("reset drops the open row, or every row and the profile, and never the account", async () => {
+  const db = fake();
+  db.tables.hc_profiles.push({ id: "p", user_id: USER.id, display_name: "Maya" });
+  db.tables.engelbart_onboardings.push(
+    { id: "old", user_id: USER.id, status: "created", step: 10, name: "Maya", year: "Y", major: "M", depth: "some", created_at: "2026-01-01" },
+    { id: "live", user_id: USER.id, status: "open", step: 6, name: "Maya", year: "Y", major: "M", depth: "some", created_at: "2026-02-01" },
+    { id: "theirs", user_id: "other", status: "open", step: 2, created_at: "2026-02-01" });
+  assert.deepEqual(await OB.reset(USER, { scope: "project" }, db.options), { ok: true, scope: "project" });
+  assert.deepEqual(db.tables.engelbart_onboardings.map((r) => r.id), ["old", "theirs"]);
+  const next = await OB.open(USER, { fresh: true }, db.options);
+  assert.equal(next.profile_reused, true, "a finished setup still seeds the next one");
+  assert.equal(next.onboarding.step, 4);
+  assert.deepEqual(await OB.reset(USER, { scope: "all" }, db.options), { ok: true, scope: "all" });
+  assert.deepEqual(db.tables.engelbart_onboardings.map((r) => r.id), ["theirs"]);
+  assert.deepEqual(db.tables.hc_profiles, []);
+  const first = await OB.open(USER, {}, db.options);
+  assert.equal(first.profile_reused, false, "and the next setup is a first setup again");
+  assert.equal(first.onboarding.step, 0);
+  assert.ok(!first.onboarding.name, "with no profile carried over");
+});
+
+test("a profile table that will not clear does not stop the reset", async () => {
+  const db = fake({ failTable: "hc_profiles" });
+  db.tables.engelbart_onboardings.push({ id: "live", user_id: USER.id, status: "open", step: 3, created_at: "t" });
+  const quiet = console.error; console.error = () => {};
+  try { assert.deepEqual(await OB.reset(USER, { scope: "all" }, db.options), { ok: true, scope: "all" }); }
+  finally { console.error = quiet; }
+  assert.deepEqual(db.tables.engelbart_onboardings, []);
 });
 
 test("step keeps only whitelisted fields, bounds them, and never moves step backwards", async () => {
@@ -147,7 +232,7 @@ test("sources needs the paper token, stores the paper, and does not read it", as
   const token = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
   const out = await OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: token, project_url: "https://x.org/p",
     repo_url: "", paper_familiarity: 2 }, CREDS, db.options);
-  assert.deepEqual(out, { ok: true, analysis_status: "none" });
+  assert.deepEqual(out, { ok: true, analysis_status: "none", assets_status: "none" });
   const row = db.tables.engelbart_onboardings[0];
   assert.equal(row.paper_id, PAPER);
   assert.equal(row.project_url, "https://x.org/p");
@@ -168,7 +253,7 @@ test("a paper already on the row needs no token; another one still does", async 
   const token = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
   await OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: token, paper_familiarity: 2 }, CREDS, db.options);
   const again = await OB.sources(USER, onboarding, { paper_id: PAPER, paper_familiarity: 4 }, CREDS, db.options);
-  assert.deepEqual(again, { ok: true, analysis_status: "none" });
+  assert.deepEqual(again, { ok: true, analysis_status: "none", assets_status: "none" });
   assert.equal(db.tables.engelbart_onboardings[0].paper_familiarity, 4);
   const other = "44444444-4444-4444-4444-444444444444";
   await assert.rejects(OB.sources(USER, onboarding, { paper_id: other, paper_familiarity: 2 }, CREDS, db.options),
@@ -277,14 +362,15 @@ test("create maps the record to the pending payload, writes the profile, and is 
   const db = fake();
   const row = await ready(db);
   const out = await OB.create(USER, row, db.tables.engelbart_onboarding_calibrations,
-    { project_name: "zebra-tuner", goal_chosen: "G2", todos: ["do a", "do b"] }, db.options);
+    { project_name: "zebra-tuner", todos: ["do a", "do b"] }, db.options);
   assert.equal(out.ok, true);
   assert.equal(out.profile_saved, true);
   const saved = db.rpcs.find((r) => r.name === "engelbart_save_pending_setup").body.p_payload;
   assert.equal(saved.name, "zebra-tuner");
   assert.equal(saved.chosen, "G2");
-  assert.deepEqual(saved.todos, ["do a", "do b"]);
-  assert.equal(saved.goals.length, 4);
+  assert.deepEqual(saved.todos, []);
+  assert.deepEqual(saved.subgoals[0].todos, ["do a", "do b"]);
+  assert.equal(saved.goals.length, 1);
   assert.match(saved.plan.description, /A tool[\s\S]*Building on “Zebra Tuning” — It tunes zebras\./);
   assert.deepEqual(saved.paper, { paper_id: PAPER, title: "Zebra Tuning", url: "https://x.org/p" });
   assert.equal(saved.provenance.papers[0].paper_id, PAPER);
@@ -418,19 +504,19 @@ test("goals generates once, serves the stored four, and regenerates only when as
   assert.equal(modelCalls(db), 2);
 });
 
-test("todos serves the stored rows for the same goal and writes new ones for a new goal", async () => {
+test("todos serves the stored rows and regenerates only when asked; it needs the pieces", async () => {
   const db = fake({ model: { todos: { todos: ["do a", "do b"], name: "zebra tuner" } } });
   const row = await ready(db, { todos: null, project_name: "" });
-  const first = await OB.todos(USER, row, [], { goal: "G1" }, CREDS, db.options);
+  const first = await OB.todos(USER, row, [], {}, CREDS, db.options);
   assert.deepEqual(first.todos, ["do a", "do b"]);
   assert.equal(first.name, "zebra tuner");
-  assert.equal(row.goal_chosen, "G1");
-  await OB.todos(USER, row, [], { goal: "G1" }, CREDS, db.options);
-  assert.equal(modelCalls(db), 1);
-  await OB.todos(USER, row, [], { goal: "G2" }, CREDS, db.options);
-  assert.equal(modelCalls(db), 2);
   assert.equal(row.goal_chosen, "G2");
-  await assert.rejects(OB.todos(USER, row, [], {}, CREDS, db.options), (e) => e.statusCode === 400);
+  await OB.todos(USER, row, [], {}, CREDS, db.options);
+  assert.equal(modelCalls(db), 1);
+  await OB.todos(USER, row, [], { regenerate: true }, CREDS, db.options);
+  assert.equal(modelCalls(db), 2);
+  row.subgoals = null;
+  await assert.rejects(OB.todos(USER, row, [], {}, CREDS, db.options), (e) => e.statusCode === 409);
 });
 
 test("ask answers at the register asked for, keeps the exchange, and is a write like any other", async () => {
@@ -454,7 +540,7 @@ test("a profile that will not save does not cost the reader the project", async 
   const db = fake({ failTable: "hc_profiles" });
   const row = await ready(db);
   const out = await OB.create(USER, row, db.tables.engelbart_onboarding_calibrations,
-    { project_name: "zebra-tuner", goal_chosen: "G2", todos: ["do a", "do b"] }, db.options);
+    { project_name: "zebra-tuner", todos: ["do a", "do b"] }, db.options);
   assert.equal(out.ok, true);
   assert.equal(out.profile_saved, false);
   assert.equal(out.pending_setup_id, "33333333-3333-3333-3333-333333333333");
@@ -464,10 +550,231 @@ test("a profile that will not save does not cost the reader the project", async 
 
 test("a create that is refused leaves the record exactly as the reader left it", async () => {
   const db = fake();
-  const row = await ready(db, { project_name: "kept", goal_chosen: "G1", todos: ["only one"] });
+  const row = await ready(db, { project_name: "kept", todos: ["only one"] });
   await assert.rejects(OB.create(USER, row, [], { project_name: "zebra-tuner" }, db.options),
     (e) => e.statusCode === 400);
   assert.equal(row.project_name, "kept");
   assert.equal(row.status, "open");
   assert.equal(db.rpcs.length, 0);
+});
+
+// --- v2: the hunt, the assessment, the leveled list, the brainstorm, the plan ----
+
+const ASSETS = { assets: [
+  { title: "Pose viewer", description: "A viewer.", one_liner: "views poses", type: "demo", availability: "usable",
+    links: [{ kind: "live_demo", url: "https://x.org/demo" }, { kind: "source_code", url: "https://x.org/gone" }], what_you_can_do_with_it: "play" },
+  { title: "Dance corpus", description: "Videos.", one_liner: "dance videos", type: "dataset", availability: "usable",
+    links: [{ kind: "download", url: "https://x.org/gone" }], what_you_can_do_with_it: "pick clips" },
+] };
+const LEVELED = { locus: "geometry", sticky: ["angles"], assets: [
+  { ...ASSETS.assets[0], description: "A viewer, simply.", children: [{ title: "Toy poses", type: "dataset", why: "small first",
+    one_liner: "ten poses", links: [{ kind: "download", url: "https://x.org/toy" }] }] },
+  ASSETS.assets[1],
+] };
+const DIRECTION = { title: "Pose to angles", what_you_would_make: "A page that turns a pose into joint angles.", uses: ["Pose viewer"],
+  why_it_fits: "The geometry is the point.", first_visible_result: "one skeleton with its angles labelled" };
+const SUBGOALS = { subgoals: [{ label: "One pose drawn", description: "d1", why: "w1" }, { label: "Angles computed", description: "d2", why: "w2" },
+  { label: "A sequence compared", description: "d3", why: "w3" }] };
+
+test("sources clears the hunt with the analysis; the hunt stores the assets, the brief, and drops dead links", async () => {
+  const db = fake({ model: { assets: ASSETS }, dead: ["https://x.org/gone"] });
+  const row = await ready(db, { assets_status: "done", assets: { assets: [] }, leveled_status: "done", leveled: LEVELED, direction: DIRECTION });
+  const token = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
+  await OB.sources(USER, row, { paper_id: PAPER, paper_token: token, paper_familiarity: 1 }, CREDS, db.options);
+  assert.equal(row.assets_status, "none");
+  assert.equal(row.assets, null);
+  assert.equal(row.leveled, null);
+  assert.equal(row.direction, null, "a new paper starts the plan over");
+  const poll = await OB.assets(USER, row, {}, null, db.options);
+  assert.equal(poll.assets_status, "none");
+  const out = await OB.assets(USER, row, { run: true }, CREDS, db.options);
+  assert.equal(out.assets_status, "done");
+  assert.equal(row.assets.assets.length, 2);
+  assert.deepEqual(row.assets.assets[0].links, [{ kind: "live_demo", url: "https://x.org/demo" }], "the 404 is dropped");
+  assert.deepEqual(row.assets.assets[1].links, []);
+  assert.equal(row.assets.assets[1].availability, "unknown", "and an asset with no links left is no longer usable");
+  assert.deepEqual(row.assets_brief, [{ title: "Pose viewer", type: "demo", one_liner: "views poses" },
+    { title: "Dance corpus", type: "dataset", one_liner: "dance videos" }]);
+  assert.equal(db.calls.filter((c) => c.init.method === "HEAD").length, 3);
+  const again = await OB.assets(USER, row, {}, null, db.options);
+  assert.equal(again.assets_brief.length, 2);
+});
+
+test("a hunt that finds nothing is an error the page can show, and the running guard holds", async () => {
+  const db = fake({ model: { assets: { assets: [] } } });
+  const row = await ready(db);
+  const out = await OB.assets(USER, row, { run: true }, CREDS, db.options);
+  assert.equal(out.assets_status, "error");
+  assert.match(row.assets_error, /found nothing/);
+  row.assets_status = "running"; row.assets_started_at = new Date().toISOString();
+  assert.deepEqual(await OB.assets(USER, row, { run: true }, CREDS, db.options), { assets_status: "running" });
+});
+
+test("topics_done compiles the assessment from the calibration rows without the model", async () => {
+  const db = fake();
+  const row = await ready(db);
+  db.tables.engelbart_onboarding_calibrations.push({ id: "cal-2", onboarding_id: row.id, user_id: USER.id,
+    area_index: 1, question_level: 25, self_level: 75, graded_level: 25, grade_confidence: 0.9, grade_rationale: "recognises only",
+    answer: "I have seen tensors", answered_at: "2026-09-02T00:01:00Z" });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const before = modelCalls(db);
+  const out = await OB.topicsDone(USER, row, cals, {}, db.options);
+  assert.equal(modelCalls(db), before);
+  assert.equal(out.assessment.areas.length, 2);
+  assert.equal(out.assessment.areas[0].graded_level, 50);
+  assert.equal(out.assessment.areas[1].graded_level, 25);
+  assert.equal(out.assessment.areas[1].self_level, 75);
+  assert.equal(out.assessment.areas[1].rationale, "recognises only");
+  assert.deepEqual(out.assessment.areas[1].answers, ["I have seen tensors"]);
+  assert.equal(out.assessment.mean, 38);
+  assert.equal(out.assessment.depth, "technical", "a mean between the shifts leaves the register alone");
+  assert.equal(row.step, OB.STEP.brainstorm);
+  await assert.rejects(OB.topicsDone(USER, row, [], {}, db.options), (e) => e.statusCode === 400);
+});
+
+test("leveled waits for the hunt, then re-cuts the assets with children and checks their links", async () => {
+  const db = fake({ model: { assets: ASSETS, leveled: LEVELED }, dead: ["https://x.org/gone"] });
+  const row = await ready(db);
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  await assert.rejects(OB.leveled(USER, row, cals, { run: true }, CREDS, db.options), (e) => e.statusCode === 409, "needs the assessment");
+  await OB.topicsDone(USER, row, cals, {}, db.options);
+  const waiting = await OB.leveled(USER, row, cals, { run: true }, CREDS, db.options);
+  assert.equal(waiting.leveled_status, "waiting");
+  assert.equal(waiting.assets_status, "none");
+  await OB.assets(USER, row, { run: true }, CREDS, db.options);
+  const out = await OB.leveled(USER, row, cals, { run: true }, CREDS, db.options);
+  assert.equal(out.leveled_status, "done");
+  assert.equal(row.leveled.locus, "geometry");
+  assert.equal(row.leveled.assets[0].children[0].why, "small first");
+  assert.equal(row.leveled.assets[0].description, "A viewer, simply.");
+  const same = await OB.leveled(USER, row, cals, { run: true }, CREDS, db.options);
+  assert.equal(same.leveled, row.leveled, "a second run without retry serves the stored one");
+  assert.equal((await OB.leveled(USER, row, cals, {}, null, db.options)).leveled_status, "done");
+});
+
+test("a brainstorm turn stores both sides, carries the card, and keeps the interest current", async () => {
+  const asked = [];
+  const db = fake({ model: { brainstorm: (text) => { asked.push(text); return asked.length === 1
+    ? { say: "What drew you here?", card: "questions", interest: "", questions: { eyebrow: "first", items: [
+        { id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math" }] }] } }
+    : { say: "Good.", card: "focus", interest: "the geometry of poses", focus: { title: "Which?", options: [{ label: "Angles", why: "a" }, { label: "Timing", why: "b" }] } }; } } });
+  const row = await ready(db, { assets_brief: [{ title: "Pose viewer", type: "demo", one_liner: "views poses" }] });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const first = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
+  assert.equal(first.card, "questions");
+  assert.equal(first.say, "What drew you here?");
+  assert.match(asked[0], /Pose viewer \(demo\): views poses/, "the brief is in the prompt");
+  assert.equal(db.tables.engelbart_onboarding_turns.length, 1, "the opening turn is the model's alone");
+  const repeat = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
+  assert.equal(repeat.card, "questions");
+  assert.equal(asked.length, 1, "asking again with nothing new hands back the last card");
+  const second = await OB.brainstorm(USER, row, cals, { answers: { drew: "The math" } }, CREDS, db.options);
+  assert.equal(second.card, "focus");
+  assert.match(asked[1], /They: What drew you\? The math/);
+  assert.equal(row.interest, "the geometry of poses");
+  assert.equal(row.step, OB.STEP.brainstorm);
+  const turns = db.tables.engelbart_onboarding_turns;
+  assert.deepEqual(turns.map((t) => t.role), ["assistant", "user", "assistant"]);
+  assert.equal(turns[2].card.card, "focus");
+  const opened = await OB.open(USER, {}, db.options);
+  assert.equal(opened.turns.length, 3, "the transcript comes back with the row");
+  assert.equal(opened.turns[0].card.questions.items[0].id, "drew");
+});
+
+test("asking about an asset threads on its key; choosing one keeps the child's parent and resets the plan", async () => {
+  const db = fake({ model: { assetAsk: { answer: "Start with the toy." } } });
+  const row = await ready(db, { leveled: LEVELED, leveled_status: "done", direction: DIRECTION });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  await assert.rejects(OB.assetAsk(USER, row, cals, { key: "Nope", question: "?" }, CREDS, db.options), (e) => e.statusCode === 400);
+  const out = await OB.assetAsk(USER, row, cals, { key: "Pose viewer :: Toy poses", question: "Where do I start?" }, CREDS, db.options);
+  assert.equal(out.answer, "Start with the toy.");
+  const turns = db.tables.engelbart_onboarding_turns;
+  assert.deepEqual(turns.map((t) => [t.stage, t.asset_key, t.role]), [["asset", "Pose viewer :: Toy poses", "user"], ["asset", "Pose viewer :: Toy poses", "assistant"]]);
+  const chosen = await OB.chooseAsset(USER, row, { key: "Pose viewer :: Toy poses" }, db.options);
+  assert.equal(chosen.asset_chosen.title, "Toy poses");
+  assert.equal(chosen.asset_chosen.parent, "Pose viewer");
+  assert.equal(chosen.asset_chosen.children, undefined);
+  assert.equal(row.direction, null, "a new pick starts the plan over");
+  assert.equal(row.step, OB.STEP.direction);
+  assert.equal(OB.findAsset(row, "Dance corpus").parent, null);
+});
+
+test("one direction, revised on feedback; three subgoals, revised on feedback; todos for the first piece only", async () => {
+  const seen = [];
+  const db = fake({ model: { direction: (text) => { seen.push(text); return /Revise the direction/.test(text)
+    ? { ...DIRECTION, title: "Pose to angles, live" } : DIRECTION; }, subgoals: SUBGOALS,
+    todos: { todos: ["Draw one pose from the toy set", "Label its angles"], name: "pose-angles" } } });
+  const row = await ready(db, { leveled: LEVELED, leveled_status: "done", interest: "geometry", project_name: "" });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  await assert.rejects(OB.direction(USER, row, cals, {}, CREDS, db.options), (e) => e.statusCode === 409, "needs a pick");
+  await OB.chooseAsset(USER, row, { key: "Pose viewer" }, db.options);
+  const first = await OB.direction(USER, row, cals, {}, CREDS, db.options);
+  assert.equal(first.direction.title, "Pose to angles");
+  assert.match(seen[0], /Choose ONE direction/);
+  assert.match(seen[0], /What they are drawn to: "geometry"/);
+  assert.equal((await OB.direction(USER, row, cals, {}, CREDS, db.options)).direction.title, "Pose to angles");
+  assert.equal(seen.length, 1, "asking again serves the stored one");
+  const revised = await OB.direction(USER, row, cals, { revise: "make it live video" }, CREDS, db.options);
+  assert.equal(revised.direction.title, "Pose to angles, live");
+  assert.match(seen[1], /What they want changed: "make it live video"/);
+  assert.match(seen[1], /Pose to angles/);
+  const dturns = db.tables.engelbart_onboarding_turns.filter((t) => t.stage === "direction");
+  assert.deepEqual(dturns.map((t) => t.role), ["assistant", "user", "assistant"]);
+
+  const sg = await OB.subgoals(USER, row, cals, {}, CREDS, db.options);
+  assert.equal(sg.subgoals.length, 3);
+  assert.equal(row.step, OB.STEP.subgoals);
+  await OB.subgoals(USER, row, cals, { revise: "swap two and three" }, CREDS, db.options);
+  assert.equal(db.tables.engelbart_onboarding_turns.filter((t) => t.stage === "subgoals").length, 3);
+
+  const rows = await OB.todos(USER, row, cals, {}, CREDS, db.options);
+  assert.deepEqual(rows.todos, ["Draw one pose from the toy set", "Label its angles"]);
+  assert.equal(rows.name, "pose-angles");
+  assert.equal(row.goal_chosen, "Pose to angles, live");
+  const prompt = db.calls.filter((c) => c.url.endsWith("/v1/messages")).pop().init.body;
+  assert.match(prompt, /One pose drawn/);
+  assert.doesNotMatch(prompt, /Write rows for the other pieces/);
+  assert.equal(row.step, OB.STEP.todos);
+  // Re-deciding the direction throws the pieces and rows away.
+  await OB.direction(USER, row, cals, { revise: "again" }, CREDS, db.options);
+  assert.equal(row.subgoals, null);
+  assert.equal(row.todos, null);
+});
+
+test("create maps the direction and its pieces to the payload: one goal, three subgoals, rows on the first", async () => {
+  const db = fake();
+  const row = await ready(db, { direction: DIRECTION, subgoals: SUBGOALS.subgoals, todos: ["Draw one pose", "Label angles"],
+    project_name: "pose-angles", asset_chosen: { key: "Pose viewer", title: "Pose viewer", links: [{ kind: "live_demo", url: "https://x.org/demo" }] },
+    interest: "geometry", goal_chosen: "", goals: null });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const out = await OB.create(USER, row, cals, {}, db.options);
+  assert.equal(out.ok, true);
+  const payload = db.rpcs.find((r) => r.name === "engelbart_save_pending_setup").body.p_payload;
+  assert.deepEqual(payload.goals, [{ label: "Pose to angles", why: "The geometry is the point." }]);
+  assert.equal(payload.chosen, "Pose to angles");
+  assert.deepEqual(payload.todos, []);
+  assert.equal(payload.subgoals.length, 3);
+  assert.deepEqual(payload.subgoals[0].todos, ["Draw one pose", "Label angles"]);
+  assert.deepEqual(payload.subgoals[1].todos, []);
+  assert.equal(payload.subgoals[2].description, "d3");
+  assert.equal(payload.subgoals[2].why, "w3");
+  assert.match(payload.plan.description, /turns a pose into joint angles[\s\S]*Building on “Zebra Tuning”[\s\S]*Starting from Pose viewer <https:\/\/x\.org\/demo>[\s\S]*What drew them: geometry/);
+  assert.equal(payload.provenance.idea.title, "Pose to angles");
+  assert.equal(row.goal_chosen, "Pose to angles");
+  assert.equal(row.step, OB.STEP.done);
+  assert.equal(row.status, "created");
+  const normalized = SetupChat.normalizePayload(payload);
+  assert.equal(normalized.subgoals.length, 3);
+  assert.deepEqual(normalized.subgoals[0].todos, ["Draw one pose", "Label angles"]);
+});
+
+test("create refuses without a direction, three subgoals, and two rows", async () => {
+  const db = fake();
+  const row = await ready(db, { direction: null, subgoals: null, todos: ["a", "b"], project_name: "p" });
+  await assert.rejects(OB.create(USER, row, [], {}, db.options), /direction/);
+  row.direction = DIRECTION;
+  await assert.rejects(OB.create(USER, row, [], {}, db.options), /subgoals/);
+  row.subgoals = SUBGOALS.subgoals; row.todos = ["a"];
+  await assert.rejects(OB.create(USER, row, [], {}, db.options), /two todos/);
+  assert.equal(row.status, "open");
 });

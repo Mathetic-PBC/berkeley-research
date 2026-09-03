@@ -12,12 +12,16 @@ const Storage = require("./storage");
 const PageFetch = require("./page-fetch");
 const Curated = require("./curated");
 const SetupChat = require("./setup-chat");
-const { insertRows, patchRows, selectRows, rpc } = require("./supabase");
+const { deleteRows, insertRows, patchRows, selectRows, rpc } = require("./supabase");
 
 const TABLE = "engelbart_onboardings";
 const CALIBRATIONS = "engelbart_onboarding_calibrations";
 const ASKS = "engelbart_onboarding_asks";
+const TURNS = "engelbart_onboarding_turns";
 const PROFILES = "hc_profiles";
+const STEP = { paper: 4, install: 5, topics: 6, brainstorm: 7, assets: 8, direction: 9, subgoals: 10, todos: 11, done: 12 };
+const LINK_CHECK_MS = 5000;
+const MAX_LINK_CHECKS = 40;
 const RUNNING_STALE_MS = 180 * 1000;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const DEPTH_KEYS = P.DEPTHS.map((d) => d.key);
@@ -66,20 +70,81 @@ function publicRow(row) {
   return rest;
 }
 
+const PROFILE_FIELDS = ["name", "year", "major", "depth"];
+const PAPER_STEP = 4;
+
+function hasProfile(row) {
+  return Boolean(row) && PROFILE_FIELDS.every((k) => row[k]);
+}
+
 // The live row: the open one, else the newest created one (the page shows
 // Done again), else a new one. `fresh` skips a created row and starts over.
+//
+// The profile is asked once. A member who has finished a setup before has
+// already said who they are; the next setup starts at the paper with those
+// four answers carried over, and the reply says so (`profile_reused`) so the
+// page can count its steps from there. An open row that predates the finished
+// one, or was made before this rule, is filled in the same way on open.
 async function open(user, body, options = {}) {
   const rows = await rowsOf(user, options);
   let row = rows.find((r) => r.status === "open");
   if (!row && !(body && body.fresh)) row = rows.find((r) => r.status === "created");
+  const prior = rows.find((r) => r.status === "created" && hasProfile(r) && (!row || r.id !== row.id)) || null;
   if (!row) {
     // status/step are the table's own defaults, written explicitly so the
     // row we hand back is the row the table holds without a re-read.
-    const made = await insertRows(TABLE, [{ user_id: user.id, status: "open", step: 0 }], options);
+    const seed = { user_id: user.id, status: "open", step: 0 };
+    if (prior) { for (const k of PROFILE_FIELDS) seed[k] = prior[k]; seed.step = PAPER_STEP; }
+    const made = await insertRows(TABLE, [seed], options);
     row = Array.isArray(made) ? made[0] : made;
+  } else if (prior && row.status === "open" && (!hasProfile(row) || (Number(row.step) || 0) < PAPER_STEP)) {
+    const values = {};
+    for (const k of PROFILE_FIELDS) values[k] = row[k] || prior[k];
+    values.step = Math.max(Number(row.step) || 0, PAPER_STEP);
+    await patch(row, values, options);
   }
   const calibrations = await calibrationsOf(row, options);
-  return { onboarding: publicRow(row), calibrations: calibrations.map(publicRow) };
+  const turns = await turnsOf(row, "brainstorm", "", options);
+  return { onboarding: publicRow(row), calibrations: calibrations.map(publicRow),
+    turns: turns.map(publicTurn), profile_reused: Boolean(prior) };
+}
+
+// --- turns: every conversational exchange on the page -------------------------
+
+async function turnsOf(row, stage, assetKey, options) {
+  const key = assetKey ? `&${eq("asset_key", assetKey)}` : "";
+  return selectRows(TURNS, `${eq("onboarding_id", row.id)}&${eq("stage", stage)}${key}&select=*&order=created_at.asc`, options);
+}
+
+function publicTurn(t) {
+  return { id: t.id, stage: t.stage, asset_key: t.asset_key || "", role: t.role, content: t.content, card: t.card || null, created_at: t.created_at };
+}
+
+async function addTurn(user, row, stage, assetKey, role, content, card, options) {
+  const rows = await insertRows(TURNS, [{ onboarding_id: row.id, user_id: user.id, stage, asset_key: assetKey || "",
+    role, content: long(content, 4000), card: card || null }], options);
+  return wroteOne(rows);
+}
+
+// Test mode's two buttons. `project` drops the open row, so the next open
+// starts a new one (still seeded from a finished setup, if there is one).
+// `all` drops every setup the account has made -- calibrations and asks go
+// with them -- and the saved profile, so the next open is a first setup
+// again. The account, its membership and its credit are not touched.
+async function reset(user, body, options = {}) {
+  const scope = body && body.scope === "all" ? "all" : "project";
+  if (scope === "project") {
+    await deleteRows(TABLE, `${eq("user_id", user.id)}&status=eq.open`, options);
+    return { ok: true, scope };
+  }
+  await deleteRows(TABLE, eq("user_id", user.id), options);
+  try {
+    await deleteRows(PROFILES, eq("user_id", user.id), options);
+  } catch (error) {
+    // Same posture as saveProfile: the profile table ships on its own schedule.
+    console.error("engelbart-onboarding: profile not cleared:", one(error && error.message, 200));
+  }
+  return { ok: true, scope };
 }
 
 // --- step: the fields the page may write ------------------------------------
@@ -118,7 +183,7 @@ async function step(user, row, body, options = {}) {
     values.details = { ...row.details, answers };
   }
   const asked = Number(body && body.step);
-  if (Number.isInteger(asked)) values.step = Math.max(Number(row.step) || 0, Math.min(10, Math.max(0, asked)));
+  if (Number.isInteger(asked)) values.step = Math.max(Number(row.step) || 0, Math.min(STEP.done, Math.max(0, asked)));
   await patch(row, values, options);
   return { onboarding: publicRow(row) };
 }
@@ -224,8 +289,302 @@ async function sources(user, row, body, credentials, options = {}) {
   // the old paper must leave no trace that reads as this paper's run.
   await patch(row, { paper_id: paperId, project_url: optionalUrl(body.project_url), repo_url: optionalUrl(body.repo_url),
     paper_familiarity: familiarity, analysis: null, paper_title: "", analysis_status: "none",
-    analysis_error: "", analysis_started_at: null }, options);
-  return { ok: true, analysis_status: "none" };
+    analysis_error: "", analysis_started_at: null,
+    assets: null, assets_brief: null, assets_status: "none", assets_error: "", assets_started_at: null,
+    assessment: null, leveled: null, leveled_status: "none", leveled_error: "", leveled_started_at: null,
+    asset_chosen: null, direction: null, subgoals: null, todos: null }, options);
+  return { ok: true, analysis_status: "none", assets_status: "none" };
+}
+
+// --- the asset hunt ------------------------------------------------------------
+//
+// Same shape as the analysis: started by the page right after the paper is
+// accepted, runs to completion in its own invocation, polled for free. The
+// model searches the web for where each thing lives; every link it returns
+// is then checked here, because a link that answers 404 is worse than none.
+
+function running(row, prefix, now = Date.now()) {
+  if (row[`${prefix}_status`] !== "running") return false;
+  const started = Date.parse(row[`${prefix}_started_at`] || "") || 0;
+  return now - started < RUNNING_STALE_MS;
+}
+
+async function linkAlive(url, options) {
+  const fetchImpl = (options && options.fetchImpl) || global.fetch;
+  try {
+    PageFetch.safeHttpUrl(url);
+  } catch {
+    return false;
+  }
+  try {
+    const response = await fetchImpl(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(LINK_CHECK_MS) });
+    // Only a host that positively says the thing is gone loses the link; a
+    // refusal of HEAD (403, 405) or a timeout is not evidence either way.
+    return !(response.status === 404 || response.status === 410);
+  } catch {
+    return true;
+  }
+}
+
+async function verifyLinks(assets, options) {
+  let budget = MAX_LINK_CHECKS;
+  async function check(asset) {
+    const had = asset.links.length;
+    const verdicts = await Promise.all(asset.links.map((l) => {
+      if (budget <= 0) return Promise.resolve(true);
+      budget -= 1;
+      return linkAlive(l.url, options);
+    }));
+    asset.links = asset.links.filter((_, i) => verdicts[i]);
+    if (had && !asset.links.length && asset.availability === "usable") asset.availability = "unknown";
+    for (const child of Array.isArray(asset.children) ? asset.children : []) await check(child);
+  }
+  for (const asset of assets) await check(asset);
+  return assets;
+}
+
+async function runAssets(user, row, credentials, options) {
+  const mine = row.paper_id;
+  await patch(row, { assets_status: "running", assets_started_at: new Date().toISOString(), assets_error: "" }, options);
+  try {
+    const pdf = await Storage.downloadObject(Storage.paperObjectPath(mine), { ...options, maxBytes: MAX_PDF_BYTES });
+    if (pdf.length > MAX_PDF_BYTES) throw fail("That PDF is larger than 20 MB", 413);
+    const found = await OM.assets({ pdfBase64: pdf.toString("base64") }, credentials, options);
+    const assets = await verifyLinks(found.assets, options);
+    if (await supersededBy(row, mine, options)) return { assets_status: "superseded" };
+    const value = { assets, searched: found.searched };
+    await patch(row, { assets: value, assets_brief: OM.briefOf(assets), assets_status: "done" }, options);
+    return { assets_status: "done", assets: value, assets_brief: row.assets_brief };
+  } catch (error) {
+    if (await supersededBy(row, mine, options)) return { assets_status: "superseded" };
+    await patch(row, { assets_status: "error", assets_error: one(error.message, 300) || "the asset hunt failed" }, options);
+    if (error.statusCode === 409) throw error;
+    return { assets_status: "error", assets_error: row.assets_error };
+  }
+}
+
+async function assetsAction(user, row, body, credentials, options = {}) {
+  if (body && (body.run || body.retry)) {
+    if (!row.paper_id) throw fail("Add the paper first", 400);
+    if (running(row, "assets")) return { assets_status: "running" };
+    return runAssets(user, row, credentials, options);
+  }
+  const out = { assets_status: row.assets_status };
+  if (row.assets_status === "done") { out.assets = row.assets; out.assets_brief = row.assets_brief; }
+  if (row.assets_status === "error") out.assets_error = row.assets_error;
+  return out;
+}
+
+// --- what the topic questions found ------------------------------------------
+
+// Compiled once, from the calibration rows, when the last area is answered.
+// No model call: the grades are already on the rows.
+function compileAssessment(row, calibrations) {
+  const areas = row.analysis && Array.isArray(row.analysis.areas) ? row.analysis.areas : [];
+  const levels = areaLevels(row.analysis, calibrations);
+  const out = areas.map((a, i) => {
+    const mine = (calibrations || []).filter((c) => Number(c.area_index) === i && c.answered_at)
+      .sort((x, y) => String(x.answered_at).localeCompare(String(y.answered_at)));
+    const last = mine[mine.length - 1] || null;
+    const graded = mine.filter((c) => c.graded_level != null);
+    const lastGraded = graded[graded.length - 1] || null;
+    return { area: a.area, parent_field: a.parent_field || "", project_role: a.project_role || "",
+      self_level: last ? Number(last.self_level) : null,
+      graded_level: levels[i],
+      confidence: lastGraded && lastGraded.grade_confidence != null ? Number(lastGraded.grade_confidence) : null,
+      rationale: lastGraded ? one(lastGraded.grade_rationale, 300) : "",
+      questions_asked: mine.length,
+      answers: mine.map((c) => long(c.answer, 600)) };
+  });
+  const known = levels.filter((l) => l != null);
+  const assessed = assessedDepth(row.depth, levels);
+  return { areas: out, mean: known.length ? Math.round(known.reduce((a, b) => a + b, 0) / known.length) : null,
+    depth: assessed.key, depth_shift: assessed.shift, compiled_at: new Date().toISOString() };
+}
+
+async function topicsDone(user, row, calibrations, body, options = {}) {
+  requireOpen(row);
+  if (row.analysis_status !== "done") throw fail("The paper is still being read", 409);
+  const assessment = compileAssessment(row, calibrations);
+  if (!assessment.areas.some((a) => a.questions_asked > 0)) throw fail("Answer the topic questions first", 400);
+  await patch(row, { assessment, step: Math.max(Number(row.step) || 0, STEP.brainstorm) }, options);
+  return { assessment };
+}
+
+// --- the assets, re-cut for this reader -----------------------------------------
+//
+// Needs the hunt AND the assessment. Started by the page as soon as the
+// topics are answered; while the hunt is still out, it answers `waiting`
+// and the page asks again during the brainstorm.
+
+async function runLeveled(user, row, calibrations, credentials, options) {
+  const mine = row.paper_id;
+  await patch(row, { leveled_status: "running", leveled_started_at: new Date().toISOString(), leveled_error: "" }, options);
+  try {
+    const leveled = await OM.levelAssets({ reader: readerOf(row, calibrations), assessment: row.assessment,
+      assets: row.assets.assets, interest: row.interest || "" }, credentials, options);
+    await verifyLinks(leveled.assets, options);
+    if (await supersededBy(row, mine, options)) return { leveled_status: "superseded" };
+    await patch(row, { leveled, leveled_status: "done" }, options);
+    return { leveled_status: "done", leveled };
+  } catch (error) {
+    if (await supersededBy(row, mine, options)) return { leveled_status: "superseded" };
+    await patch(row, { leveled_status: "error", leveled_error: one(error.message, 300) || "levelling failed" }, options);
+    if (error.statusCode === 409) throw error;
+    return { leveled_status: "error", leveled_error: row.leveled_error };
+  }
+}
+
+async function leveledAction(user, row, calibrations, body, credentials, options = {}) {
+  if (body && (body.run || body.retry)) {
+    if (!row.assessment) throw fail("Answer the topic questions first", 409);
+    if (row.assets_status !== "done" || !row.assets) {
+      if (row.assets_status === "error") return { leveled_status: "waiting", assets_status: "error", assets_error: row.assets_error };
+      return { leveled_status: "waiting", assets_status: row.assets_status };
+    }
+    if (running(row, "leveled")) return { leveled_status: "running" };
+    if (row.leveled_status === "done" && row.leveled && !body.retry) return { leveled_status: "done", leveled: row.leveled };
+    return runLeveled(user, row, calibrations, credentials, options);
+  }
+  const out = { leveled_status: row.leveled_status, assets_status: row.assets_status };
+  if (row.leveled_status === "done") out.leveled = row.leveled;
+  if (row.leveled_status === "error") out.leveled_error = row.leveled_error;
+  return out;
+}
+
+// --- brainstorm ---------------------------------------------------------------
+
+// What the reader said this turn, as one line of transcript: typed text, the
+// answers to a card, a focus pick with its note. Empty on the opening turn.
+function userTurnText(body, lastCard) {
+  const parts = [];
+  const text = long(body && body.text, 2000);
+  if (text) parts.push(text);
+  const answers = body && body.answers && typeof body.answers === "object" ? body.answers : null;
+  if (answers && lastCard && lastCard.card === "questions") {
+    for (const q of lastCard.questions.items) {
+      if (!(q.id in answers)) continue;
+      const a = answers[q.id];
+      const said = Array.isArray(a) ? a.map((x) => one(x, 160)).filter(Boolean).join("; ") : long(a, 1000);
+      if (said) parts.push(`${q.title} ${said}`);
+    }
+  }
+  const pick = one(body && body.pick, 160);
+  if (pick) parts.push(`Focus: ${pick}`);
+  const note = long(body && body.note, 1000);
+  if (note) parts.push(note);
+  return parts.join("\n");
+}
+
+function assistantTurnText(reply) {
+  const parts = [reply.say];
+  if (reply.card === "questions") parts.push(...reply.questions.items.map((q) => `(asked) ${q.title}`));
+  if (reply.card === "focus") parts.push(`(offered) ${reply.focus.options.map((o) => o.label).join(" / ")}`);
+  return parts.filter(Boolean).join("\n");
+}
+
+async function brainstormAction(user, row, calibrations, body, credentials, options = {}) {
+  requireOpen(row);
+  if (row.analysis_status !== "done") throw fail("The paper is still being read", 409);
+  const turns = await turnsOf(row, "brainstorm", "", options);
+  const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");
+  const said = userTurnText(body, lastAssistant && lastAssistant.card);
+  if (said) {
+    const made = await addTurn(user, row, "brainstorm", "", "user", said, null, options);
+    turns.push(made);
+  } else if (turns.length && !(body && body.again)) {
+    // Nothing new to say and a conversation already open: the last card
+    // stands, so hand it back rather than ask the model to repeat itself.
+    return { ...publicReply(lastAssistant), leveled_status: row.leveled_status, interest: row.interest || "" };
+  }
+  const reply = await OM.brainstorm({ reader: readerOf(row, calibrations), paper: paperOf(row),
+    assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })) },
+    credentials, options);
+  const card = { card: reply.card, questions: reply.questions, focus: reply.focus };
+  const made = await addTurn(user, row, "brainstorm", "", "assistant", assistantTurnText(reply), card, options);
+  const values = { step: Math.max(Number(row.step) || 0, STEP.brainstorm) };
+  if (reply.interest) values.interest = reply.interest;
+  await patch(row, values, options);
+  return { ...publicReply(made), leveled_status: row.leveled_status, interest: row.interest || "" };
+}
+
+function publicReply(turn) {
+  const card = turn && turn.card ? turn.card : { card: "none" };
+  return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split("\n(")[0] : "",
+    card: card.card || "none", questions: card.questions, focus: card.focus };
+}
+
+// --- assets: ask, choose ------------------------------------------------------
+
+// An asset is named by its title, a child by "parent title :: child title".
+function findAsset(row, key) {
+  const list = row.leveled && Array.isArray(row.leveled.assets) ? row.leveled.assets
+    : row.assets && Array.isArray(row.assets.assets) ? row.assets.assets : [];
+  const [parentTitle, childTitle] = String(key || "").split(" :: ");
+  const parent = list.find((a) => a.title === parentTitle);
+  if (!parent) return null;
+  if (!childTitle) return { asset: parent, parent: null };
+  const child = (parent.children || []).find((c) => c.title === childTitle);
+  return child ? { asset: child, parent } : null;
+}
+
+async function assetAsk(user, row, calibrations, body, credentials, options = {}) {
+  requireOpen(row);
+  const key = one(body && body.key, 260);
+  const question = one(body && body.question, 300);
+  if (!question) throw fail("Ask something first", 400);
+  const found = findAsset(row, key);
+  if (!found) throw fail("That is not one of the things on the list", 400);
+  const thread = await turnsOf(row, "asset", key, options);
+  const made = await OM.assetAsk({ reader: readerOf(row, calibrations), paper: paperOf(row), asset: found.asset,
+    thread: thread.map((t) => ({ role: t.role, content: t.content })), question }, credentials, options);
+  await addTurn(user, row, "asset", key, "user", question, null, options);
+  const reply = await addTurn(user, row, "asset", key, "assistant", made.answer, null, options);
+  return { answer: made.answer, turn_id: reply.id };
+}
+
+async function chooseAsset(user, row, body, options = {}) {
+  requireOpen(row);
+  const key = one(body && body.key, 260);
+  const found = findAsset(row, key);
+  if (!found) throw fail("Pick one of the things on the list", 400);
+  const { children, ...rest } = found.asset;
+  const chosen = { key, ...rest, parent: found.parent ? found.parent.title : "" };
+  await patch(row, { asset_chosen: chosen, direction: null, subgoals: null, todos: null,
+    step: Math.max(Number(row.step) || 0, STEP.direction) }, options);
+  return { asset_chosen: chosen };
+}
+
+// --- direction, subgoals -------------------------------------------------------
+
+async function directionAction(user, row, calibrations, body, credentials, options = {}) {
+  requireOpen(row);
+  if (!row.asset_chosen) throw fail("Pick what to build on first", 409);
+  const feedback = long(body && body.revise, 1000);
+  if (row.direction && !feedback && !(body && body.regenerate)) return { direction: row.direction };
+  const turns = await turnsOf(row, "brainstorm", "", options);
+  const made = await OM.direction({ reader: readerOf(row, calibrations), paper: paperOf(row), interest: row.interest || "",
+    assessment: row.assessment, turns: turns.map((t) => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
+    leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
+    previous: feedback ? row.direction : null, feedback }, credentials, options);
+  if (feedback) await addTurn(user, row, "direction", "", "user", feedback, null, options);
+  await addTurn(user, row, "direction", "", "assistant", `${made.title} -- ${made.what_you_would_make}`, made, options);
+  await patch(row, { direction: made, subgoals: null, todos: null, step: Math.max(Number(row.step) || 0, STEP.direction) }, options);
+  return { direction: made };
+}
+
+async function subgoalsAction(user, row, calibrations, body, credentials, options = {}) {
+  requireOpen(row);
+  if (!row.direction) throw fail("Settle the direction first", 409);
+  const feedback = long(body && body.revise, 1000);
+  if (row.subgoals && !feedback && !(body && body.regenerate)) return { subgoals: row.subgoals };
+  const made = await OM.subgoals({ reader: readerOf(row, calibrations), paper: paperOf(row), direction: row.direction,
+    asset: row.asset_chosen, leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
+    previous: feedback ? row.subgoals : null, feedback }, credentials, options);
+  if (feedback) await addTurn(user, row, "subgoals", "", "user", feedback, null, options);
+  await addTurn(user, row, "subgoals", "", "assistant", made.subgoals.map((g) => g.label).join(" / "), made, options);
+  await patch(row, { subgoals: made.subgoals, todos: null, step: Math.max(Number(row.step) || 0, STEP.subgoals) }, options);
+  return { subgoals: made.subgoals };
 }
 
 async function analysis(user, row, body, credentials, options = {}) {
@@ -408,13 +767,13 @@ async function goals(user, row, calibrations, body, credentials, options = {}) {
 
 async function todos(user, row, calibrations, body, credentials, options = {}) {
   requireOpen(row);
-  const goal = one(body && body.goal, 200);
-  if (!goal) throw fail("Pick a goal first", 400);
-  if (row.todos && row.goal_chosen === goal && !(body && body.regenerate)) return { todos: row.todos, name: row.project_name };
+  if (!row.direction || !Array.isArray(row.subgoals) || !row.subgoals.length) throw fail("Settle the subgoals first", 409);
+  if (Array.isArray(row.todos) && row.todos.length && !(body && body.regenerate)) return { todos: row.todos, name: row.project_name };
   const reader = readerOf(row, calibrations);
-  const made = await OM.todos({ reader, paper: paperOf(row), draft: row.project_draft, goal, details: row.details || {} },
-    credentials, options);
-  await patch(row, { todos: made.todos, goal_chosen: goal, project_name: row.project_name || made.name }, options);
+  const made = await OM.todos({ reader, paper: paperOf(row), direction: row.direction, subgoal: row.subgoals[0],
+    resources: row.leveled ? row.leveled.assets : [] }, credentials, options);
+  await patch(row, { todos: made.todos, goal_chosen: row.direction.title, project_name: row.project_name || made.name,
+    step: Math.max(Number(row.step) || 0, STEP.todos) }, options);
   return { todos: made.todos, name: row.project_name };
 }
 
@@ -437,23 +796,30 @@ function toPayload(row, calibrations) {
   const paper = paperOf(row);
   const reader = readerOf(row, calibrations);
   const depth = P.depthOf(reader.depth) || P.DEPTHS[0];
-  const offered = (row.goals && Array.isArray(row.goals.goals) ? row.goals.goals : [])
-    .map((g) => ({ label: g.label, why: g.why }));
-  if (row.goal_chosen && !offered.some((g) => g.label === row.goal_chosen)) offered.push({ label: row.goal_chosen, why: "" });
+  const d = row.direction || {};
+  const label = one(d.title || row.goal_chosen, 200);
+  const rows = Array.isArray(row.todos) ? row.todos : [];
+  // One goal -- the direction -- with its three pieces beneath it; the rows
+  // live on the first piece, which is the one they start on.
+  const subgoals = (Array.isArray(row.subgoals) ? row.subgoals : []).map((g, i) => ({
+    label: g.label, description: g.description || "", why: g.why || "", todos: i === 0 ? rows : [] }));
+  const description = [d.what_you_would_make || row.project_draft, d.why_it_fits,
+    paper.title ? `Building on “${paper.title}” — ${paper.one_liner}` : "",
+    row.asset_chosen ? `Starting from ${row.asset_chosen.title}${row.asset_chosen.links && row.asset_chosen.links[0] ? ` <${row.asset_chosen.links[0].url}>` : ""}.` : "",
+    row.interest ? `What drew them: ${row.interest}` : ""].filter(Boolean).join("\n\n");
   const payload = {
     name: row.project_name,
-    plan: { description: [row.project_draft, paper.title ? `Building on “${paper.title}” — ${paper.one_liner}` : ""]
-      .filter(Boolean).join("\n\n"), unsure: [] },
-    goals: offered,
-    chosen: row.goal_chosen,
-    todos: Array.isArray(row.todos) ? row.todos : [],
-    subgoals: [],
+    plan: { description, unsure: [] },
+    goals: label ? [{ label, why: one(d.why_it_fits, 300) }] : [],
+    chosen: label,
+    todos: subgoals.length ? [] : rows,
+    subgoals,
     reader: { name: reader.name, year: reader.year, major: reader.major, level: depth.hc, knowledge: reader.knowledge },
   };
   if (row.paper_id) {
     payload.paper = { paper_id: row.paper_id, title: paper.title, url: row.project_url || "" };
     payload.provenance = { papers: [{ paper_id: row.paper_id, title: paper.title }],
-      idea: { title: row.goal_chosen, inspired: paper.title } };
+      idea: { title: label, inspired: paper.title } };
   }
   return payload;
 }
@@ -480,25 +846,29 @@ async function create(user, row, calibrations, body, options = {}) {
   if (row.status === "created") return { ok: true, pending_setup_id: row.pending_setup_id };
   const values = {};
   if (body && "project_name" in body) values.project_name = one(body.project_name, 80);
-  if (body && "goal_chosen" in body) values.goal_chosen = one(body.goal_chosen, 200);
   if (body && Array.isArray(body.todos)) values.todos = body.todos.map((t) => one(t, 300)).filter(Boolean).slice(0, 4);
   // Checked against what the record WOULD be, and only then written to it: a
   // rejected create must leave the row exactly as the reader left it.
   const merged = { ...row, ...values };
   if (!merged.project_name) throw fail("Name this project first", 400);
-  if (!merged.goal_chosen) throw fail("Pick a goal first", 400);
+  if (!merged.direction || !merged.direction.title) throw fail("Settle the direction first", 400);
+  if (!Array.isArray(merged.subgoals) || merged.subgoals.length < 3) throw fail("Settle the subgoals first", 400);
   if (!Array.isArray(merged.todos) || merged.todos.length < 2) throw fail("At least two todos", 400);
+  values.goal_chosen = merged.direction.title;
   Object.assign(row, values);
   const payload = SetupChat.normalizePayload(toPayload(row, calibrations));
   const saved = await rpc("engelbart_save_pending_setup", { p_user_id: user.id, p_payload: payload }, options);
   const pendingId = typeof saved === "string" ? saved : (saved && saved.id) || null;
   const profileSaved = await saveProfile(user, payload.reader, options);
-  await patch(row, { ...values, status: "created", pending_setup_id: pendingId, step: 10 }, options);
+  await patch(row, { ...values, status: "created", pending_setup_id: pendingId, step: STEP.done }, options);
   return { ok: true, pending_setup_id: pendingId, profile_saved: profileSaved };
 }
 
 module.exports = {
-  STEP_FIELDS, RUNNING_STALE_MS, MAX_PDF_BYTES,
-  open, step, sources, analysis, answer, details, goals, todos, ask, create,
+  STEP, STEP_FIELDS, RUNNING_STALE_MS, MAX_PDF_BYTES,
+  open, reset, step, sources, analysis, answer, details, goals, todos, ask, create,
+  assets: assetsAction, topicsDone, leveled: leveledAction, brainstorm: brainstormAction, assetAsk, chooseAsset,
+  direction: directionAction, subgoals: subgoalsAction,
   areaLevels, knowledgeOf, assessedDepth, readerOf, toPayload, analysisRunning, publicRow,
+  compileAssessment, verifyLinks, findAsset, userTurnText,
 };

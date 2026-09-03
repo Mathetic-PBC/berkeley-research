@@ -26,6 +26,15 @@ function deps(overrides = {}) {
       todos: async () => ({ todos: [], name: "" }),
       ask: async () => ({ answer: "a" }),
       create: async () => ({ ok: true, pending_setup_id: "p" }),
+      reset: async () => ({ ok: true }),
+      assets: async (u, r, b) => ({ assets_status: b.run ? "done" : "none" }),
+      topicsDone: async () => ({ assessment: { areas: [] } }),
+      leveled: async (u, r, c, b) => ({ leveled_status: b.run ? "done" : "none" }),
+      brainstorm: async () => ({ say: "hi", card: "none" }),
+      assetAsk: async () => ({ answer: "a" }),
+      chooseAsset: async () => ({ asset_chosen: { title: "x" } }),
+      direction: async () => ({ direction: { title: "d" } }),
+      subgoals: async () => ({ subgoals: [] }),
       ...overrides.OB,
     },
   };
@@ -52,6 +61,22 @@ test("model actions receive the member's credentials; step does not need them", 
   let asked = 0;
   await handler.dispatch(USER, { action: "step", step: 2, fields: {} }, deps({ credentialsFor: async () => { asked += 1; return { status: "active" }; } }));
   assert.equal(asked, 0);
+});
+
+// Test mode's clear buttons: no model, no credit, and the reply is the open
+// that follows so the page redraws from a record that exists.
+test("reset clears through the record module and answers with the next open", async () => {
+  let cleared = null;
+  let opens = 0;
+  const d = deps({
+    credentialsFor: async () => { throw new Error("reset must not touch the credit key"); },
+    OB: { reset: async (u, body) => { cleared = body.scope; return { ok: true }; },
+      open: async () => { opens += 1; return { onboarding: { id: `row-${opens}`, status: "open", step: 0 }, calibrations: [], profile_reused: false }; } },
+  });
+  const out = await handler.dispatch(USER, { action: "reset", scope: "all" }, d);
+  assert.equal(cleared, "all");
+  assert.equal(out.onboarding.id, "row-1");
+  assert.equal(out.profile_reused, false);
 });
 
 test("an unknown action is a 400", async () => {
@@ -107,4 +132,23 @@ test("a GET is a 405 that names the one method it allows", async () => {
   assert.equal(status, 405);
   assert.equal(headers.Allow, "POST");
   assert.equal(payload.error, "Method not allowed");
+});
+
+// The v2 actions: three background readers polled for free, the rest of the
+// conversation billed, and the two bookkeeping actions never touching the key.
+test("assets and leveled are polled free and billed on run; the conversation is billed; bookkeeping is not", async () => {
+  const refuse = async () => { throw new Error("credentialsFor must not be called here"); };
+  for (const body of [{ action: "assets" }, { action: "leveled" }, { action: "topics_done" }, { action: "choose_asset", key: "x" }]) {
+    await handler.dispatch(USER, body, deps({ credentialsFor: refuse }));
+  }
+  const spent = async () => ({ status: "exhausted" });
+  for (const body of [{ action: "assets", run: true }, { action: "leveled", run: true }, { action: "brainstorm" },
+    { action: "asset_ask", key: "x", question: "?" }, { action: "direction" }, { action: "subgoals" }, { action: "todos" }]) {
+    await assert.rejects(handler.dispatch(USER, body, deps({ credentialsFor: spent })), (e) => e.statusCode === 409, body.action);
+  }
+  let seen = null;
+  await handler.dispatch(USER, { action: "brainstorm", text: "hi" }, deps({ OB: { brainstorm: async (u, r, c, b, credentials) => { seen = credentials; return { say: "", card: "none" }; } } }));
+  assert.equal(seen.apiKey, "k");
+  const out = await handler.dispatch(USER, { action: "direction" }, deps());
+  assert.equal(out.direction.title, "d");
 });

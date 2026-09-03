@@ -40,6 +40,7 @@ async function callModel(request, credentials, options = {}) {
     messages: [{ role: "user", content: request.content }],
   };
   if (request.system) body.system = request.system;
+  if (request.tools) body.tools = request.tools;
   const response = await fetchImpl(`${credentials.baseUrl}/v1/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${credentials.apiKey}` },
@@ -126,11 +127,9 @@ async function analyze(input, credentials, options = {}) {
   // The function form: page text we fetched is data, and $&, $` or $' in it
   // would otherwise paste the prompt back into the tag it sits inside.
   const tail = after.replace("%URLS%", () => urls);
-  const content = input.pdfBase64
-    ? [text(before),
-       { type: "document", source: { type: "base64", media_type: "application/pdf", data: input.pdfBase64 } },
-       text(tail)]
-    : [text(before + long(input.pdfText, 400000) + tail)];
+  // The paper leads, as the cached prefix the asset hunt shares; the
+  // diagnostic's own text follows verbatim, its paper tag pointing up.
+  const content = [...paperPrefix(input), text(before + "(the paper attached above)" + tail)];
   const raw = await callModel({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS,
     timeoutMs: ANALYZE_TIMEOUT_MS }, credentials, options);
   const analysis = normalizeAnalysis(raw);
@@ -231,9 +230,189 @@ const goals = (input, c, o) => generate(P.goalsPrompt(input), normalizeGoals, c,
 const todos = (input, c, o) => generate(P.todosPrompt(input), normalizeTodos, c, o, "todos");
 const ask = (input, c, o) => generate(P.askPrompt(input), normalizeAsk, c, o, "answer");
 
+// --- the paper as a cached prefix -----------------------------------------------
+
+// The two blocks every whole-paper call begins with. Identical bytes in
+// both calls is what lets the second read the first's cache.
+function paperPrefix(input) {
+  if (input.pdfBase64) {
+    return [text(P.PAPER_PREFIX), { type: "document",
+      source: { type: "base64", media_type: "application/pdf", data: input.pdfBase64 },
+      cache_control: { type: "ephemeral" } }];
+  }
+  return [{ type: "text", text: P.PAPER_PREFIX + "\n\n<paper_text>\n" + long(input.pdfText, 400000) + "\n</paper_text>",
+    cache_control: { type: "ephemeral" } }];
+}
+
+// --- assets ---------------------------------------------------------------------
+
+const LINK_KINDS = ["live_demo", "source_code", "download", "docs", "paper", "other"];
+const AVAILABILITY = ["usable", "partial", "unavailable", "unknown"];
+const MAX_ASSETS = 12;
+const MAX_CHILDREN = 3;
+// "Search quite aggressively": a dozen searches for the hunt, eight for the
+// stand-ins, which already know what they are looking for.
+const WEB_SEARCH = { type: "web_search_20250305", name: "web_search", max_uses: 12 };
+const WEB_SEARCH_SMALL = { ...WEB_SEARCH, max_uses: 8 };
+
+function normalizeLink(value) {
+  if (!value || typeof value !== "object") return null;
+  const url = one(value.url, 500);
+  if (!/^https?:\/\//i.test(url)) return null;
+  return { kind: LINK_KINDS.includes(value.kind) ? value.kind : "other", url };
+}
+
+function normalizeAsset(value, depth) {
+  if (!value || typeof value !== "object") return null;
+  const title = one(value.title, 120);
+  if (!title) return null;
+  const out = {
+    title,
+    description: long(value.description, 900),
+    one_liner: one(value.one_liner, 200),
+    type: P.ASSET_TYPES.includes(value.type) ? value.type : "other",
+    links: (Array.isArray(value.links) ? value.links : []).map(normalizeLink).filter(Boolean).slice(0, 6),
+    what_you_can_do_with_it: long(value.what_you_can_do_with_it, 300),
+    availability: AVAILABILITY.includes(value.availability) ? value.availability : "unknown",
+  };
+  if (depth === 0 && Array.isArray(value.children)) {
+    const kids = value.children.map((c) => normalizeAsset(c, 1)).filter(Boolean).slice(0, MAX_CHILDREN);
+    if (kids.length) out.children = kids;
+  }
+  if (depth === 1) out.why = one(value.why, 300);
+  return out;
+}
+
+function normalizeAssets(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const assets = (Array.isArray(raw.assets) ? raw.assets : []).map((a) => normalizeAsset(a, 0)).filter(Boolean).slice(0, MAX_ASSETS);
+  return { assets };
+}
+
+// The mini list the brainstorm is given: names and one-liners, no links.
+function briefOf(assets) {
+  return (Array.isArray(assets) ? assets : []).map((a) => ({ title: a.title, type: a.type,
+    one_liner: a.one_liner || one(a.description, 200) }));
+}
+
+function normalizeLeveled(raw) {
+  const base = normalizeAssets(raw);
+  if (!base) return null;
+  return {
+    locus: long(raw.locus, 300),
+    sticky: (Array.isArray(raw.sticky) ? raw.sticky : []).map((s) => one(s, 160)).filter(Boolean).slice(0, 5),
+    assets: base.assets,
+  };
+}
+
+// The model's own web search, when the gateway forwards it; the same call
+// without it when the gateway refuses, and the reply says which.
+async function searched(request, credentials, options, tool) {
+  try {
+    return { raw: await callModel({ ...request, tools: [tool] }, credentials, options), searched: true };
+  } catch (error) {
+    if (error.statusCode === 409) throw error;
+    return { raw: await callModel(request, credentials, options), searched: false };
+  }
+}
+
+function shaped(out, what) {
+  if (!out) {
+    const error = new Error(`The ${what} did not come back in a usable shape`);
+    error.statusCode = 502;
+    throw error;
+  }
+  return out;
+}
+
+// The asset hunt: the cached paper, the prompt, and the model's own search.
+async function assets(input, credentials, options = {}) {
+  const content = [...paperPrefix(input), text(P.assetsPrompt())];
+  const got = await searched({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS, timeoutMs: ANALYZE_TIMEOUT_MS },
+    credentials, options, WEB_SEARCH);
+  const out = shaped(normalizeAssets(got.raw), "asset hunt");
+  if (!out.assets.length) {
+    const error = new Error("The asset hunt found nothing it could name");
+    error.statusCode = 502;
+    throw error;
+  }
+  return { ...out, searched: got.searched };
+}
+
+async function levelAssets(input, credentials, options = {}) {
+  const got = await searched({ content: [text(P.levelPrompt(input))], family: "sonnet", maxTokens: ANALYZE_TOKENS,
+    timeoutMs: ANALYZE_TIMEOUT_MS }, credentials, options, WEB_SEARCH_SMALL);
+  return { ...shaped(normalizeLeveled(got.raw), "leveled resources"), searched: got.searched };
+}
+
+// --- brainstorm, direction, subgoals -------------------------------------------
+
+const QUESTION_TYPES = ["mcq", "select_all", "free", "open"];
+
+function normalizeOptions(value) {
+  return (Array.isArray(value) ? value : []).map((o) => {
+    const label = one(o && typeof o === "object" ? o.label : typeof o === "string" ? o : "", 160);
+    return label ? { label, why: one(o && typeof o === "object" ? o.why : "", 240) } : null;
+  }).filter(Boolean).slice(0, 6);
+}
+
+function normalizeBrainstorm(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const say = long(raw.say, 1500);
+  const out = { say, card: "none", interest: one(raw.interest, 240) };
+  if (raw.card === "questions" && raw.questions && typeof raw.questions === "object") {
+    const items = (Array.isArray(raw.questions.items) ? raw.questions.items : []).map((q, i) => {
+      if (!q || typeof q !== "object") return null;
+      const title = one(q.title, 300);
+      if (!title) return null;
+      const type = QUESTION_TYPES.includes(q.type) ? q.type : "free";
+      const item = { id: one(q.id, 40) || `q${i + 1}`, type, title, subtitle: one(q.subtitle, 160) };
+      if (type === "mcq" || type === "select_all") {
+        item.options = normalizeOptions(q.options);
+        if (item.options.length < 2) { item.type = "free"; delete item.options; }
+      }
+      if (item.type === "free" || item.type === "open") item.placeholder = one(q.placeholder, 120);
+      return item;
+    }).filter(Boolean).slice(0, 3);
+    if (items.length) { out.card = "questions"; out.questions = { eyebrow: one(raw.questions.eyebrow, 40), items }; }
+  } else if (raw.card === "focus" && raw.focus && typeof raw.focus === "object") {
+    const options = normalizeOptions(raw.focus.options);
+    if (options.length >= 2) { out.card = "focus"; out.focus = { title: one(raw.focus.title, 200), options }; }
+  }
+  if (!say && out.card === "none") return null;
+  return out;
+}
+
+function normalizeDirection(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const title = one(raw.title, 80);
+  if (!title) return null;
+  return { title, what_you_would_make: long(raw.what_you_would_make, 600),
+    uses: (Array.isArray(raw.uses) ? raw.uses : []).filter((u) => typeof u === "string").map((u) => one(u, 120)).filter(Boolean).slice(0, 6),
+    why_it_fits: long(raw.why_it_fits, 400), first_visible_result: one(raw.first_visible_result, 240) };
+}
+
+function normalizeSubgoals(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const subgoals = (Array.isArray(raw.subgoals) ? raw.subgoals : []).map((g) => {
+    if (!g || typeof g !== "object") return null;
+    const label = one(g.label, 200);
+    return label ? { label, description: long(g.description, 500), why: one(g.why, 300) } : null;
+  }).filter(Boolean).slice(0, 3);
+  if (subgoals.length < 3) return null;
+  return { subgoals };
+}
+
+const brainstorm = (input, c, o) => generate(P.brainstormPrompt(input), normalizeBrainstorm, c, o, "brainstorm turn");
+const assetAsk = (input, c, o) => generate(P.assetAskPrompt(input), normalizeAsk, c, o, "answer");
+const direction = (input, c, o) => generate(P.directionPrompt(input), normalizeDirection, c, o, "direction");
+const subgoals = (input, c, o) => generate(P.subgoalsPrompt(input), normalizeSubgoals, c, o, "subgoals");
+
 module.exports = {
   LEVELS, MAX_PAGE_TEXT,
   callModel, pickModel, extractJson,
-  analyze, grade, details, goals, todos, ask,
+  analyze, grade, details, goals, todos, ask, assets, levelAssets, brainstorm, assetAsk, direction, subgoals,
+  paperPrefix, briefOf,
   normalizeAnalysis, normalizeGrade, normalizeDetails, normalizeGoals, normalizeTodos, normalizeAsk,
+  normalizeAssets, normalizeLeveled, normalizeBrainstorm, normalizeDirection, normalizeSubgoals,
 };

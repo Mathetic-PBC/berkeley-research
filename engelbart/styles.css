@@ -1139,13 +1139,84 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 600; }
 
 .meter-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); transition: width .4s; }
 
-.key-block { display: grid; gap: 10px; margin-bottom: 22px; }
-.key-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.key-value { overflow-wrap: anywhere; white-space: normal; }
-.setup-cmd { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.7; }
-.key-lede { margin: 12px 0 0; color: var(--muted); font-family: var(--serif); font-size: 16px; line-height: 1.5; }
-.key-block .button-row { justify-content: center; }
-.key-block .link-button { font-size: 13px; }
+.key-block { display: grid; gap: 0; margin: 0; }
+
+/* The account panel wears the setup page's plainer dress: a microcap over each
+   thing, one bordered row per thing to copy, and no accent rail or tinted box
+   around any of it. Same paper, same ink; only the furniture changed. */
+.account { text-align: left; }
+.account h2 { margin: 0 0 8px; font-family: var(--serif); font-size: 30px; font-weight: 500; }
+.account #credit-status { margin: 0; font-family: var(--sans); font-size: 15px; color: var(--ink-soft); }
+.account #credit-status[data-kind="success"] { color: var(--ink-soft); }
+.account .meter { height: 3px; margin: 10px 0 0; background: var(--line); }
+.account .meter-fill { background: var(--ink); }
+.account .credit-invite { margin: 18px 0 0; }
+.account .cap {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 28px 0 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 1.6px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.account .cap-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.account .cmd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 8px 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--field);
+}
+.account .cmd-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+}
+.account .cmd-multi { align-items: flex-start; border-radius: 12px; }
+.account .cmd-multi .cmd-text { overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; }
+.account .cmd-copy {
+  flex: none;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 1.4px;
+  line-height: 1;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.account .cmd-copy:hover { border-color: var(--ink); color: var(--ink); }
+.account .account-note { margin: 8px 0 0; color: var(--ink-soft); font-size: 14px; line-height: 1.6; text-wrap: pretty; }
+.account .account-note a { text-decoration: underline; text-underline-offset: 3px; }
+.account .sign { margin-top: 30px; }
 
 /* Admin wears the same masthead and paper as the sign-in page; the panels stay
    dense because it is a console, not a landing page. */
