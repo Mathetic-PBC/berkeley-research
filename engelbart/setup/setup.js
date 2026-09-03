@@ -474,9 +474,13 @@
     var box = attr(attr(el("div", "ob-reg"), "data-busy", reg.busy ? "1" : "0"), "data-open", reg.open || reg.busy ? "1" : "0");
     var word = el("button", "ob-reg-word", DEPTHS[regIndex(cur)].label); word.type = "button";
     word.setAttribute("aria-label", reg.open ? "hide the explanations slider" : "change how technical the page is");
-    on(word, "click", function () { reg.open = !reg.open; if (!reg.open) reg.pos = null; draw(); });
-    box.appendChild(word);
-    if (!reg.open && !reg.busy) return box;
+    function fold() { reg.open = !reg.open; if (!reg.open) reg.pos = null; draw(); }
+    on(word, "click", fold);
+    if (!reg.open && !reg.busy) { box.appendChild(word); return box; }
+    // Open: the word as the cap on the left, an × on the right; either folds it.
+    var head = el("div", "ob-reg-head"); head.appendChild(word);
+    var x = el("button", "ob-reg-x", "×"); x.type = "button"; x.setAttribute("aria-label", "close");
+    head.appendChild(on(x, "click", fold)); box.appendChild(head);
     box.appendChild(slider({ stops: DEPTHS, pos: pos, grid: true, onCommit: function (p) { reg.pos = p; draw(); } }));
     var acts = el("div", "ob-reg-acts");
     if (reg.busy) { acts.appendChild(dots()); acts.appendChild(el("span", "ob-hint", "Rewriting")); }
@@ -831,17 +835,20 @@
     demo1.appendChild(el("div", "ob-sub", "The answer comes back at your level, and you can ask for it simpler or deeper."));
     box.appendChild(demo1);
     var demo2 = el("div", "ob-tour-demo"); demo2.appendChild(el("div", "ob-cap", "Change how technical the page is"));
-    var reg = el("div", "ob-tour-reg");
-    var bars = el("div", "ob-tour-bars");
-    for (var i = 0; i < 4; i++) bars.appendChild(attr(el("span", "ob-tour-bar"), "data-i", String(i)));
-    reg.appendChild(bars); reg.appendChild(el("span", "ob-tour-thumb"));
-    reg.appendChild(el("span", "ob-tour-regen", "Regenerate"));
-    demo2.appendChild(reg);
+    // The control itself, as it opens in the top right, with its slider
+    // dragged one stop up and Regenerate appearing: the same markup the real
+    // one draws, animated by the stylesheet.
+    var demo = attr(attr(el("div", "ob-reg ob-tour-regdemo"), "data-open", "1"), "data-busy", "0");
+    var dhead = el("div", "ob-reg-head"); dhead.appendChild(el("span", "ob-reg-word", "Everyday")); dhead.appendChild(el("span", "ob-reg-x", "×")); demo.appendChild(dhead);
+    var sl = slider({ stops: DEPTHS, pos: 0.25, grid: true, onCommit: function () {} });
+    var nm = sl.children[0] && sl.children[0].children[0];
+    if (nm) { nm.textContent = ""; nm.appendChild(el("span", "ob-tour-name-a", "Everyday")); nm.appendChild(el("span", "ob-tour-name-b", "Technical")); }
+    demo.appendChild(sl);
+    var dacts = el("div", "ob-reg-acts"); dacts.appendChild(el("span", "ob-pill ob-reg-go ob-tour-regen", "Regenerate")); demo.appendChild(dacts);
+    demo2.appendChild(demo);
     demo2.appendChild(el("div", "ob-sub", "The slider in the top right rewrites what is on the screen at the level you drag it to."));
     box.appendChild(demo2);
-    var acts = attr(el("div", "ob-actions"), "data-between", "1");
-    var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
-    acts.appendChild(on(skip, "click", function () { st.ui.tour = false; draw(); }));
+    var acts = el("div", "ob-actions");
     acts.appendChild(cta("Continue", false, function () { st.ui.tour = false; draw(); }));
     box.appendChild(acts);
     content.appendChild(box);

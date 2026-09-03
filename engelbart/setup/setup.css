@@ -472,23 +472,37 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-tour-ask{position:absolute;right:100%;margin-right:14px;top:44px;font:var(--text-12);color:var(--ink);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--bd2);white-space:nowrap;opacity:0;animation:tourAsk 6s ease-in-out infinite}
 @keyframes tourSweep{0%,8%{background-size:0% 100%}30%,80%{background-size:100% 100%}92%,100%{background-size:0% 100%}}
 @keyframes tourAsk{0%,32%{opacity:0;transform:translateY(3px)}42%,78%{opacity:1;transform:none}90%,100%{opacity:0}}
-.ob-tour-reg{position:relative;margin-top:12px;height:34px}
-.ob-tour-bars{position:absolute;left:0;right:110px;top:0;height:16px;display:flex;gap:4px}
-.ob-tour-bar{flex:1;border-radius:3px;background:var(--bd);position:relative;overflow:hidden}
-.ob-tour-bar::after{content:"";position:absolute;inset:0;background:var(--acc);transform-origin:left;transform:scaleX(0)}
-.ob-tour-bar[data-i="0"]::after,.ob-tour-bar[data-i="1"]::after{transform:scaleX(1)}
-.ob-tour-bar[data-i="2"]::after{animation:tourFill 6s ease-in-out infinite}
-.ob-tour-thumb{position:absolute;top:19px;width:11px;height:11px;border-radius:50%;background:var(--panel);border:2px solid var(--acc);box-sizing:border-box;left:calc((100% - 110px) * .5);transform:translateX(-50%);animation:tourThumb 6s ease-in-out infinite}
-.ob-tour-regen{position:absolute;right:0;top:4px;padding:5px 10px;font:var(--text-microcap);letter-spacing:1.2px;text-transform:uppercase;border-radius:var(--radius-pill);color:var(--onacc);background:var(--ink);opacity:0;animation:tourRegen 6s ease-in-out infinite}
-@keyframes tourFill{0%,30%{transform:scaleX(0)}45%,85%{transform:scaleX(1)}95%,100%{transform:scaleX(0)}}
-@keyframes tourThumb{0%,30%{left:calc((100% - 110px) * .5)}45%,85%{left:calc((100% - 110px) * .75)}95%,100%{left:calc((100% - 110px) * .5)}}
-@keyframes tourRegen{0%,48%{opacity:0}58%,85%{opacity:1}95%,100%{opacity:0}}
+/* the second demo is the real control, animated */
+.ob-tour-regdemo{position:static;width:100%;box-sizing:border-box;pointer-events:none;margin-top:12px}
+.ob-tour-regdemo .ob-slider-name{display:grid}
+.ob-tour-regdemo .ob-slider-name>span{grid-area:1/1}
+.ob-tour-name-a{animation:tourNameA 6s ease-in-out infinite}
+.ob-tour-name-b{opacity:0;animation:tourNameB 6s ease-in-out infinite}
+@keyframes tourNameA{0%,34%{opacity:1}44%,86%{opacity:0}94%,100%{opacity:1}}
+@keyframes tourNameB{0%,34%{opacity:0}44%,86%{opacity:1}94%,100%{opacity:0}}
+.ob-tour-regdemo .ob-bar:nth-child(2) .ob-bar-fill{animation:tourFillB 6s ease-in-out infinite}
+.ob-tour-regdemo .ob-bar:nth-child(3) .ob-bar-fill{animation:tourFillC 6s ease-in-out infinite}
+@keyframes tourFillB{0%,30%{width:0%}38%,88%{width:100%}96%,100%{width:0%}}
+@keyframes tourFillC{0%,36%{width:0%}44%,88%{width:100%}96%,100%{width:0%}}
+.ob-tour-regdemo .ob-line-on{animation:tourLine 6s ease-in-out infinite}
+.ob-tour-regdemo .ob-thumb{animation:tourThumb 6s ease-in-out infinite}
+@keyframes tourLine{0%,30%{width:25%}44%,88%{width:75%}96%,100%{width:25%}}
+@keyframes tourThumb{0%,30%{left:25%}44%,88%{left:75%}96%,100%{left:25%}}
+.ob-tour-regdemo .ob-stop:nth-child(1){animation:tourStopOff 6s ease-in-out infinite}
+.ob-tour-regdemo .ob-stop:nth-child(3){animation:tourStopOn 6s ease-in-out infinite}
+@keyframes tourStopOff{0%,34%{color:var(--ink);font-weight:500}44%,86%{color:var(--fnt);font-weight:400}94%,100%{color:var(--ink);font-weight:500}}
+@keyframes tourStopOn{0%,34%{color:var(--fnt);font-weight:400}44%,86%{color:var(--ink);font-weight:500}94%,100%{color:var(--fnt);font-weight:400}}
+.ob-tour-regen{opacity:0;animation:tourRegen 6s ease-in-out infinite}
+@keyframes tourRegen{0%,48%{opacity:0}58%,86%{opacity:1}94%,100%{opacity:0}}
 /* --- the register control, top right on every step --- */
 .ob-reg{position:absolute;top:14px;right:24px;z-index:6;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .ob-reg[data-open="1"]{width:236px;padding:10px 12px 8px;background:var(--panel);border:1px solid var(--bd);border-radius:var(--radius-md);align-items:stretch}
 .ob-reg-word{align-self:flex-end;padding:0;font:var(--text-12);color:var(--mut);background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--bd2)}
 .ob-reg-word:hover{color:var(--ink);text-decoration-color:var(--ink)}
-.ob-reg[data-open="1"] .ob-reg-word{align-self:flex-start;font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--fnt);text-decoration:none}
+.ob-reg-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.ob-reg[data-open="1"] .ob-reg-word{align-self:auto;font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--fnt);text-decoration:none}
+.ob-reg-x{padding:0 3px;font:14px/1 var(--font-sans);color:var(--bd2);background:none;border:none;cursor:pointer}
+.ob-reg-x:hover{color:var(--ink)}
 .ob-reg .ob-slider{gap:6px}
 .ob-reg .ob-slider-name{font:500 12.5px/1.3 var(--font-sans);color:var(--ink)}
 .ob-reg .ob-slider-desc{display:none}

@@ -266,7 +266,9 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
   assert.equal(page.title(), "Two things you can do on every screen", "the tour sits between Install and Topics");
   assert.equal(page.row().step, 6);
   assert.ok(one(page.app, "ob-tour-hl") && one(page.app, "ob-tour-regen"), "both demos are drawn");
-  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Skip").fire("click");
+  assert.ok(one(one(page.app, "ob-tour-regdemo"), "ob-slider"), "the second demo is the real control's slider");
+  assert.equal(byClass(page.app, "ob-ghost").filter((b) => textOf(b) === "Skip").length, 0, "nothing to skip: one Continue");
+  page.cta().fire("click");
   assert.equal(page.title(), "How familiar are you with the paper's concepts?");
 });
 
@@ -310,6 +312,10 @@ test("the register control rewrites what is on the screen and moves the profile'
   one(reg, "ob-reg-word").fire("click");
   reg = one(page.app, "ob-reg");
   assert.ok(one(reg, "ob-slider"), "the word opens the slider");
+  one(reg, "ob-reg-x").fire("click");
+  assert.equal(byClass(one(page.app, "ob-reg"), "ob-slider").length, 0, "the × closes it");
+  one(one(page.app, "ob-reg"), "ob-reg-word").fire("click");
+  reg = one(page.app, "ob-reg");
   assert.equal(byClass(reg, "ob-reg-go").length, 0, "no Regenerate until the slider moves");
   const question = textOf(one(page.app, "ob-q"));
   byClass(reg, "ob-stop")[3].fire("click");                    // Expert
