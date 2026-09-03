@@ -1286,7 +1286,6 @@
     box.appendChild(el("div", "ob-dir-body", d.what_you_would_make));
     if (d.first_visible_result) { var fv = el("div", "ob-dir-line"); fv.appendChild(el("span", "ob-as-lead", "First thing you'd see · ")); fv.appendChild(el("span", "", d.first_visible_result)); box.appendChild(fv); }
     if (d.why_it_fits) { var wf = el("div", "ob-dir-line"); wf.appendChild(el("span", "ob-as-lead", "Why this one · ")); wf.appendChild(el("span", "", d.why_it_fits)); box.appendChild(wf); }
-    if (d.uses && d.uses.length) { var chips = el("div", "ob-seeds"); d.uses.forEach(function (u) { chips.appendChild(el("span", "ob-as-chip", u)); }); box.appendChild(chips); }
     changeBox(box, "direction", function () { st.ui.change = { open: false, text: "", thinking: false, log: [] }; save(10, {}).then(function () { go(10); }).catch(fail); });
     content.appendChild(box);
   }
