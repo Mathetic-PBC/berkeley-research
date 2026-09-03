@@ -5,7 +5,7 @@
 #
 # Asks once for the Postgres connection string (Supabase dashboard -> Connect
 # -> Session pooler, port 5432), keeps it in .env.db (git-ignored, mode 600),
-# installs psql through Homebrew if this machine has none, and runs the three
+# installs psql through Homebrew if this machine has none, and runs the
 # migration files in order. Re-running is safe: every statement is
 # "if not exists" / "create or replace".
 set -eu
@@ -37,8 +37,9 @@ HC=../claude-plugins
 for file in \
   supabase/migrations/20260902100000_engelbart_invite_gate_restored.sql \
   supabase/migrations/20260902110000_engelbart_onboarding.sql \
-  "$HC/supabase/migrations/20260902120000_hc_reader_knowledge.sql"; do
+  "$HC/supabase/migrations/20260902120000_hc_reader_knowledge.sql" \
+  supabase/migrations/20260903120000_engelbart_onboarding_plan.sql; do
   echo "== $file"
   "$PSQL" "$url" -v ON_ERROR_STOP=1 -q -f "$file"
 done
-echo "all three migrations applied"
+echo "all migrations applied"
