@@ -219,6 +219,21 @@ test("rendering again replaces the screen; nothing animates, so nothing outlives
   assert.equal(page.timers.live.size, 0);
 });
 
+test("a render into a fresh container resumes the walk where it was", () => {
+  const page = mount();
+  walk(page, "macOS", "Apple Silicon");
+  cta(page.app).fire("click");
+  assert.equal(textOf(one(page.app, "ob-title")), "Install Engelbart and connect this account");
+  // The page redraws its column: a new container, the same options.
+  const again = makeEl("div");
+  page.api.render(again, { variant: "install", code: CODE, os: "mac", arch: "arm64" });
+  assert.equal(textOf(one(again, "ob-title")), "Install Engelbart and connect this account", "step two still, not back to the terminal");
+  // A different variant or machine starts its own walk.
+  const other = makeEl("div");
+  page.api.render(other, { variant: "bart", os: "mac", arch: "arm64" });
+  assert.equal(textOf(one(other, "ob-title")), "Open a new terminal");
+});
+
 test("a bad stored pick falls back to the picker; a good one skips it", () => {
   const page = mount();
   page.render({ variant: "install", code: CODE, os: "amiga" });
