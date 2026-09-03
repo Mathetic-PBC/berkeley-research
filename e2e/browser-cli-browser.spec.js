@@ -29,8 +29,8 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     await page.getByText(OS_LABEL[process.platform], { exact: true }).click();
     await page.getByText(ARCH_LABEL[process.platform][process.arch] || ARCH_LABEL[process.platform].x64, { exact: true }).click();
 
-    await page.getByRole("button", { name: "Continue" }).click();
-    await expect(page.getByText("Install Claude Code", { exact: true })).toBeVisible();
+    // Two steps since the installer brings Claude Code itself: the terminal,
+    // then the one connect command.
     await page.getByRole("button", { name: "Continue" }).click();
     await expect(page.getByText("Install Engelbart and connect this account", { exact: true })).toBeVisible();
 
