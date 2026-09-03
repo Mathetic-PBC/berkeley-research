@@ -66,7 +66,7 @@
       pfile: null,      // { name, meta, id, token } once uploaded; { name, meta, uploading } meanwhile
       pover: false, popen: null, plink: "", prepo: "", pfam: 0.2, psending: false,
       draft: "",
-      fIdx: 0, fam: {}, fAnswers: {}, followUp: null, lastGrade: null,
+      fIdx: 0, fam: {}, fAnswers: {},
       qIdx: 0, goalPick: "", goalOther: "", goalOtherOn: false, todos: [], newTodo: "", projName: "",
       askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null,
       bs: { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false },   // brainstorm
@@ -165,7 +165,7 @@
 
   // What only this tab knew about the record it is leaving behind.
   function forgetUi() {
-    st.ui.fam = {}; st.ui.fAnswers = {}; st.ui.followUp = null; st.ui.lastGrade = null; st.ui.fIdx = 0; st.ui.qIdx = 0;
+    st.ui.fam = {}; st.ui.fAnswers = {}; st.ui.fIdx = 0; st.ui.qIdx = 0;
     st.ui.goalPick = ""; st.ui.goalOther = ""; st.ui.goalOtherOn = false; st.ui.todos = []; st.ui.newTodo = ""; st.ui.projName = "";
     st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.draft = "";
     st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false };
@@ -291,6 +291,7 @@
     var head = el("div"), name = el("div", "ob-slider-name"), desc = el("div", "ob-slider-desc");
     head.appendChild(name); head.appendChild(desc); box.appendChild(head);
     var track = attr(el("div", "ob-track"), "data-drag", "0");
+    if (opts.locked) attr(box, "data-locked", "1");
     var bars = el("div", "ob-bars"), fills = [];
     for (var b = 0; b < n; b++) {
       var bar = el("div", "ob-bar"); bar.style.height = (25 + 75 * (b / (n - 1))) + "%";
@@ -341,6 +342,7 @@
       opts.onCommit(pos);
     }
     on(track, "pointerdown", function (e) {
+      if (opts.locked) return;
       dragging = true;
       track.setAttribute("data-drag", "1");
       pos = at(e); paint();
@@ -685,6 +687,8 @@
   function famOf(i) { var v = st.ui.fam[i]; return typeof v === "number" ? v : 0.2; }
   function levelOf(i) { return LADDER[snap(famOf(i), 5)].level; }
   function answeredArea(i) { return st.cals.some(function (c) { return Number(c.area_index) === i && c.answered_at; }); }
+  // A follow-up row: written for this area, its own question, not answered yet.
+  function pendingFollow(i) { return st.cals.filter(function (c) { return Number(c.area_index) === i && !c.answered_at && c.question; })[0] || null; }
 
   function drawTopics(content) {
     var r = st.row;
@@ -708,7 +712,7 @@
     var a = r.analysis, areas = a.areas, fi = Math.min(st.ui.fIdx || 0, areas.length - 1), area = areas[fi];
     var box2 = el("div", "ob-step");
     box2.appendChild(el("div", "ob-count", count(6, "Topics")));
-    box2.appendChild(el("div", "ob-title", "How familiar are you with what the paper leans on?"));
+    box2.appendChild(el("div", "ob-title", "How familiar are you with the paper's concepts?"));
     var paper = el("div", "ob-paper"); paper.appendChild(el("div", "ob-paper-icon"));
     var pt = el("div", "ob-grow"), line = el("div", "ob-paper-line");
     line.appendChild(el("span", "ob-paper-title", a.title)); line.appendChild(el("span", "ob-paper-venue", a.date || ""));
@@ -719,22 +723,27 @@
     head.appendChild(el("span", "ob-area-n", (fi + 1) + " / " + areas.length));
     head.appendChild(el("div", "ob-area-name", area.area)); card.appendChild(head);
     if (area.project_role) card.appendChild(el("div", "ob-area-role", area.project_role));
-    var follow = st.ui.followUp && st.ui.followUp.area === fi ? st.ui.followUp : null;
-    var level = follow ? follow.question_level : levelOf(fi);
-    var q = area.questions.filter(function (x) { return x.level === level; })[0] || area.questions[0];
+    // The follow-up is a stored row: written from their first answer, waiting
+    // unanswered at the level the grade found. It is the same question after a
+    // reload or a walk to another area and back, and while it waits the
+    // slider is locked -- the self-rating stage of this area is over.
+    var follow = pendingFollow(fi);
+    var level = follow ? Number(follow.question_level) : levelOf(fi);
+    var q = follow ? { question: follow.question } : area.questions.filter(function (x) { return x.level === level; })[0] || area.questions[0];
     var key = fi + ":" + level, answer = st.ui.fAnswers[key] || "";
     // Only the question is shown; the sample answers in the analysis stay unseen.
-    // Moving the slider on a follow-up drops the follow-up: they answer the
-    // ladder's own question at the level they moved to instead.
-    card.appendChild(slider({ stops: LADDER, pos: famOf(fi), ends: ["Beginner", "Expert"],
-      onCommit: function (v) { st.ui.followUp = null; st.ui.lastGrade = null; st.ui.fam[fi] = v; draw(); } }));
+    card.appendChild(slider({ stops: LADDER, pos: famOf(fi), ends: ["Beginner", "Expert"], locked: !!follow,
+      onCommit: function (v) { st.ui.fam[fi] = v; draw(); } }));
     var qbox = el("div");
-    qbox.appendChild(el("div", "ob-q-label", follow ? "One more, at the level your answer showed" : "Question"));
+    qbox.appendChild(el("div", "ob-q-label", follow ? "One more, from what you said" : "Question"));
     qbox.appendChild(el("div", "ob-q", q.question));
     var ab = attr(el("div", "ob-answer"), "data-filled", answer.trim() ? "1" : "0");
-    var input = el("input"); input.value = answer; input.placeholder = "one sentence is enough…"; input.spellcheck = false; input.setAttribute("autofocus", "");
-    on(input, "input", function () { st.ui.fAnswers[key] = input.value; ab.setAttribute("data-filled", input.value.trim() ? "1" : "0"); next.disabled = !input.value.trim() || !!st.busy; });
-    on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    var input = el("textarea"); input.value = answer; input.placeholder = "one sentence is enough…"; input.spellcheck = false; input.rows = 1; input.setAttribute("autofocus", "");
+    // The box grows with the answer instead of scrolling one line sideways.
+    function grow() { if (typeof input.scrollHeight !== "number") return; input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; }
+    on(input, "input", function () { st.ui.fAnswers[key] = input.value; grow(); ab.setAttribute("data-filled", input.value.trim() ? "1" : "0"); next.disabled = !input.value.trim() || !!st.busy; });
+    on(input, "keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } });
+    setTimeout(grow, 0);
     ab.appendChild(input); qbox.appendChild(ab);
     // The grade is kept, never shown: the follow-up is the only sign of it.
     card.appendChild(qbox); box2.appendChild(card);
@@ -742,7 +751,6 @@
     var last = fi === areas.length - 1;
     function labelFor(lvl) { var hit = LADDER.filter(function (l) { return l.level === lvl; })[0]; return hit ? hit.label.toLowerCase() : String(lvl); }
     function advance() {
-      st.ui.followUp = null; st.ui.lastGrade = null;
       if (!last) { st.ui.fIdx = fi + 1; draw(); return; }
       // The last answer compiles the assessment; the fitting of the resources
       // to them starts at once and reports into the brainstorm.
@@ -757,13 +765,18 @@
     function submit() {
       var said = (st.ui.fAnswers[key] || "").trim(); if (!said || st.busy) return;
       st.busy = "grading"; draw();
-      api("answer", { area_index: fi, question_level: level, self_level: levelOf(fi), answer: said }).then(function (out) {
+      api("answer", { area_index: fi, question_level: level, self_level: follow ? Number(follow.self_level) : levelOf(fi), answer: said }).then(function (out) {
         st.busy = "";
-        st.cals = st.cals.filter(function (c) { return !(Number(c.area_index) === fi && Number(c.question_level) === level); });
-        st.cals.push({ area_index: fi, question_level: level, answered_at: new Date().toISOString(), graded_level: out.graded_level });
+        // The rows the server touched replace what this tab held: the graded
+        // answer, and the follow-up it may have written.
+        var touched = Array.isArray(out.calibrations) && out.calibrations.length ? out.calibrations
+          : [{ area_index: fi, question_level: level, answered_at: new Date().toISOString(), graded_level: out.graded_level }];
+        touched.forEach(function (c) {
+          st.cals = st.cals.filter(function (x) { return !(Number(x.area_index) === Number(c.area_index) && Number(x.question_level) === Number(c.question_level)); });
+          st.cals.push(c);
+        });
         if (out.follow_up && !follow) {
-          st.ui.followUp = { area: fi, question_level: out.follow_up.question_level };
-          st.ui.lastGrade = { area: fi, level: out.graded_level };
+          if (!pendingFollow(fi)) st.cals.push({ area_index: fi, question_level: out.follow_up.question_level, question: out.follow_up.question, answered_at: null, self_level: levelOf(fi) });
           draw(); return;
         }
         advance();
@@ -771,12 +784,12 @@
     }
     var nav = el("div", "ob-nav");
     var back = el("button", "ob-arrow", "←"); back.type = "button";
-    if (fi === 0) back.setAttribute("disabled", "disabled"); else on(back, "click", function () { st.ui.followUp = null; st.ui.fIdx = fi - 1; draw(); });
+    if (fi === 0) back.setAttribute("disabled", "disabled"); else on(back, "click", function () { st.ui.fIdx = fi - 1; draw(); });
     nav.appendChild(back);
     var pd = el("span", "ob-pdots");
     areas.forEach(function (_, i) {
       var d = attr(attr(el("span", "ob-pdot"), "data-on", i === fi ? "1" : "0"), "data-done", answeredArea(i) ? "1" : "0");
-      on(d, "click", function () { st.ui.followUp = null; st.ui.fIdx = i; draw(); }); pd.appendChild(d);
+      on(d, "click", function () { st.ui.fIdx = i; draw(); }); pd.appendChild(d);
     });
     nav.appendChild(pd);
     var next = cta(st.busy === "grading" ? "Sending…" : st.busy === "compiling" ? "One moment…" : last && !follow ? "On to brainstorming" : "Next", !answer.trim() || !!st.busy, submit);

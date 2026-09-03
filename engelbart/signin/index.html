@@ -187,6 +187,7 @@
 
     <section id="download-panel" class="account hidden" aria-labelledby="download-title">
       <h2 id="download-title">You're in.</h2>
+      <a class="go" href="/engelbart/setup"><span>Set up a new project</span><span class="go-arrow" aria-hidden="true">›</span></a>
       <p id="credit-status" class="status" aria-live="polite"></p>
       <div id="credit-meter" class="meter hidden" role="img" aria-label="Credit remaining">
         <span id="credit-fill" class="meter-fill"></span>
@@ -200,24 +201,38 @@
         <p id="credit-invite-status" class="status" aria-live="polite"></p>
       </form>
 
-      <div id="key-block" class="key-block hidden">
-        <p class="cap"><span>Your API key</span><button id="reveal-key" class="cap-button" type="button">Show</button></p>
-        <div class="cmd">
-          <code id="api-key" class="cmd-text"></code>
-          <button id="copy-key" class="cmd-copy" type="button">Copy</button>
-        </div>
+      <hr class="rule">
 
-        <p class="cap"><span>Point Claude Code at it</span></p>
-        <p class="account-note">Run this once, then run <code class="inline-code">claude</code>. The key works with every model Claude Code offers. Already have your own Anthropic key? The installer has a local-only bypass, so nothing you build has to run through us.</p>
+      <div id="key-block" class="key-block hidden">
+        <p class="cap"><span>Already have a project</span><button id="reveal-key" class="cap-button" type="button">Show key</button></p>
+        <p class="account-note">Run this once in a terminal, then run <code class="inline-code">claude</code>. It points that terminal at your credit; the key works with every model Claude Code offers. Have your own Anthropic key? The installer has a local-only bypass.</p>
         <div class="cmd cmd-multi">
           <code id="setup-cmd" class="cmd-text"></code>
           <button id="copy-setup" class="cmd-copy" type="button">Copy</button>
         </div>
+        <code id="api-key" class="visually-hidden" aria-hidden="true"></code>
+        <button id="copy-key" class="visually-hidden" type="button" tabindex="-1" aria-hidden="true">Copy key</button>
       </div>
 
-      <p class="cap"><span>First project</span></p>
-      <p class="account-note">New here? <a href="/engelbart/setup">Set it up on the web</a> — describe the work, approve a plan, and get an install command that opens it on your machine.</p>
-      <p class="sign">&lt;3 Hudson and David</p>
+      <div class="switching">
+        <p class="cap"><span>Switching between your key and ours</span></p>
+        <p class="account-note">Connecting a machine wires your credit into Claude Code itself, so every <code class="inline-code">claude</code> on it uses ours. The install command from setup does this; so does <code class="inline-code">engelbart auth</code>. To put Claude Code back on your own account:</p>
+        <div class="cmd">
+          <code class="cmd-text">~/.human-compact/bin/engelbart-key --disconnect</code>
+          <button class="cmd-copy" type="button" data-copy-cmd>Copy</button>
+        </div>
+        <p class="account-note">Restart Claude Code afterwards. On Windows the same file ends in <code class="inline-code">.cmd</code>. Come back to our credit any time:</p>
+        <div class="cmd">
+          <code class="cmd-text">engelbart auth</code>
+          <button class="cmd-copy" type="button" data-copy-cmd>Copy</button>
+        </div>
+        <p class="account-note">For one terminal only, leaving the machine on your own account, export the key above into that terminal and start <code class="inline-code">claude</code> there:</p>
+        <div class="cmd">
+          <code class="cmd-text">eval "$(engelbart env)"</code>
+          <button class="cmd-copy" type="button" data-copy-cmd>Copy</button>
+        </div>
+        <p class="account-note">That terminal returns to your own account with <code class="inline-code">unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL</code>. Exported variables outrank the wiring, so unset them before expecting the wired key back.</p>
+      </div>
     </section>
 
     <footer class="colophon">

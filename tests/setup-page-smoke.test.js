@@ -129,7 +129,7 @@ function mount(options = {}) {
     }
     if (body && replies[body.action]) return replies[body.action](body);
     if (url === "/api/engelbart-onboarding") {
-      if (body.action === "open") return answer({ onboarding: row, calibrations: [], turns, profile_reused: Boolean(options.profileReused) });
+      if (body.action === "open") return answer({ onboarding: row, calibrations: options.calibrations || [], turns, profile_reused: Boolean(options.profileReused) });
       if (body.action === "reset") { row = { step: 0, status: "open", analysis_status: "none" }; return answer({ onboarding: row, calibrations: [], profile_reused: false }); }
       if (body.action === "step") { row = { ...row, ...body.fields, step: body.step }; return answer({ onboarding: row }); }
       if (body.action === "sources") return answer({ ok: true, analysis_status: "none" });
@@ -197,7 +197,7 @@ function mount(options = {}) {
 test("every step draws from the record, and none of them throws", async () => {
   const titles = ["What is your name?", "What year are you?", "What is your major?",
     "How technical should explanations be?", "Which paper are you building on?", "Which computer are you on?",
-    "How familiar are you with what the paper leans on?", "What in this paper is worth building on?",
+    "How familiar are you with the paper's concepts?", "What in this paper is worth building on?",
     "What do you want to build on?", "Pose to angles", "Pose to angles", "Pose to angles"];
   for (let step = 0; step < titles.length; step += 1) {
     const page = mount({ row: fullRow({ step }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] });
@@ -260,7 +260,7 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
   page.cta().fire("click");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "How familiar are you with what the paper leans on?");
+  assert.equal(page.title(), "How familiar are you with the paper's concepts?");
   assert.equal(page.row().step, 6);
 });
 
@@ -397,20 +397,24 @@ test("topics are answered one area at a time, a disagreeing grade asks once more
   const page = mount({
     row: fullRow({ step: 6, assessment: null, leveled_status: "none", leveled: null, todos: null, goal_chosen: "" }),
     replies: { answer: () => { calls += 1; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
-      calls === 1 ? { graded_level: 25, grade_rationale: "recognises only", follow_up: { question_level: 25, question: "A question at 25" } }
-                 : { graded_level: 50 }) }); } },
+      calls === 1 ? { graded_level: 25, grade_rationale: "recognises only", follow_up: { question_level: 25, question: "You said weights: weights of what?", generated: true },
+                     calibrations: [{ id: "c1", area_index: 0, question_level: 0, answered_at: "2026-09-03T00:00:00Z", graded_level: 25 },
+                       { id: "c2", area_index: 0, question_level: 25, question: "You said weights: weights of what?", sample_response: "SAMPLE-F", answered_at: null, self_level: 0 }] }
+                 : { graded_level: 50, calibrations: [{ id: "c" + calls, area_index: calls === 2 ? 0 : 1, question_level: calls === 2 ? 25 : 0, answered_at: "2026-09-03T00:01:00Z", graded_level: 50 }] }) }); } },
   });
   await settle();
-  assert.equal(page.title(), "How familiar are you with what the paper leans on?");
+  assert.equal(page.title(), "How familiar are you with the paper's concepts?");
   assert.equal(textOf(one(page.app, "ob-q")), "A question at 0");
   assert.doesNotMatch(page.app.textContent, /SAMPLE-/, "sample answers stay unseen");
-  const answerBox = () => find(page.app, (n) => n.tagName === "input" && n.placeholder === "one sentence is enough…")[0];
+  const answerBox = () => find(page.app, (n) => n.tagName === "textarea" && n.placeholder === "one sentence is enough…")[0];
   answerBox().value = "attention weights"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
-  assert.equal(textOf(one(page.app, "ob-q")), "A question at 25", "the follow-up is asked at the graded level");
+  assert.equal(textOf(one(page.app, "ob-q")), "You said weights: weights of what?", "the follow-up is the generated question, not the ladder's");
   assert.equal(one(page.app, "ob-grade"), undefined, "and the grade itself is never shown");
   assert.doesNotMatch(textOf(page.app), /can follow it/);
+  assert.doesNotMatch(page.app.textContent, /SAMPLE-/, "the follow-up's sample stays unseen too");
+  assert.equal(one(page.app, "ob-slider").attrs["data-locked"], "1", "the slider is locked while the follow-up waits");
   answerBox().value = "it weights inputs"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
@@ -424,23 +428,36 @@ test("topics are answered one area at a time, a disagreeing grade asks once more
   assert.equal(page.bodies.find((b) => b.action === "leveled").run, true);
 });
 
-test("moving the slider on a follow-up asks the ladder's own question at that level instead", async () => {
+test("a follow-up is a stored row: it survives a reload, the slider cannot move it, and the next area is untouched", async () => {
   const page = mount({
     row: fullRow({ step: 6, assessment: null }),
+    calibrations: [{ id: "c1", area_index: 0, question_level: 50, answered_at: "2026-09-03T00:00:00Z", graded_level: 25, self_level: 50 },
+      { id: "c2", area_index: 0, question_level: 25, question: "From what you said: which part is learned?", answered_at: null, self_level: 50 }],
     replies: { answer: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
-      { graded_level: 25, follow_up: { question_level: 25, question: "A question at 25" } }) }) },
+      { graded_level: 25, calibrations: [{ id: "c2", area_index: 0, question_level: 25, question: "From what you said: which part is learned?", answered_at: "2026-09-03T00:02:00Z", graded_level: 25 }] }) }) },
   });
   await settle();
-  const answerBox = () => find(page.app, (n) => n.tagName === "input" && n.placeholder === "one sentence is enough…")[0];
-  answerBox().value = "attention weights"; answerBox().fire("input");
-  page.cta().fire("click");
-  await settle();
-  assert.equal(textOf(one(page.app, "ob-q")), "A question at 25");
+  assert.equal(textOf(one(page.app, "ob-q")), "From what you said: which part is learned?", "the waiting follow-up is what a reload shows");
+  assert.match(textOf(one(page.app, "ob-q-label")), /One more/);
+  const slider = one(page.app, "ob-slider");
+  assert.equal(slider.attrs["data-locked"], "1");
   byClass(page.app, "ob-track")[0].fire("pointerdown", { clientX: 300, pointerId: 1 });
   page.win.fire("pointerup", {});
   await settle();
-  assert.equal(textOf(one(page.app, "ob-q")), "A question at 75", "the follow-up is dropped for the level they moved to");
-  assert.doesNotMatch(textOf(page.app), /One more/);
+  assert.equal(textOf(one(page.app, "ob-q")), "From what you said: which part is learned?", "the slider does not swap the question");
+  // Walking to the next area and back finds the same follow-up waiting.
+  byClass(page.app, "ob-pdot")[1].fire("click");
+  assert.equal(textOf(one(page.app, "ob-area-name")), "B");
+  assert.equal(one(page.app, "ob-slider").attrs["data-locked"], undefined, "the next area's slider is free");
+  byClass(page.app, "ob-pdot")[0].fire("click");
+  assert.equal(textOf(one(page.app, "ob-q")), "From what you said: which part is learned?");
+  const answerBox = find(page.app, (n) => n.tagName === "textarea" && n.placeholder === "one sentence is enough…")[0];
+  answerBox.value = "the weights"; answerBox.fire("input");
+  page.cta().fire("click");
+  await settle();
+  const sent = page.bodies.filter((b) => b.action === "answer").pop();
+  assert.deepEqual([sent.area_index, sent.question_level, sent.self_level], [0, 25, 50], "answered at the follow-up's level, with the rating that produced it");
+  assert.equal(textOf(one(page.app, "ob-area-name")), "B", "and the next area is up");
 });
 
 test("the brainstorm opens with the model's card, sends answers, and offers the plan once the resources are fitted", async () => {

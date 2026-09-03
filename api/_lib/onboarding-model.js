@@ -164,6 +164,28 @@ async function grade(input, credentials, options = {}) {
   return normalizeGrade(raw);
 }
 
+function normalizeFollowUp(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const question = one(raw.question, 400);
+  if (!question) return null;
+  return { question, sample_response: long(raw.sample_response, 900) };
+}
+
+// The one follow-up in an area. A reply the model cannot shape is null: the
+// caller falls back to the ladder's own question at the graded level, so a
+// flaky model costs the reader a tailored question, never the diagnostic.
+async function followUp(input, credentials, options = {}) {
+  let raw;
+  try {
+    raw = await callModel({ content: [text(P.followUpPrompt(input))], family: "sonnet", maxTokens: 500 },
+      credentials, options);
+  } catch (error) {
+    if (error.statusCode === 409) throw error;
+    return null;
+  }
+  return normalizeFollowUp(raw);
+}
+
 // --- generation -------------------------------------------------------------
 
 const KINDS = ["choice", "multi", "short"];
@@ -411,8 +433,8 @@ const subgoals = (input, c, o) => generate(P.subgoalsPrompt(input), normalizeSub
 module.exports = {
   LEVELS, MAX_PAGE_TEXT,
   callModel, pickModel, extractJson,
-  analyze, grade, details, goals, todos, ask, assets, levelAssets, brainstorm, assetAsk, direction, subgoals,
+  analyze, grade, followUp, details, goals, todos, ask, assets, levelAssets, brainstorm, assetAsk, direction, subgoals,
   paperPrefix, briefOf,
-  normalizeAnalysis, normalizeGrade, normalizeDetails, normalizeGoals, normalizeTodos, normalizeAsk,
+  normalizeAnalysis, normalizeGrade, normalizeFollowUp, normalizeDetails, normalizeGoals, normalizeTodos, normalizeAsk,
   normalizeAssets, normalizeLeveled, normalizeBrainstorm, normalizeDirection, normalizeSubgoals,
 };

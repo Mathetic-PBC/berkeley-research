@@ -350,6 +350,34 @@ ${JSON_ONLY}
 {"level": 0 | 25 | 50 | 75 | 100, "confidence": 0.0-1.0, "rationale": "one sentence, at most 200 characters"}`;
 }
 
+// The one follow-up in an area, written from what the reader actually said.
+// Inputs: reader (for readerBlock), area, parent_field, question (the ladder
+// question they answered), level (its level), self_level, answer (theirs),
+// graded_level (where the grader placed them), graded_rationale, sample (the
+// answered question's sample response).
+function followUpPrompt({ reader, area, parent_field, question, level, self_level, answer, graded_level, graded_rationale, sample }) {
+  const at = rung(graded_level), was = rung(level), self = rung(self_level);
+  const ladder = LADDER.map((r) => `${r.level} -- ${r.label}: ${r.desc}`).join("\n");
+  return [
+    ...readerBlock(reader), "",
+    `A student is being calibrated on "${area}"${parent_field ? ` (${parent_field})` : ""}. They rated themselves "${self ? self.label : self_level}" (${self_level}) and were asked the level-${level} question:`,
+    `"""`, question, `"""`,
+    "A sample answer at that level:",
+    `"""`, sample || "(none)", `"""`,
+    "They answered:",
+    `"""`, answer, `"""`,
+    `The grader placed the answer at ${graded_level} -- ${at ? at.label : ""}${graded_rationale ? `: ${graded_rationale}` : "."}`,
+    "",
+    "The levels:", ladder, "",
+    `Write ONE follow-up question at level ${graded_level} that builds on what they actually said. Use their own words and examples where they gave any: probe the specific gap their answer showed if they were placed lower than they rated themselves, or the specific strength if they were placed higher. It must be a new question, not the ladder's question at that level and not a rephrasing of the one they answered; it must be about the AREA, never about the paper; and it should be answerable in one to three sentences by someone at level ${graded_level}${at ? ` (${at.desc.toLowerCase()})` : ""}.`,
+    "Vocabulary follows the level: at 0 no jargon at all; at 25 only the one or two most common terms of the area, in plain words; from 50 up the area's own terms. The reader's technical depth above governs every computing term.",
+    "Also write a sample response that shows what a correct answer at that level looks like; it is used only to grade them and is never shown.",
+    "",
+    JSON_ONLY,
+    '{"question": "the follow-up question", "sample_response": "a level-' + graded_level + ' answer, one to three sentences"}',
+  ].join("\n");
+}
+
 // The project-scoping questions of the Details step. Inputs: reader (for
 // readerBlock), paper {title, one_liner}, draft, registerNote (a sentence
 // saying the register was shifted, or "").
@@ -628,6 +656,6 @@ function resourcesBlock(resources) {
 module.exports = {
   DEPTHS, FAMILIARITY, LADDER, JSON_ONLY, ASSET_TYPES,
   depthOf, rung, readerBlock, assessmentBlock, briefBlock, transcriptBlock,
-  analyzePrompt, gradePrompt, detailsPrompt, goalsPrompt, todosPrompt, askPrompt,
+  analyzePrompt, gradePrompt, followUpPrompt, detailsPrompt, goalsPrompt, todosPrompt, askPrompt,
   PAPER_PREFIX, assetsPrompt, levelPrompt, brainstormPrompt, assetAskPrompt, directionPrompt, subgoalsPrompt, resourcesBlock,
 };

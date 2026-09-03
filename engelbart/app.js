@@ -221,7 +221,7 @@
     el.creditFill.style.width = (budget > 0 ? Math.max(0, Math.min(100, (left / budget) * 100)) : 0) + "%";
 
     el.apiKey.textContent = keyVisible ? credentials.apiKey : maskKey(credentials.apiKey);
-    el.revealKey.textContent = keyVisible ? "Hide" : "Show";
+    el.revealKey.textContent = keyVisible ? "Hide key" : "Show key";
     el.setupCmd.textContent = keyVisible
       ? setupCommand(credentials)
       : setupCommand({ baseUrl: credentials.baseUrl, apiKey: maskKey(credentials.apiKey) });
@@ -404,6 +404,15 @@
 
   el.copyKey.addEventListener("click", function () {
     if (credentials) copyToClipboard(credentials.apiKey, el.copyKey, "Copied");
+  });
+
+  // The fixed commands of the switching section: each button copies the
+  // code beside it, so the markup is the only place the command is written.
+  Array.prototype.forEach.call(document.querySelectorAll("[data-copy-cmd]"), function (button) {
+    button.addEventListener("click", function () {
+      var code = button.parentNode ? button.parentNode.querySelector(".cmd-text") : null;
+      if (code) copyToClipboard(code.textContent, button, "Copied");
+    });
   });
 
   el.copySetup.addEventListener("click", function () {

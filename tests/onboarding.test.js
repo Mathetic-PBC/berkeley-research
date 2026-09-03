@@ -88,6 +88,7 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
       const text = body.messages[0].content.map((b) => b.text || "").join("\n");
       const reply = /prior-knowledge diagnostic/.test(text) ? model.analysis
         : /calibration question/.test(text) ? model.grade
+        : /Write ONE follow-up question/.test(text) ? (typeof model.followUp === "function" ? model.followUp(text) : model.followUp)
         : /Ask 3 or 4 questions/.test(text) ? model.details
         : /exactly four goals/.test(text) ? model.goals
         : /identify the concrete inputs and outputs/.test(text) ? model.assets
@@ -333,22 +334,59 @@ test("a running analysis younger than three minutes is not started twice", async
   assert.equal(again.analysis_status, "done");
 });
 
-test("answer stores the row, grades it, and asks a follow-up when the grade disagrees", async () => {
-  const db = fake({ model: { grade: { level: 25, confidence: 0.9, rationale: "recognises only" } } });
+test("answer stores the row, grades it, and asks one follow-up written from what they said", async () => {
+  const seen = [];
+  const db = fake({ model: { grade: { level: 25, confidence: 0.9, rationale: "recognises only" },
+    followUp: (text) => { seen.push(text); return { question: "F25: you said attention weights -- weights of what?", sample_response: "F25 sample" }; } } });
   const { onboarding } = await OB.open(USER, {}, db.options);
+  Object.assign(db.tables.engelbart_onboardings[0], { analysis: ANALYSIS, analysis_status: "done" });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const out = await OB.answer(USER, db.tables.engelbart_onboardings[0], [], { area_index: 0, question_level: 75,
+    self_level: 75, answer: "I think it's about attention weights" }, CREDS, db.options);
+  assert.equal(out.graded_level, 25);
+  assert.deepEqual(out.follow_up, { question_level: 25, question: "F25: you said attention weights -- weights of what?", generated: true });
+  // The prompt carried their answer, the question, and where the grade put them.
+  assert.equal(seen.length, 1);
+  assert.match(seen[0], /attention weights/);
+  assert.match(seen[0], /q75/);
+  assert.match(seen[0], /placed the answer at 25/);
+  assert.equal(cals[0].sample_response, "s75");
+  assert.equal(cals[0].graded_level, 25);
+  // The follow-up is stored unanswered, with its own question and sample, so a
+  // reload finds it; and the reply carries both rows for the page.
+  assert.equal(cals.length, 2);
+  assert.equal(cals[1].question_level, 25);
+  assert.equal(cals[1].question, "F25: you said attention weights -- weights of what?");
+  assert.equal(cals[1].sample_response, "F25 sample");
+  assert.equal(cals[1].answered_at, null);
+  assert.deepEqual(out.calibrations.map((c) => [c.question_level, Boolean(c.answered_at)]), [[75, true], [25, false]]);
+  assert.deepEqual(OB.areaLevels(ANALYSIS, cals), [25, null], "an unanswered follow-up is not a level");
+
+  // Answering the follow-up grades against ITS sample, not the ladder's, and no
+  // further follow-up comes whatever the grade.
+  const second = await OB.answer(USER, db.tables.engelbart_onboardings[0], cals,
+    { area_index: 0, question_level: 25, self_level: 75, answer: "It weights inputs" }, CREDS, db.options);
+  assert.equal(second.follow_up, undefined);
+  assert.equal(cals.length, 2, "no third row");
+  assert.equal(cals[1].question, "F25: you said attention weights -- weights of what?");
+  assert.equal(cals[1].sample_response, "F25 sample");
+  assert.ok(cals[1].answered_at);
+  const gradeCalls = db.calls.filter((c) => c.url.endsWith("/v1/messages")).map((c) => JSON.parse(c.init.body).messages[0].content.map((b) => b.text || "").join("\n"));
+  assert.match(gradeCalls[gradeCalls.length - 1], /F25 sample/, "the follow-up's own sample is what it is graded against");
+  assert.deepEqual(OB.areaLevels(ANALYSIS, cals), [25, null]);
+});
+
+test("a follow-up the model cannot write falls back to the ladder's question at the graded level", async () => {
+  const db = fake({ model: { grade: { level: 25, confidence: 0.9, rationale: "recognises only" } } });   // no model.followUp: prose comes back
+  await OB.open(USER, {}, db.options);
   Object.assign(db.tables.engelbart_onboardings[0], { analysis: ANALYSIS, analysis_status: "done" });
   const out = await OB.answer(USER, db.tables.engelbart_onboardings[0], [], { area_index: 0, question_level: 75,
     self_level: 75, answer: "I think it's about attention" }, CREDS, db.options);
-  assert.equal(out.graded_level, 25);
-  assert.deepEqual(out.follow_up, { question_level: 25, question: "q25" });
-  const cal = db.tables.engelbart_onboarding_calibrations[0];
-  assert.equal(cal.sample_response, "s75");
-  assert.equal(cal.graded_level, 25);
-  // Second question in the same area: no further follow-up, whatever the grade.
-  const second = await OB.answer(USER, db.tables.engelbart_onboardings[0], db.tables.engelbart_onboarding_calibrations,
-    { area_index: 0, question_level: 25, self_level: 75, answer: "It weights inputs" }, CREDS, db.options);
-  assert.equal(second.follow_up, undefined);
-  assert.deepEqual(OB.areaLevels(ANALYSIS, db.tables.engelbart_onboarding_calibrations), [25, null]);
+  assert.deepEqual(out.follow_up, { question_level: 25, question: "q25", generated: false });
+  const pending = db.tables.engelbart_onboarding_calibrations[1];
+  assert.equal(pending.question, "q25");
+  assert.equal(pending.sample_response, "s25");
+  assert.equal(pending.answered_at, null);
 });
 
 test("assessedDepth shifts one stop on the graded mean and names the weakest area", () => {

@@ -344,7 +344,10 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-q-skel{margin-top:10px;height:14px;width:80%;border-radius:4px;background:var(--bd);animation:pulse 1.2s ease-in-out infinite}
 .ob-answer{margin-top:10px;padding:10px 12px;background:var(--panel2);border:1px solid var(--bd);border-radius:var(--radius-sm);transition:border-color 200ms}
 .ob-answer[data-filled="1"]{border-color:var(--bd2)}
-.ob-answer input{all:unset;display:block;width:100%;font:13.5px/1.6 var(--font-sans);color:var(--ink)}
+.ob-answer input,.ob-answer textarea{all:unset;display:block;width:100%;box-sizing:border-box;font:13.5px/1.6 var(--font-sans);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.ob-answer textarea{resize:none;overflow:hidden;min-height:1.6em;field-sizing:content}
+.ob-slider[data-locked="1"] .ob-track{opacity:.45;cursor:default;pointer-events:none}
+.ob-slider[data-locked="1"] .ob-thumb{cursor:default}
 .ob-grade{margin-top:10px;display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px dashed var(--bd2);border-radius:var(--radius-md);font:var(--text-12);color:var(--mut)}
 .ob-grade .tag{flex:none;font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--fnt);line-height:1.6}
 .ob-nav{display:flex;align-items:center;margin-top:20px}
