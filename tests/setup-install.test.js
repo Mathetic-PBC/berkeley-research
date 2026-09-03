@@ -175,8 +175,10 @@ test("the bart variant runs claude, then /bart, then Done", () => {
   cta(page.app).fire("click");
   assert.deepEqual(cmds(page.app), ["claude"]);
   cta(page.app).fire("click");
+  assert.equal(textOf(one(page.app, "ob-title")), "Trust the folder", "Claude Code's first-run question is a step of its own");
+  assert.deepEqual(byClass(page.app, "ob-kbd").map(textOf), ["↓", "⏎"]);
+  cta(page.app).fire("click");
   assert.deepEqual(cmds(page.app), ["/bart"]);
-  assert.match(textOf(one(page.app, "ob-sub")), /picks up the project you just set up/);
   cta(page.app).fire("click");
   assert.equal(textOf(cta(page.app)), "Done›");
   cta(page.app).fire("click");
@@ -211,7 +213,7 @@ test("rendering again replaces the screen; nothing animates, so nothing outlives
   assert.equal(page.app.children.length, 1, "one screen in the container");
   assert.equal(textOf(one(page.app, "ob-sub")), "Press Ctrl Alt T.");
 
-  cta(page.app).fire("click"); cta(page.app).fire("click"); cta(page.app).fire("click");
+  cta(page.app).fire("click"); cta(page.app).fire("click"); cta(page.app).fire("click"); cta(page.app).fire("click");
   assert.equal(page.timers.live.size, 0);
   page.api.stop(page.app);   // kept for the page that calls it; nothing to stop
   assert.equal(page.timers.live.size, 0);

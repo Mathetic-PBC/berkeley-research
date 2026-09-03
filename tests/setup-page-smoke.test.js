@@ -200,7 +200,7 @@ test("every step draws from the record, and none of them throws", async () => {
   const titles = ["What is your name?", "What year are you?", "What is your major?",
     "How technical should explanations be?", "Which paper are you building on?", "Which computer are you on?",
     "How familiar are you with the paper's concepts?", "What do you want to build?",
-    "What do you want to build on?", "Pose to angles", "Pose to angles", "Pose to angles"];
+    "What do you want to build on?", "Pose to angles", "Pose to angles", "One pose drawn"];
   for (let step = 0; step < titles.length; step += 1) {
     const page = mount({ row: fullRow({ step }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] });
     await settle();
@@ -208,7 +208,7 @@ test("every step draws from the record, and none of them throws", async () => {
   }
   const done = mount({ row: fullRow({ step: 12, status: "created" }) });
   await settle();
-  assert.match(textOf(done.app), /Open a new Claude chat on your machine/);
+  assert.doesNotMatch(textOf(done.app), /Open a new Claude chat|written for/, "the done screen carries no summary sentence");
 });
 
 test("the walk from Name to Install writes every step as it goes, and fires the reading and the hunt", async () => {
@@ -372,7 +372,7 @@ test("the slider paints itself while it is dragged and only commits on release",
   await settle();
   assert.equal(one(page.app, "ob-thumb").style.left, "75.00%", "and snaps to the stop");
   assert.equal(one(page.app, "ob-track").attrs["data-drag"], "0");
-  assert.equal(textOf(one(page.app, "ob-hint")), "You can change this later.");
+  assert.equal(textOf(one(page.app, "ob-hint")), "", "no hint once they have moved it");
   page.cta().fire("click");
   await settle();
   assert.equal(page.row().depth, "technical");
@@ -540,6 +540,12 @@ test("clicking a block offers Ask about this in the gutter, and the button opens
   await settle();
   assert.ok(one(page.app, "ob-ask"), "the ask panel opened");
   assert.equal(textOf(one(page.app, "ob-ask-quote")), "“The math w”", "the block's words, spaced, not its glyphs");
+  // Any step of the flow can be asked about, the name step included.
+  const early = mount({ row: fullRow({ step: 0, name: "" }) });
+  await settle();
+  early.doc.fire("click", { target: one(early.app, "ob-title") });
+  await settle();
+  assert.ok(one(early.app, "ob-askbtn"), "the first step offers Ask about this too");
   // A click on empty space puts the button away.
   const fresh = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
   await settle();
@@ -590,7 +596,7 @@ test("the assets list expands, asks, and a child can be picked; the pick resets 
   assert.equal(page.bodies.find((b) => b.action === "asset_ask").key, "Pose viewer");
   assert.match(textOf(page.app), /Start with the toy/);
   byClass(page.app, "ob-as-head")[1].fire("click");
-  assert.match(textOf(one(page.app, "ob-hint")), /building on · Toy poses/);
+  assert.equal(textOf(one(page.app, "ob-hint")), "Toy poses", "the pick is named, nothing more");
   page.cta().fire("click");
   await settle();
   assert.equal(page.bodies.find((b) => b.action === "choose_asset").key, "Pose viewer :: Toy poses");
@@ -618,7 +624,8 @@ test("direction and subgoals are one proposal each; a change request revises in 
   await settle();
   const rows = find(page.app, (n) => n.tagName === "input" && n.placeholder !== "add a todo…" && n.placeholder !== "project name…");
   assert.equal(rows.length, 2);
-  assert.match(textOf(page.app), /First piece[\s\S]*One pose drawn/);
+  assert.match(textOf(page.app), /One pose drawn/);
+  assert.doesNotMatch(textOf(page.app), /First piece|The other two pieces/);
   const nameBox = find(page.app, (n) => n.placeholder === "project name…")[0];
   assert.equal(nameBox.value, "zebra-runner");
   const create = one(page.app, "ob-pill");
@@ -634,6 +641,8 @@ test("direction and subgoals are one proposal each; a change request revises in 
   byClass(page.app, "ob-opt")[0].fire("click");
   page.cta().fire("click");
   assert.match(textOf(page.app), /claude/);
+  page.cta().fire("click");
+  assert.match(textOf(page.app), /Trust the folder/, "Claude Code's first-run question sits between claude and /bart");
   page.cta().fire("click");
   assert.match(textOf(page.app), /\/bart/, "and the last screen walks them to /bart");
 });

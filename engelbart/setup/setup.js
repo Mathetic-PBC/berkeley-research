@@ -520,7 +520,7 @@
       } }));
     box.appendChild(panel);
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
-    acts.appendChild(el("span", "ob-hint", st.ui.depthTouched ? "You can change this later." : "Everyday is the default · drag to change · you can adjust it later"));
+    acts.appendChild(el("span", "ob-hint", st.ui.depthTouched ? "" : "Drag to change."));
     acts.appendChild(cta("Continue", false, function () {
       save(4, { depth: DEPTHS[depthIndex()].key }).then(function () { go(4); }).catch(fail);
     }));
@@ -721,7 +721,6 @@
     if (r.analysis_status !== "done" || !r.analysis) {
       var w = el("div", "ob-wait"); w.appendChild(dots());
       w.appendChild(el("div", "ob-wait-t", "Still reading your paper"));
-      w.appendChild(el("div", "ob-wait-s", "Questions about it come next."));
       content.appendChild(w); pollAnalysis(); return;
     }
     var a = r.analysis, areas = a.areas, fi = Math.min(st.ui.fIdx || 0, areas.length - 1), area = areas[fi];
@@ -1079,7 +1078,6 @@
     var card = el("div", "ob-bs-card ob-bs-offer");
     card.appendChild(el("div", "ob-cap", "ready when you are"));
     card.appendChild(el("div", "ob-question", "Ready to start planning your project?"));
-    card.appendChild(el("div", "ob-sub", "You have said enough to plan from. Or keep going."));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
     var later = el("button", "ob-ghost", "Keep brainstorming"); later.type = "button";
     acts.appendChild(on(later, "click", function () { st.ui.bs.planAsked = true; draw(); }));
@@ -1101,7 +1099,6 @@
       if (!r.assessment) { stepBox(content, count(8), "Answer the topic questions first"); return; }
       var w = el("div", "ob-wait"); w.appendChild(dots());
       w.appendChild(el("div", "ob-wait-t", r.assets_status === "done" ? "Fitting the resources to you" : "Finding what the paper rests on"));
-      w.appendChild(el("div", "ob-wait-s", "Datasets, code, tools and demos, with real links."));
       if (r.assets_status === "error" || r.leveled_status === "error") {
         w.appendChild(el("div", "ob-err", (r.assets_status === "error" ? r.assets_error : r.leveled_error) || "Something went wrong."));
         var acts0 = el("div", "ob-actions");
@@ -1135,7 +1132,7 @@
     box.appendChild(group);
     var picked = as.picked ? findLocal(list, as.picked) : null;
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
-    acts.appendChild(el("span", "ob-hint", picked ? "building on · " + picked.title : "pick one · expand a row to read about it or ask"));
+    acts.appendChild(el("span", "ob-hint", picked ? picked.title : ""));
     acts.appendChild(cta("Continue", !picked || st.busy === "choose", function () {
       st.busy = "choose"; draw();
       api("choose_asset", { key: as.picked }).then(function (out) {
@@ -1144,7 +1141,6 @@
       }).catch(fail);
     }));
     box.appendChild(acts);
-    box.appendChild(el("div", "ob-hint", "You can come back and pick another."));
     content.appendChild(box);
   }
 
@@ -1339,8 +1335,7 @@
     var todos = st.ui.todos, n = todos.length, canAdd = n < 4;
     var box = el("div", "ob-step");
     var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(11, "Todos"))); head.appendChild(el("span", "ob-count", n + " of 4")); box.appendChild(head);
-    box.appendChild(el("div", "ob-cap", "Direction")); box.appendChild(el("div", "ob-goal-title", r.direction.title));
-    box.appendChild(el("div", "ob-cap", "First piece")); box.appendChild(el("div", "ob-sg-label", r.subgoals[0].label));
+    box.appendChild(el("div", "ob-title", r.subgoals[0].label));
     var rows = el("div", "ob-rows");
     todos.forEach(function (t, i) {
       var row = el("div", "ob-trow"); row.appendChild(el("span", "dash", "–"));
@@ -1357,7 +1352,7 @@
       add.appendChild(ni); rows.appendChild(add);
     }
     box.appendChild(rows);
-    box.appendChild(el("div", "ob-hint", n < 2 ? "At least two todos." : n >= 4 ? "Four is the cap — keep the first piece small." : "Edit, remove, or add up to " + (4 - n) + " more. The other two pieces get theirs when you reach them."));
+    if (n < 2 || n >= 4) box.appendChild(el("div", "ob-hint", n < 2 ? "At least two todos." : "Four is the cap — keep the first piece small."));
     function clean() { return todos.map(function (t) { return str(t).trim(); }).filter(Boolean); }
     function off() { var c = clean(); return c.length < 2 || c.length > 4 || !str(st.ui.projName).trim(); }
     var name = el("div", "ob-namerow");
@@ -1383,7 +1378,6 @@
     var r = st.row;
     var box = el("div", "ob-step");
     var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", "Done")); head.appendChild(el("span", "ob-count", (r.project_name || "your project") + " is saved")); box.appendChild(head);
-    box.appendChild(el("div", "ob-done-s", "One direction, three pieces, and " + (r.todos || []).length + " todos, written for " + (r.name || "you") + ". Open a new Claude chat on your machine and Engelbart will pick it up."));
     content.appendChild(box);
     var host = el("div", "ob-ins-host"); content.appendChild(host);
     if (window.EngelbartInstall) window.EngelbartInstall.render(host, { variant: "bart", onDone: function () { draw(); } });
@@ -1419,14 +1413,14 @@
   });
 
   var QUICK = ["What does this mean?", "Why does this matter?", "Give me an example", "Is this too much for a first project?"];
-  function askable() { return st.step >= 6 && st.step <= 11; }
+  function askable() { return st.screen === "flow" && st.step <= 11; }
   if (document.addEventListener) document.addEventListener("mouseup", function (e) {
     if (e.target && e.target.closest && e.target.closest("[data-askbtn]")) return;
     setTimeout(function () {
       var sel = window.getSelection ? window.getSelection() : null, t = sel ? sel.toString().trim() : "", c = document.getElementById("content");
       if (!t || t.length < 3 || !c || !sel.rangeCount || !c.contains(sel.anchorNode) || !askable()) { if (st.ui.askBtn && !st.ui.askBtn.gutter) { st.ui.askBtn = null; draw(); } return; }
       var r = sel.getRangeAt(0).getBoundingClientRect(), cr = c.getBoundingClientRect();
-      st.ui.askBtn = { text: t.slice(0, 240), x: r.left - cr.left + r.width / 2, y: r.top - cr.top }; draw();
+      st.ui.askBtn = { text: t.slice(0, 240), gutter: true, y: r.top - cr.top + r.height / 2 }; draw();
     }, 0);
   });
 
@@ -1480,8 +1474,7 @@
     var content = body.children[0];
     if (st.ui.askBtn && !st.ui.askOpen && content) {
       var b = attr(el("button", "ob-askbtn", "Ask about this"), "data-askbtn", "1"); b.type = "button";
-      if (st.ui.askBtn.gutter) attr(b, "data-gutter", "1"); else b.style.left = st.ui.askBtn.x + "px";
-      b.style.top = st.ui.askBtn.y + "px";
+      attr(b, "data-gutter", "1"); b.style.top = st.ui.askBtn.y + "px";
       on(b, "click", function () {
         st.ui.askQuote = st.ui.askBtn.text; st.ui.askOpen = true; st.ui.askBtn = null; st.ui.askText = "";
         var s = window.getSelection ? window.getSelection() : null; if (s && s.removeAllRanges) s.removeAllRanges(); draw();

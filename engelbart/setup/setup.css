@@ -399,9 +399,9 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-cmd-copy{flex:none;padding:5px 12px;font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--mut);background:var(--panel);border:1px solid var(--bd);border-radius:var(--radius-pill);cursor:pointer}
 .ob-done-acts{display:flex;justify-content:center;gap:9px;margin-top:26px}
 /* ask */
-.ob-askbtn{position:absolute;z-index:5;transform:translate(-50%,-100%);margin-top:-8px;padding:7px 12px;font:var(--text-microcap-lg);letter-spacing:1.2px;text-transform:uppercase;color:var(--onacc);background:var(--ink);border:1px solid var(--ink);border-radius:var(--radius-pill);cursor:pointer;animation:pop 140ms both}
-.ob-askbtn[data-gutter="1"]{left:auto;right:100%;margin:0 14px 0 0;transform:translateY(-50%);white-space:nowrap}
-@media(max-width:1080px){.ob-askbtn[data-gutter="1"]{right:auto;left:0;transform:translate(0,-100%);margin:-6px 0 0}}
+.ob-askbtn{position:absolute;z-index:5;right:100%;margin-right:14px;transform:translateY(-50%);padding:0;font:var(--text-12);color:var(--ink);background:none;border:none;text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--bd2);white-space:nowrap;cursor:pointer;animation:rise 140ms both}
+.ob-askbtn:hover{text-decoration-color:var(--ink)}
+@media(max-width:1080px){.ob-askbtn{right:auto;left:0;transform:translateY(-100%);margin:-6px 0 0}}
 .ob-ask{margin-top:22px;padding:14px 16px;border:1px solid var(--ink);border-radius:var(--radius-md);background:var(--panel);animation:rise 200ms both}
 .ob-ask-quote{margin-top:8px;font:italic 13px/1.6 var(--font-sans);color:var(--mut);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .ob-ask-row{margin-top:12px;display:flex;align-items:center;gap:10px;padding:5px 5px 5px 14px;background:var(--panel2);border:1px solid var(--bd);border-radius:var(--radius-pill)}

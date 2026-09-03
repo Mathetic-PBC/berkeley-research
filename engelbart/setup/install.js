@@ -126,15 +126,16 @@
     if (st.opts.variant === "bart") return [
       openStep(os, true),
       { title: "Start Claude Code", sub: "Type claude and press ⏎.", cmd: { label: "Run", text: "claude" }, how: typeHow("claude") },
-      { title: "Open Engelbart", sub: "Type /bart and press ⏎. Engelbart picks up the project you just set up.", cmd: { label: "Then", text: "/bart" }, how: typeHow("/bart") },
-      { done: true, title: "You're set up.", sub: "Engelbart is running with your first project. Come back here any time to set up another.", button: "Done" }
+      { title: "Trust the folder", sub: "Claude Code asks whether you trust the folder it opened in. Choose “Yes, I trust this folder” with ↓, then press ⏎.", how: [{ keys: ["↓"] }, { keys: ["⏎"] }] },
+      { title: "Open Engelbart", sub: "Type /bart and press ⏎.", cmd: { label: "Then", text: "/bart" }, how: typeHow("/bart") },
+      { done: true, title: "You're set up.", sub: "", button: "Done" }
     ];
     return [
       openStep(os, false),
       { title: "Install Engelbart and connect this account",
         sub: "Copy the command, paste it into the terminal, and press ⏎. It installs Claude Code if this machine has none, installs Engelbart, and pairs this account with your machine — no second sign-in.",
         cmd: { label: "Engelbart", text: cmds.engelbart }, code: true, how: pasteHow(os) },
-      { done: true, title: "Engelbart is connected.", sub: "Once the command has finished, your machine is paired with this account and the project is ready.", button: "I've run it" }
+      { done: true, title: "Engelbart is connected.", sub: "", button: "I've run it" }
     ];
   }
 
@@ -186,7 +187,7 @@
     var box = el("div", "ob-step ob-done");
     box.appendChild(el("span", "ob-check", "✓"));
     box.appendChild(el("div", "ob-done-t", step.title));
-    box.appendChild(el("div", "ob-done-s", step.sub));
+    if (step.sub) box.appendChild(el("div", "ob-done-s", step.sub));
     var acts = el("div", "ob-done-acts");
     acts.appendChild(on(button("ob-ghost", "Back"), "click", function () { st.i -= 1; draw(st); }));
     acts.appendChild(cta(step.button, function () { if (st.opts.onDone) st.opts.onDone(); }));
