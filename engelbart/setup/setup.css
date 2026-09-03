@@ -150,7 +150,7 @@
   --pad-card-body:14px 18px 16px;
 
   --rail-width:340px;
-  --wizard-body-width:600px;
+  --wizard-body-width:760px;
   --column-width:820px;
   --inspector-width:300px;
 }
@@ -228,7 +228,7 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-test{margin-top:auto;padding-top:24px;display:flex;flex-direction:column;align-items:flex-start;gap:8px}
 .ob-test-cap{font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--mut)}
 .ob-reading{margin-top:28px;display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px dashed var(--bd2);border-radius:var(--radius-md);animation:rise var(--dur-rise) both;font:var(--text-12);color:var(--mut)}
-.ob-main{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;padding:var(--space-9)}
+.ob-main{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;padding:28px 24px}
 .ob-body{width:var(--wizard-body-width);max-width:100%}
 .ob-content{position:relative}
 .ob-step{animation:rise var(--dur-rise) var(--ease-rise) both}
@@ -371,6 +371,7 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-goal{display:flex;align-items:flex-start;gap:11px;padding:13px 14px;border-radius:var(--radius-sm);cursor:pointer;transition:border-color var(--dur-fast),background var(--dur-fast);border:1px solid var(--bd)}
 .ob-goal:hover{background:var(--hov)}
 .ob-goal[data-on="1"]{border-color:var(--ink);background:transparent}
+.ob-goal[data-on="1"] .ob-mark{border-color:var(--ink);background:var(--ink)}
 .ob-goal .ob-mark{margin-top:4px}
 .ob-goal-label{display:block;font:500 13.5px/1.5 var(--font-sans);color:var(--mut)}
 .ob-goal[data-on="1"] .ob-goal-label{color:var(--ink)}
@@ -446,8 +447,14 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-bs-card .ob-opts{margin-top:12px}
 .ob-bs-card .ob-field{margin-top:12px}
 .ob-bs-offer{border-color:var(--ink)}
-.ob-bs-row{margin-top:22px;display:flex;align-items:flex-end;gap:10px;padding:10px 10px 10px 14px;background:var(--tint);border:1px solid var(--bd);border-radius:var(--radius-md)}
-.ob-bs-row textarea{all:unset;flex:1;min-width:0;font:14px/1.6 var(--font-sans);color:var(--ink);resize:none}
+.ob-bs-card[data-done="1"]{background:var(--panel2);border-color:var(--line-soft)}
+.ob-bs-card[data-done="1"] .ob-goal{cursor:default}
+.ob-bs-card[data-done="1"] .ob-goal:hover{background:transparent}
+.ob-bs-card[data-done="1"] .ob-goal[data-on="0"]{opacity:.55}
+.ob-bs-card[data-done="1"] .ob-goal[data-on="1"]{background:var(--panel)}
+.ob-bs-said{margin-top:10px;padding:10px 12px;border:1px solid var(--bd);border-radius:var(--radius-sm);background:var(--panel);font:var(--text-13);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.ob-bs-skipped{margin-top:12px}
+.ob-bs+.ob-actions{margin-top:16px;justify-content:flex-end}
 .ob-bs+.ob-hint{margin-top:10px}
 
 /* --- assets: the list, a row, its body, the chat --- */

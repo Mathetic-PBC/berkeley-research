@@ -490,17 +490,23 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
   const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");
   const said = userTurnText(body, lastAssistant && lastAssistant.card);
   if (said) {
-    const made = await addTurn(user, row, "brainstorm", "", "user", said, null, options);
+    // The answers ride along with the text, so the page can redraw the card
+    // they answered with their choices marked instead of a flattened line.
+    const made = await addTurn(user, row, "brainstorm", "", "user", said, userTurnCard(body), options);
     turns.push(made);
   } else if (turns.length && !(body && body.again)) {
     // Nothing new to say and a conversation already open: the last card
     // stands, so hand it back rather than ask the model to repeat itself.
     return { ...publicReply(lastAssistant), leveled_status: row.leveled_status, interest: row.interest || "" };
   }
+  // Whether they are ready to plan is the model's call, and it is only asked
+  // once the fitted resources exist: a plan before them would be premature
+  // whatever the conversation says.
+  const readyAsked = row.leveled_status === "done";
   const reply = await OM.brainstorm({ reader: readerOf(row, calibrations), paper: paperOf(row),
-    assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })) },
-    credentials, options);
-  const card = { card: reply.card, questions: reply.questions, focus: reply.focus };
+    assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })),
+    readyAsked }, credentials, options);
+  const card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: readyAsked && reply.ready === true };
   const made = await addTurn(user, row, "brainstorm", "", "assistant", assistantTurnText(reply), card, options);
   const values = { step: Math.max(Number(row.step) || 0, STEP.brainstorm) };
   if (reply.interest) values.interest = reply.interest;
@@ -511,7 +517,24 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
 function publicReply(turn) {
   const card = turn && turn.card ? turn.card : { card: "none" };
   return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split("\n(")[0] : "",
-    card: card.card || "none", questions: card.questions, focus: card.focus };
+    card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true };
+}
+
+// What the reader answered with, kept beside the user turn: the answers by
+// question id, the focus pick and note, and any typed text.
+function userTurnCard(body) {
+  const out = {};
+  if (body && body.answers && typeof body.answers === "object") {
+    out.answers = {};
+    for (const [k, v] of Object.entries(body.answers)) {
+      const key = one(k, 40); if (!key) continue;
+      out.answers[key] = Array.isArray(v) ? v.map((x) => one(x, 160)).filter(Boolean).slice(0, 12) : long(v, 1000);
+    }
+  }
+  const pick = one(body && body.pick, 160); if (pick) out.pick = pick;
+  const note = long(body && body.note, 1000); if (note) out.note = note;
+  const text = long(body && body.text, 2000); if (text) out.text = text;
+  return Object.keys(out).length ? out : null;
 }
 
 // --- assets: ask, choose ------------------------------------------------------

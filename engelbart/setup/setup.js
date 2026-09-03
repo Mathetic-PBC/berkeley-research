@@ -852,7 +852,8 @@
   function sendTurn(body) {
     var bs = st.ui.bs;
     bs.thinking = true; bs.planAsked = false; st.error = "";
-    // Shown at once; the server writes it in the same call.
+    // Shown at once; the server writes it in the same call. The answers ride
+    // on the turn so the answered card can be drawn with them marked.
     var said = [];
     if (body.text) said.push(body.text);
     if (body.pick) said.push("Focus: " + body.pick + (body.note ? " — " + body.note : ""));
@@ -863,15 +864,23 @@
         said.push(q.title + " " + (Array.isArray(a) ? a.join("; ") : a));
       });
     }
-    if (said.length) st.turns.push({ role: "user", content: said.join("\n"), card: null, local: true });
+    if (said.length) st.turns.push({ role: "user", content: said.join("\n"), card: userCard(body), local: true });
     draw();
     api("brainstorm", body).then(function (out) {
       bs.thinking = false; bs.answers = {}; bs.pick = ""; bs.note = ""; bs.text = "";
-      st.turns.push({ id: out.turn_id, role: "assistant", content: out.say, card: { card: out.card, questions: out.questions, focus: out.focus } });
+      st.turns.push({ id: out.turn_id, role: "assistant", content: out.say, card: { card: out.card, questions: out.questions, focus: out.focus, ready: out.ready === true } });
       if (out.interest) st.row.interest = out.interest;
       if (out.leveled_status) st.row.leveled_status = out.leveled_status === "done" ? "done" : st.row.leveled_status;
       draw();
     }).catch(function (e) { bs.thinking = false; fail(e); });
+  }
+  function userCard(body) {
+    var c = {};
+    if (body.answers) c.answers = body.answers;
+    if (body.pick) c.pick = body.pick;
+    if (body.note) c.note = body.note;
+    if (body.text) c.text = body.text;
+    return c;
   }
 
   function lastCard() {
@@ -888,22 +897,49 @@
     }
     if (!st.turns.length && !bs.thinking) { sendTurn({}); return; }
     if (r.leveled_status !== "done") pollLeveled();
-    var box = el("div", "ob-step");
+    var box = el("div", "ob-step ob-bs-step");
     var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(7, "Brainstorm")));
     head.appendChild(el("span", "ob-count", r.leveled_status === "done" ? "resources ready" : "fitting resources to you")); box.appendChild(head);
-    box.appendChild(el("div", "ob-title", "What in this paper is worth building on?"));
+    box.appendChild(el("div", "ob-title", "What do you want to build?"));
     var thread = el("div", "ob-bs");
+    // Each assistant turn: its prose (if any), then its card. A card that has
+    // been answered is drawn again with the answers marked, from the user
+    // turn that follows it; only the last, unanswered card is live.
     st.turns.forEach(function (t, i) {
-      var row = attr(el("div", "ob-bs-turn"), "data-who", t.role);
-      row.appendChild(el("span", "ob-bs-who", t.role === "user" ? "you" : "claude"));
-      var body = el("div", "ob-bs-text");
-      sayOf(t).split("\n").forEach(function (line) { if (line.trim()) body.appendChild(el("p", "", line)); });
-      row.appendChild(body); thread.appendChild(row);
-      if (t.role === "assistant" && i === st.turns.length - 1 && !bs.thinking) drawCard(thread, t.card || { card: "none" });
+      if (t.role !== "assistant") {
+        // What they said is drawn inside the card it answered; only a reply to
+        // a prose-only turn is shown as prose of its own.
+        var prev = st.turns[i - 1], answeredCard = prev && prev.role === "assistant" && prev.card && prev.card.card && prev.card.card !== "none";
+        var free = answeredCard ? "" : (t.card && t.card.text ? t.card.text : str(t.content));
+        if (free) {
+          var urow = attr(el("div", "ob-bs-turn"), "data-who", "user");
+          urow.appendChild(el("span", "ob-bs-who", "you"));
+          var ub = el("div", "ob-bs-text"); free.split("\n").forEach(function (line) { if (line.trim()) ub.appendChild(el("p", "", line)); });
+          urow.appendChild(ub); thread.appendChild(urow);
+        }
+        return;
+      }
+      var say = sayOf(t);
+      if (say.trim()) {
+        var row = attr(el("div", "ob-bs-turn"), "data-who", "assistant");
+        row.appendChild(el("span", "ob-bs-who", "claude"));
+        var body = el("div", "ob-bs-text");
+        say.split("\n").forEach(function (line) { if (line.trim()) body.appendChild(el("p", "", line)); });
+        row.appendChild(body); thread.appendChild(row);
+      }
+      var next = st.turns[i + 1], live = i === st.turns.length - 1 && !bs.thinking;
+      if (live) drawCard(thread, t.card || { card: "none" }, null);
+      else if (next && next.role === "user") drawCard(thread, t.card || { card: "none" }, next.card || { text: str(next.content) });
     });
     if (bs.thinking) { var th = el("div", "ob-bs-turn"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); thread.appendChild(th); }
     box.appendChild(thread);
-    if (!bs.thinking && st.turns.length && r.leveled_status === "done" && !bs.planAsked) drawPlanOffer(box);
+    var last = lastCard();
+    // The plan is offered when the model, asked only once the resources were
+    // fitted, said they are ready -- not on a timer and not by this page.
+    if (!bs.thinking && last && last.ready && r.leveled_status === "done" && !bs.planAsked) drawPlanOffer(box);
+    else if (!bs.thinking && last && last.card === "none") {
+      var go_ = el("div", "ob-actions"); go_.appendChild(cta("Go on", false, function () { sendTurn({ again: true }); })); box.appendChild(go_);
+    }
     if (!bs.thinking && (r.leveled_status === "error" || r.assets_status === "error")) {
       var bad = el("div", "ob-grade"); bad.appendChild(el("span", "tag", "Resources"));
       bad.appendChild(el("span", "", (r.assets_status === "error" ? r.assets_error : r.leveled_error) || "Something went wrong finding the resources."));
@@ -915,24 +951,17 @@
       });
       bad.appendChild(retry); box.appendChild(bad);
     }
-    // The composer: always there, under whatever card is up.
-    var row = el("div", "ob-bs-row"), input = el("textarea"); input.rows = 2;
-    input.value = bs.text; input.placeholder = "say something…"; input.spellcheck = false;
-    var send = el("button", "ob-pill", "Send"); send.type = "button";
-    if (!bs.text.trim() || bs.thinking) send.setAttribute("disabled", "disabled");
-    on(input, "input", function () { bs.text = input.value; send.disabled = !input.value.trim() || bs.thinking; });
-    on(input, "keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (bs.text.trim() && !bs.thinking) sendTurn({ text: bs.text.trim() }); } });
-    on(send, "click", function () { if (bs.text.trim() && !bs.thinking) sendTurn({ text: bs.text.trim() }); });
-    row.appendChild(input); row.appendChild(send); box.appendChild(row);
-    box.appendChild(el("div", "ob-hint", "Enter sends · shift-enter for a new line · the resources it mentions come next"));
     content.appendChild(box);
   }
 
   // Engelbart's question shapes: mcq, select_all, free, open; and focus.
-  function drawCard(thread, card) {
-    var bs = st.ui.bs;
+  // `given` is null for the live card; for an answered one it is what they
+  // answered with, and the card is drawn still, with those marked.
+  function drawCard(thread, card, given) {
+    var bs = st.ui.bs, done = given !== null;
+    var answers = done ? (given.answers || {}) : bs.answers;
     if (card.card === "questions" && card.questions) {
-      var qcard = el("div", "ob-bs-card");
+      var qcard = attr(el("div", "ob-bs-card"), "data-done", done ? "1" : "0");
       qcard.appendChild(el("div", "ob-cap", card.questions.eyebrow || "a few questions"));
       var sendBtn;
       function ready() { return card.questions.items.some(function (q) { var a = bs.answers[q.id]; return Array.isArray(a) ? a.length : str(a).trim(); }); }
@@ -944,11 +973,11 @@
         if (q.type === "mcq" || q.type === "select_all") {
           var opts = el("div", "ob-opts"), many = q.type === "select_all";
           (q.options || []).forEach(function (o) {
-            var cur = bs.answers[q.id], on_ = many ? (Array.isArray(cur) && cur.indexOf(o.label) >= 0) : cur === o.label;
+            var cur = answers[q.id], on_ = many ? (Array.isArray(cur) && cur.indexOf(o.label) >= 0) : cur === o.label;
             var rowEl = attr(el("div", "ob-goal"), "data-on", on_ ? "1" : "0");
             var mark = el("span", "ob-mark"); if (many) attr(mark, "data-square", "1"); rowEl.appendChild(mark);
             var t = el("span", "ob-grow"); t.appendChild(el("span", "ob-goal-label", o.label)); if (o.why) t.appendChild(el("span", "ob-goal-why", o.why)); rowEl.appendChild(t);
-            on(rowEl, "click", function () {
+            if (!done) on(rowEl, "click", function () {
               if (many) { var list = Array.isArray(cur) ? cur.slice() : []; bs.answers[q.id] = on_ ? list.filter(function (x) { return x !== o.label; }) : list.concat([o.label]); }
               else bs.answers[q.id] = on_ ? "" : o.label;
               draw();
@@ -956,43 +985,59 @@
             opts.appendChild(rowEl);
           });
           qb.appendChild(opts);
+        } else if (done) {
+          var said = str(answers[q.id]);
+          if (said.trim()) qb.appendChild(el("div", "ob-bs-said", said));
         } else {
           qb.appendChild(field(str(bs.answers[q.id]), q.placeholder || "", function (v) { bs.answers[q.id] = v; sendBtn.disabled = !ready(); }, null, q.type === "open"));
         }
         qcard.appendChild(qb);
       });
-      var acts = attr(el("div", "ob-actions"), "data-between", "1");
-      var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
-      acts.appendChild(on(skip, "click", function () { sendTurn({ text: "(skipped those)" }); }));
-      sendBtn = cta("Send answers", !ready(), function () { sendTurn({ answers: bs.answers }); });
-      acts.appendChild(sendBtn); qcard.appendChild(acts); thread.appendChild(qcard);
+      if (done) {
+        var skipped = !given.answers && (!given.text || given.text === "(skipped those)");
+        if (skipped) qcard.appendChild(el("div", "ob-cap ob-bs-skipped", "skipped"));
+        else if (given.text && !given.answers) qcard.appendChild(el("div", "ob-bs-said", given.text));
+      } else {
+        var acts = attr(el("div", "ob-actions"), "data-between", "1");
+        var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
+        acts.appendChild(on(skip, "click", function () { sendTurn({ text: "(skipped those)" }); }));
+        sendBtn = cta("Send answers", !ready(), function () { sendTurn({ answers: bs.answers }); });
+        acts.appendChild(sendBtn); qcard.appendChild(acts);
+      }
+      thread.appendChild(qcard);
     } else if (card.card === "focus" && card.focus) {
-      var fcard = el("div", "ob-bs-card");
+      var fcard = attr(el("div", "ob-bs-card"), "data-done", done ? "1" : "0");
       fcard.appendChild(el("div", "ob-cap", "focus"));
       fcard.appendChild(el("div", "ob-question", card.focus.title || "What should we focus on?"));
-      var list = el("div", "ob-opts");
+      var list = el("div", "ob-opts"), pick = done ? str(given.pick) : bs.pick;
       card.focus.options.forEach(function (o) {
-        var on_ = bs.pick === o.label;
+        var on_ = pick === o.label;
         var rowEl = attr(el("div", "ob-goal"), "data-on", on_ ? "1" : "0"); rowEl.appendChild(el("span", "ob-mark"));
         var t = el("span", "ob-grow"); t.appendChild(el("span", "ob-goal-label", o.label)); if (o.why) t.appendChild(el("span", "ob-goal-why", o.why)); rowEl.appendChild(t);
-        on(rowEl, "click", function () { bs.pick = on_ ? "" : o.label; draw(); });
+        if (!done) on(rowEl, "click", function () { bs.pick = on_ ? "" : o.label; draw(); });
         list.appendChild(rowEl);
       });
       fcard.appendChild(list);
-      fcard.appendChild(el("div", "ob-cap", "anything else it should know"));
-      fcard.appendChild(field(bs.note, "constraints, what to leave alone, where to start…", function (v) { bs.note = v; }, null, true));
-      var facts = el("div", "ob-actions");
-      facts.appendChild(cta("Continue", !bs.pick, function () { sendTurn({ pick: bs.pick, note: bs.note.trim() }); }));
-      fcard.appendChild(facts); thread.appendChild(fcard);
+      if (done) {
+        var added = given.note || (!given.pick && given.text ? given.text : "");
+        if (added) { fcard.appendChild(el("div", "ob-cap", "you added")); fcard.appendChild(el("div", "ob-bs-said", added)); }
+      } else {
+        fcard.appendChild(el("div", "ob-cap", "anything else it should know"));
+        fcard.appendChild(field(bs.note, "constraints, what to leave alone, where to start…", function (v) { bs.note = v; }, null, true));
+        var facts = el("div", "ob-actions");
+        facts.appendChild(cta("Continue", !bs.pick, function () { sendTurn({ pick: bs.pick, note: bs.note.trim() }); }));
+        fcard.appendChild(facts);
+      }
+      thread.appendChild(fcard);
     }
   }
 
-  // Once the resources are fitted: after every turn, the same question.
+  // Offered when the model has said they are ready.
   function drawPlanOffer(box) {
     var card = el("div", "ob-bs-card ob-bs-offer");
     card.appendChild(el("div", "ob-cap", "ready when you are"));
     card.appendChild(el("div", "ob-question", "Ready to start planning your project?"));
-    card.appendChild(el("div", "ob-sub", "The paper's datasets, code and tools have been fitted to what you told me. Or keep brainstorming; I'll ask again."));
+    card.appendChild(el("div", "ob-sub", "You have said enough to plan from. Or keep going."));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
     var later = el("button", "ob-ghost", "Keep brainstorming"); later.type = "button";
     acts.appendChild(on(later, "click", function () { st.ui.bs.planAsked = true; draw(); }));

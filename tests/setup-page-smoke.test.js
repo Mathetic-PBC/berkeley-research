@@ -138,9 +138,9 @@ function mount(options = {}) {
       if (body.action === "answer") return answer({ graded_level: 50, grade_confidence: 0.8, grade_rationale: "fine" });
       if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 7 }; return answer({ assessment: ASSESSMENT }); }
       if (body.action === "leveled") return answer({ leveled_status: "done", leveled: LEVELED, assets_status: "done" });
-      if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick
-        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status }
-        : { turn_id: "t1", say: "What drew you to this paper?", card: "questions", leveled_status: row.leveled_status,
+      if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick || body.again
+        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status, ready: row.leveled_status === "done" }
+        : { turn_id: "t1", say: "", card: "questions", leveled_status: row.leveled_status,
             questions: { eyebrow: "first", items: [{ id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math", why: "w" }] }] } });
       if (body.action === "asset_ask") return answer({ answer: "Start with the toy.", turn_id: "a1" });
       if (body.action === "choose_asset") { row = { ...row, asset_chosen: { key: body.key, title: body.key.split(" :: ").pop() }, step: 9 }; return answer({ asset_chosen: row.asset_chosen }); }
@@ -197,7 +197,7 @@ function mount(options = {}) {
 test("every step draws from the record, and none of them throws", async () => {
   const titles = ["What is your name?", "What year are you?", "What is your major?",
     "How technical should explanations be?", "Which paper are you building on?", "Which computer are you on?",
-    "How familiar are you with the paper's concepts?", "What in this paper is worth building on?",
+    "How familiar are you with the paper's concepts?", "What do you want to build?",
     "What do you want to build on?", "Pose to angles", "Pose to angles", "Pose to angles"];
   for (let step = 0; step < titles.length; step += 1) {
     const page = mount({ row: fullRow({ step }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] });
@@ -423,7 +423,7 @@ test("topics are answered one area at a time, a disagreeing grade asks once more
   answerBox().value = "tensors"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "What in this paper is worth building on?", "the last area compiles the assessment and opens the brainstorm");
+  assert.equal(page.title(), "What do you want to build?", "the last area compiles the assessment and opens the brainstorm");
   assert.deepEqual(page.actions.slice(-4), ["answer", "topics_done", "leveled", "brainstorm"]);
   assert.equal(page.bodies.find((b) => b.action === "leveled").run, true);
 });
@@ -460,37 +460,67 @@ test("a follow-up is a stored row: it survives a reload, the slider cannot move 
   assert.equal(textOf(one(page.app, "ob-area-name")), "B", "and the next area is up");
 });
 
-test("the brainstorm opens with the model's card, sends answers, and offers the plan once the resources are fitted", async () => {
+test("the brainstorm opens on the card, keeps answered cards as cards, and offers the plan only when the model says ready", async () => {
   const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
   await settle();
-  assert.equal(page.title(), "What in this paper is worth building on?");
+  assert.equal(page.title(), "What do you want to build?");
   assert.equal(page.actions.filter((a) => a === "brainstorm").length, 1, "the opening turn is asked for once");
   assert.equal(page.bodies.find((b) => b.action === "brainstorm").text, undefined);
-  assert.match(textOf(page.app), /What drew you to this paper\?/);
+  assert.equal(byClass(page.app, "ob-bs-turn").length, 0, "no prose before the opening card");
+  assert.match(textOf(page.app), /What drew you\?/);
+  assert.equal(find(page.app, (n) => n.tagName === "textarea").length, 0, "no free-text composer: the card is the conversation");
   assert.equal(one(page.app, "ob-bs-offer"), undefined, "no plan offer while the resources are being fitted");
   byClass(page.app, "ob-goal")[1].fire("click");
+  assert.equal(byClass(page.app, "ob-goal")[1].attrs["data-on"], "1", "the pick is marked");
   page.cta().fire("click");
   await settle();
   const sent = page.bodies.filter((b) => b.action === "brainstorm")[1];
   assert.deepEqual(sent.answers, { drew: "The math" });
-  assert.match(textOf(page.app), /What drew you\? The math/, "their answer is on the thread");
+  // The answered card stays a card, with the answer marked; not a flattened line.
+  const done = byClass(page.app, "ob-bs-card").filter((c) => c.attrs["data-done"] === "1");
+  assert.equal(done.length, 1);
+  assert.equal(byClass(done[0], "ob-goal").find((g) => g.attrs["data-on"] === "1").textContent, "The mathw");
+  assert.equal(byClass(done[0], "ob-cta").length, 0, "an answered card has no buttons");
+  assert.doesNotMatch(textOf(page.app), /What drew you\? The math/, "the answer is not repeated as prose");
   assert.match(textOf(page.app), /Angles it is/);
-  // The fitting finishes: the next redraw carries the offer.
+  assert.equal(one(page.app, "ob-bs-offer"), undefined, "the model was not asked about readiness yet");
+  assert.equal(textOf(page.cta()), "Go on›", "a prose-only turn gets a way to continue");
+  // The fitting finishes; the next turn carries the model's verdict.
   page.row().leveled_status = "done"; page.row().leveled = LEVELED;
-  const composer = find(page.app, (n) => n.tagName === "textarea")[0];
-  composer.value = "I like the timing side"; composer.fire("input");
-  find(page.app, (n) => n.tagName === "button" && textOf(n) === "Send")[0].fire("click");
+  page.cta().fire("click");
   await settle();
-  assert.ok(one(page.app, "ob-bs-offer"), "ready to plan is asked after the turn");
+  assert.equal(page.bodies.filter((b) => b.action === "brainstorm").pop().again, true);
+  assert.ok(one(page.app, "ob-bs-offer"), "ready to plan is offered when the model said ready");
   byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Keep brainstorming").fire("click");
   assert.equal(one(page.app, "ob-bs-offer"), undefined);
-  composer.value = "more"; composer.fire("input");
-  find(page.app, (n) => n.tagName === "button" && textOf(n) === "Send")[0].fire("click");
+  page.cta().fire("click");
   await settle();
-  assert.ok(one(page.app, "ob-bs-offer"), "and asked again after the next turn");
+  assert.ok(one(page.app, "ob-bs-offer"), "and offered again after the next turn");
   page.cta().fire("click");
   await settle();
   assert.equal(page.title(), "What do you want to build on?");
+});
+
+test("a reloaded brainstorm redraws every answered card with its answers, from the stored user turns", async () => {
+  const page = mount({
+    row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }),
+    turns: [
+      { id: "t1", role: "assistant", content: "", card: { card: "questions", questions: { eyebrow: "first", items: [
+        { id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math" }] },
+        { id: "why", type: "free", title: "Why?" }] } } },
+      { id: "u1", role: "user", content: "What drew you? The math\nWhy? I like angles", card: { answers: { drew: "The math", why: "I like angles" } } },
+      { id: "t2", role: "assistant", content: "Angles it is.", card: { card: "focus", focus: { title: "Which?", options: [{ label: "Angles" }, { label: "Timing" }] }, ready: false } },
+    ],
+  });
+  await settle();
+  const cards = byClass(page.app, "ob-bs-card");
+  assert.equal(cards.length, 2);
+  assert.equal(cards[0].attrs["data-done"], "1");
+  assert.equal(byClass(cards[0], "ob-goal").find((g) => g.attrs["data-on"] === "1").textContent, "The math");
+  assert.equal(textOf(one(cards[0], "ob-bs-said")), "I like angles", "a typed answer is shown in place");
+  assert.equal(cards[1].attrs["data-done"], "0", "the last card is live");
+  assert.equal(one(page.app, "ob-bs-offer"), undefined, "ready was false");
+  assert.equal(page.actions.filter((a) => a === "brainstorm").length, 0, "nothing was asked: the transcript was enough");
 });
 
 test("the assets list expands, asks, and a child can be picked; the pick resets the plan", async () => {

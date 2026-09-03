@@ -381,7 +381,7 @@ function normalizeOptions(value) {
 function normalizeBrainstorm(raw) {
   if (!raw || typeof raw !== "object") return null;
   const say = long(raw.say, 1500);
-  const out = { say, card: "none", interest: one(raw.interest, 240) };
+  const out = { say, card: "none", interest: one(raw.interest, 240), ready: raw.ready === true };
   if (raw.card === "questions" && raw.questions && typeof raw.questions === "object") {
     const items = (Array.isArray(raw.questions.items) ? raw.questions.items : []).map((q, i) => {
       if (!q || typeof q !== "object") return null;

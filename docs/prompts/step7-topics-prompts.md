@@ -109,9 +109,9 @@ For EACH selected area, produce exactly five independently answerable calibratio
 100 — CAN REASON WITH IT
 "I could spot mistakes, compare approaches, and explain when an idea would or wouldn't work."
 
-Questions are about the AREA -- the field and the concepts you selected -- never about this paper. Do not ask the student to recall, summarise, or review anything specific to the paper: its method, results, figures, terminology, or claims. The student may not have read it. A 75- or 100-level question may describe a realistic situation of the kind this project involves, but it must be answerable by someone who knows the area and has never seen the paper.
+Questions are about the AREA -- the field and the concepts you selected -- never about this paper. Do not ask the student to recall, summarise, or review anything specific to the paper: its method, results, figures, terminology, or claims. The student may not have read it. A 75- or 100-level question may use domain-specific language that is similar to what a PhD student or professor would use and could be plausibly understood by an advanced and well-versed undergraduate student. This does not mean the questions need to be longer as the level increases, though.
 
-Vocabulary rises one step per level. Level 0 uses no jargon at all: an undergraduate from any field must be able to read the question and say something in reply. Level 25 may name the one or two most common terms of the area, in plain words. Levels 50 and above may use the area's own terms.
+Vocabulary rises one step per level. Level 0 uses no jargon at all: an undergraduate from any field must be able to read the question and say something in reply. Level 25 may name the one or two most common terms of the area, in plain words. Levels 50 and above may use the area's own terms, but keep in mind that the amount of concepts should primarily be based on the level.
 
 The student's chosen technical depth (above) governs every computing or programming term in every question: at "Everyday", avoid the term or explain it inside the question; at "Some detail", ordinary terms (file, function, server, dataset) stand alone and narrower ones get a few words; at "Technical" and "Expert", precise terms stand alone.
 
@@ -127,11 +127,11 @@ Levels should progress from CONCEPTUAL FAMILIARITY to APPLIED REASONING:
 
 - 100 — REASONING: Can they diagnose failures, compare approaches, evaluate tradeoffs, or explain when an approach would or would not work?
 
-Levels 0–50 primarily measure familiarity and understanding; 75–100 measure productive reasoning with that knowledge.
+Levels 0–50 primarily measure familiarity and understanding; 75–100 measure productive reasoning with that knowledge. However, the goal for all of this is to gauge the student's familiarity with this specific content, NOT their general problem solving ability or aptitude.
 
 Difficulty should come from deeper understanding and reasoning, not obscure terminology, trivia, tedious mathematics, or memorization.
 
-Whenever possible, ground 75- and 100-level questions in realistic situations of the KIND this project involves, described in the area's general terms rather than the paper's specifics. Lower levels may be more direct when needed to determine whether the student possesses the relevant concepts.
+75- and 100-level questions should be described using the paper's specific terms (since the student claims to be an expert). Lower levels may be more direct when needed to determine whether the student possesses the relevant concepts.
 
 Questions should usually be answerable in 1–4 sentences and should not depend on incidental paper details.
 
@@ -243,7 +243,7 @@ Before outputting, silently verify:
 
 - no question depends on having read the paper, and level 0 has no jargon;
 
-- 75 requires genuine application;
+- 75 requires genuine knowledge of the domain and application;
 - 100 requires evaluation, comparison, diagnosis, or adaptation;
 
 - samples reflect the intended capability;
@@ -281,4 +281,4 @@ Return ONLY valid JSON with nothing outside it.
 
 - The grade is stored on the calibration row and never shown.
 - When the graded level differs from the self-rated level by a full stop or more, and this was the area's first question, one follow-up is asked at the graded level. Two questions per area is the cap.
-- The follow-up prompt (`followUpPrompt`) is being added now: it takes the area, the question, the reader's answer, the self-rating and the graded level, and writes ONE new question at the graded level that builds on what the reader actually said, plus a sample response for grading.
+- The follow-up prompt (`followUpPrompt`, Sonnet) takes the area, the question, the reader's answer, the self-rating and the graded level, and writes ONE new question at the graded level that builds on what the reader actually said, plus a sample response for grading. It is stored unanswered on the calibration row; the ladder's question at that level stands in when the writing fails.

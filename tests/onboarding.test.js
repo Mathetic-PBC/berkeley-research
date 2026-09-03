@@ -690,6 +690,20 @@ test("leveled waits for the hunt, then re-cuts the assets with children and chec
   assert.equal((await OB.leveled(USER, row, cals, {}, null, db.options)).leveled_status, "done");
 });
 
+test("once the resources are fitted the model is asked whether they are ready, and its answer rides on the turn", async () => {
+  const asked = [];
+  const db = fake({ model: { brainstorm: (text) => { asked.push(text); return { say: "You have enough to start.", card: "none", interest: "timing", ready: true }; } } });
+  const row = await ready(db, { leveled_status: "done" });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const out = await OB.brainstorm(USER, row, cals, { text: "I want the timing side" }, CREDS, db.options);
+  assert.match(asked[0], /"ready": true \| false/);
+  assert.match(asked[0], /`none` is allowed only with `ready` true/);
+  assert.equal(out.ready, true);
+  assert.equal(db.tables.engelbart_onboarding_turns[1].card.ready, true);
+  const again = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
+  assert.equal(again.ready, true, "handing back the last card keeps its verdict");
+});
+
 test("a brainstorm turn stores both sides, carries the card, and keeps the interest current", async () => {
   const asked = [];
   const db = fake({ model: { brainstorm: (text) => { asked.push(text); return asked.length === 1
@@ -713,7 +727,13 @@ test("a brainstorm turn stores both sides, carries the card, and keeps the inter
   assert.equal(row.step, OB.STEP.brainstorm);
   const turns = db.tables.engelbart_onboarding_turns;
   assert.deepEqual(turns.map((t) => t.role), ["assistant", "user", "assistant"]);
+  assert.deepEqual(turns[1].card, { answers: { drew: "The math" } }, "the user turn keeps the answers beside the text");
   assert.equal(turns[2].card.card, "focus");
+  // Readiness is the model's call, and only asked for once the resources are fitted.
+  assert.match(asked[0], /opening turn/);
+  assert.doesNotMatch(asked[1], /"ready"/, "not asked while the resources are still being fitted");
+  assert.equal(second.ready, false);
+  assert.equal(turns[2].card.ready, false);
   const opened = await OB.open(USER, {}, db.options);
   assert.equal(opened.turns.length, 3, "the transcript comes back with the row");
   assert.equal(opened.turns[0].card.questions.items[0].id, "drew");

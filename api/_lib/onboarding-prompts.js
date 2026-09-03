@@ -181,9 +181,9 @@ For EACH selected area, produce exactly five independently answerable calibratio
 100 — CAN REASON WITH IT
 "I could spot mistakes, compare approaches, and explain when an idea would or wouldn't work."
 
-Questions are about the AREA -- the field and the concepts you selected -- never about this paper. Do not ask the student to recall, summarise, or review anything specific to the paper: its method, results, figures, terminology, or claims. The student may not have read it. A 75- or 100-level question may describe a realistic situation of the kind this project involves, but it must be answerable by someone who knows the area and has never seen the paper.
+Questions are about the AREA -- the field and the concepts you selected -- never about this paper. Do not ask the student to recall, summarise, or review anything specific to the paper: its method, results, figures, terminology, or claims. The student may not have read it. A 75- or 100-level question may use domain-specific language that is similar to what a PhD student or professor would use and could be plausibly understood by an advanced and well-versed undergraduate student. This does not mean the questions need to be longer as the level increases, though.
 
-Vocabulary rises one step per level. Level 0 uses no jargon at all: an undergraduate from any field must be able to read the question and say something in reply. Level 25 may name the one or two most common terms of the area, in plain words. Levels 50 and above may use the area's own terms.
+Vocabulary rises one step per level. Level 0 uses no jargon at all: an undergraduate from any field must be able to read the question and say something in reply. Level 25 may name the one or two most common terms of the area, in plain words. Levels 50 and above may use the area's own terms, but keep in mind that the amount of concepts should primarily be based on the level.
 
 The student's chosen technical depth (above) governs every computing or programming term in every question: at "Everyday", avoid the term or explain it inside the question; at "Some detail", ordinary terms (file, function, server, dataset) stand alone and narrower ones get a few words; at "Technical" and "Expert", precise terms stand alone.
 
@@ -199,11 +199,11 @@ Levels should progress from CONCEPTUAL FAMILIARITY to APPLIED REASONING:
 
 - 100 — REASONING: Can they diagnose failures, compare approaches, evaluate tradeoffs, or explain when an approach would or would not work?
 
-Levels 0–50 primarily measure familiarity and understanding; 75–100 measure productive reasoning with that knowledge.
+Levels 0–50 primarily measure familiarity and understanding; 75–100 measure productive reasoning with that knowledge. However, the goal for all of this is to gauge the student's familiarity with this specific content, NOT their general problem solving ability or aptitude.
 
 Difficulty should come from deeper understanding and reasoning, not obscure terminology, trivia, tedious mathematics, or memorization.
 
-Whenever possible, ground 75- and 100-level questions in realistic situations of the KIND this project involves, described in the area's general terms rather than the paper's specifics. Lower levels may be more direct when needed to determine whether the student possesses the relevant concepts.
+75- and 100-level questions should be described using the paper's specific terms (since the student claims to be an expert). Lower levels may be more direct when needed to determine whether the student possesses the relevant concepts.
 
 Questions should usually be answerable in 1–4 sentences and should not depend on incidental paper details.
 
@@ -315,7 +315,7 @@ Before outputting, silently verify:
 
 - no question depends on having read the paper, and level 0 has no jargon;
 
-- 75 requires genuine application;
+- 75 requires genuine knowledge of the domain and application;
 - 100 requires evaluation, comparison, diagnosis, or adaptation;
 
 - samples reflect the intended capability;
@@ -540,7 +540,8 @@ function transcriptBlock(turns, cap = 24) {
 // focus, none), pointed at extending this paper. Inputs: reader, paper,
 // assessment, brief (assets_brief), turns (the transcript so far, the
 // reader's latest turn last), leveledReady (whether the plan can start).
-function brainstormPrompt({ reader, paper, assessment, brief, turns }) {
+function brainstormPrompt({ reader, paper, assessment, brief, turns, readyAsked }) {
+  const opening = !(Array.isArray(turns) && turns.length);
   return [
     ...readerBlock(reader), ...assessmentBlock(assessment), "",
     `They are about to start a first project that builds on "${paper.title}" -- ${paper.one_liner}`,
@@ -550,14 +551,21 @@ function brainstormPrompt({ reader, paper, assessment, brief, turns }) {
     "You are brainstorming with them about what to build. Many people arrive with a vague sense -- something between computer science and education, electrical engineering and music -- and some with a narrow one. Your job is to find, with them, the piece of this paper worth extending or reproducing in a small first project that would hold their attention, and to learn what they already know along the way. Ask about their familiarity with the things above, follow up on what they say, explore sideways, and reflect back what you hear. Use the graded levels above: do not ask what the grades already answered.",
     "",
     "Reply with ONE JSON object and nothing else:",
-    '{"say": "<what you say to them, plain prose, two to five sentences>",',
+    '{"say": "<what you say to them, plain prose, at most three sentences; empty when the card says it all>",',
     ' "card": "questions" | "focus" | "none",',
     ' "questions": {"eyebrow": "<two or three words>", "items": [{"id": "<short slug>", "type": "mcq" | "select_all" | "free" | "open", "title": "<the question>", "subtitle": "<optional>", "options": [{"label": "<the choice>", "why": "<optional: what it buys them>"}], "placeholder": "<for free and open>"}]},',
     ' "focus": {"title": "<what you are asking them to choose between>", "options": [{"label": "<one reading of what they could build>", "why": "<why this one>"}]},',
-    ' "interest": "<one sentence: what they seem drawn to so far, in the third person; empty if you cannot tell yet>"}',
+    ' "interest": "<one sentence: what they seem drawn to so far, in the third person; empty if you cannot tell yet>"'
+      + (readyAsked ? ',\n "ready": true | false' : "") + "}",
     "",
-    "Only the key for the card you name is read. `questions` is for one to three questions whose answers change what you would suggest -- mcq (one answer), select_all (say so in the subtitle), free (one line), open (a paragraph); never questions you could assume the answer to. `focus` is for when what they want could be read two or three ways and which one decides everything after it; two to four options with a why each. `none` is for a turn that only needs prose. Do not propose goals, todos, or a plan; that comes later. Keep `say` short. Write at the register above.",
-  ].join("\n");
+    "Only the key for the card you name is read. `questions` is for one to three questions whose answers change what you would suggest -- mcq (one answer), select_all (say so in the subtitle), free (one line), open (a paragraph); never questions you could assume the answer to. `focus` is for when what they want could be read two or three ways and which one decides everything after it; two to four options with a why each. The card is the whole conversation: there is no free-text box beside it, so every turn carries a card that gives them something to answer or pick"
+      + (readyAsked ? "; `none` is allowed only with `ready` true." : "."),
+    opening ? "This is the opening turn: `say` is empty and the card opens the conversation. Do not introduce the paper or yourself; ask." : "",
+    "Do not propose goals, todos, or a plan; that comes later. Write at the register above.",
+    readyAsked
+      ? "`ready` says whether you have learned enough to plan with them: what draws them, one concrete direction they lean toward, and the rough level they can work at. Set it true only then; false keeps the conversation going. It is not a question to them."
+      : "",
+  ].filter((line) => line !== "").join("\n");
 }
 
 // A question about one asset. Inputs: reader, paper, asset (the leveled
