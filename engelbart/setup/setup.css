@@ -423,18 +423,11 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-ins-hint{margin-top:10px}
 .ob-ins-cmd{margin:14px 0 0;max-width:none;align-items:flex-start;border-radius:var(--radius-md)}
 .ob-ins-cmd .ob-cmd-text{white-space:normal;overflow:visible;word-break:break-all}
-.ob-ins-kwrap{margin-top:22px;display:flex;flex-direction:column;align-items:flex-start;gap:10px}
-.ob-ins-kbd{display:inline-flex;flex-direction:column;gap:4px;padding:10px;border:1px solid var(--bd);border-radius:var(--radius-sm);background:var(--panel2);max-width:100%;box-sizing:border-box}
-.ob-ins-krow{display:flex;gap:4px}
-.ob-ins-krow[data-i="2"]{padding-left:8px}
-.ob-ins-key{flex:none;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font:500 10px/1 var(--font-sans);text-transform:uppercase;color:var(--mut);background:var(--panel);border:1px solid var(--bd);border-radius:5px;user-select:none;transition:background var(--dur-fast),color var(--dur-fast),border-color var(--dur-fast)}
-.ob-ins-key[data-w="wide"]{width:44px}
-.ob-ins-key[data-w="mod"]{width:36px;text-transform:none}
-.ob-ins-key[data-w="space"]{flex:1;min-width:120px}
-.ob-ins-key[data-on="1"]{background:var(--ink);color:var(--onacc);border-color:var(--ink)}
-.ob-ins-kcap{min-height:10px;font:var(--text-microcap-lg);letter-spacing:var(--track-microcap-lg);text-transform:uppercase;color:var(--fnt);transition:opacity var(--dur-fast)}
-.ob-ins-kcap[data-on="0"]{opacity:0}
-@media(max-width:760px){.ob-ins-key{width:22px;height:24px}.ob-ins-key[data-w="wide"]{width:38px}.ob-ins-key[data-w="mod"]{width:32px}.ob-ins-key[data-w="space"]{min-width:80px}}
+.ob-ins-keys{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:20px;font:var(--text-12);color:var(--ink)}
+.ob-ins-chord{display:inline-flex;gap:4px}
+.ob-kbd{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 8px;box-sizing:border-box;font:500 11px/1 var(--font-sans);color:var(--ink);background:var(--panel);border:1px solid var(--bd);border-bottom-width:2px;border-radius:5px;white-space:nowrap}
+.ob-ins-say{color:var(--ink)}
+.ob-ins-then{font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--fnt)}
 
 /* --- brainstorm: the thread, the cards, the composer --- */
 .ob-bs{margin-top:22px;display:flex;flex-direction:column;gap:14px}

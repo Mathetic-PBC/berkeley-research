@@ -1310,6 +1310,21 @@
   // about it; the answer comes back at the reader's register and can be
   // re-asked one stop simpler or deeper.
 
+  // ⏎ anywhere that is not a text box presses the step's own button: the
+  // last enabled primary in the content column, which is the one the
+  // reader would click. Inputs keep their own ⏎ handling (above), buttons
+  // keep the browser's, and a modifier means the key was meant for a chord.
+  if (document.addEventListener) document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+    var t = e.target, tag = t && t.tagName ? String(t.tagName).toLowerCase() : "";
+    if (tag === "input" || tag === "textarea" || tag === "select" || tag === "button" || tag === "a" || (t && t.isContentEditable)) return;
+    var c = document.getElementById("content"); if (!c || !c.querySelectorAll) return;
+    var all = c.querySelectorAll(".ob-cta"), b = null;
+    for (var i = all.length - 1; i >= 0; i--) { if (!all[i].disabled) { b = all[i]; break; } }
+    if (!b) return;
+    e.preventDefault(); b.click();
+  });
+
   var QUICK = ["What does this mean?", "Why does this matter?", "Give me an example", "Is this too much for a first project?"];
   if (document.addEventListener) document.addEventListener("mouseup", function (e) {
     if (e.target && e.target.closest && e.target.closest("[data-askbtn]")) return;

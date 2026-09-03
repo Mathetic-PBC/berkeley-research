@@ -31,6 +31,11 @@ function makeEl(tag) {
     fire(name, event) { (node.listeners[name] || []).slice().forEach((fn) => fn({ preventDefault() {}, ...event })); },
     focus() { node.focused = true; },
     getBoundingClientRect() { return { left: 0, top: 0, width: 400, height: 56 }; },
+    click() { node.fire("click", { target: node }); },
+    querySelectorAll(selector) {
+      assert.equal(selector, ".ob-cta", "the stub only knows the primary-button lookup");
+      return byClass(node, "ob-cta");
+    },
     querySelector(selector) {
       assert.equal(selector, "[autofocus]", "the stub only knows the autofocus lookup");
       let hit = null;
@@ -168,13 +173,16 @@ function mount(options = {}) {
   // Timers that do not hold the process open: a test may end on a step whose
   // keyboard is still animating, or whose poll has not fired yet.
   const loose = (fn, ms) => { const t = setInterval(fn, ms); if (t.unref) t.unref(); return t; };
+  const doc = makeEl("document");
+  doc.getElementById = (id) => (id === "app" ? app : (find(app, (n) => n.id === id || n.attrs.id === id)[0] || null));
+  doc.createElement = makeEl;
   const sandbox = { window: win, fetch: fetchStub, setTimeout, clearTimeout, setInterval: loose, clearInterval, console, URL,
-    navigator: {}, document: { getElementById: () => app, createElement: makeEl } };
+    navigator: {}, document: doc };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(INSTALL, sandbox, { filename: "engelbart/setup/install.js" });
   vm.runInNewContext(SRC, sandbox, { filename: "engelbart/setup/setup.js" });
 
-  return { app, actions, bodies, win,
+  return { app, actions, bodies, win, doc,
     row: () => row,
     title: () => textOf(one(app, "ob-title")) || textOf(one(app, "ob-question")) || textOf(one(app, "ob-goal-title"))
       || textOf(one(app, "ob-done-t")) || textOf(one(app, "ob-wait-t")),
@@ -243,16 +251,42 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
   assert.equal(page.row().year, "Second year");
   assert.equal(page.row().depth, "technical");
   assert.equal(page.row().step, 5);
-  // Through the module: macOS, Apple Silicon, three steps, then done.
+  // Through the module: macOS, Apple Silicon, two steps, then done.
   byClass(page.app, "ob-opt")[0].fire("click");
   byClass(page.app, "ob-opt")[0].fire("click");
-  page.cta().fire("click"); page.cta().fire("click");
+  page.cta().fire("click");
   assert.match(textOf(page.app), /--code ABCD-EFGH-IJKL --no-open/, "the connect command carries the issued code");
+  assert.doesNotMatch(textOf(page.app), /claude\.ai\/install/, "no separate Claude Code command: the installer brings it");
   page.cta().fire("click");
   page.cta().fire("click");
   await settle();
   assert.equal(page.title(), "How familiar are you with what the paper leans on?");
   assert.equal(page.row().step, 6);
+});
+
+// ⏎ is Continue. A reader who has just clicked an option should not have to
+// find the button; a reader typing in a box keeps the box's own ⏎.
+test("Enter presses the step's button unless a text box has it", async () => {
+  const page = mount({ row: fullRow({ step: 0, name: "Ada" }) });
+  await settle();
+  assert.equal(page.title(), "What is your name?");
+  page.doc.fire("keydown", { key: "Enter", target: byClass(page.app, "ob-step")[0] });
+  await settle();
+  assert.equal(page.row().step, 1, "⏎ with focus outside a text box pressed Continue");
+  assert.equal(page.title(), "What year are you?");
+
+  const major = mount({ row: fullRow({ step: 2, major: "" }) });
+  await settle();
+  const before = major.actions.length;
+  major.doc.fire("keydown", { key: "Enter", target: major.input() });
+  await settle();
+  assert.equal(major.actions.length, before, "⏎ inside a text box is left to the box");
+  major.doc.fire("keydown", { key: "Enter", shiftKey: true, target: byClass(major.app, "ob-step")[0] });
+  await settle();
+  assert.equal(major.actions.length, before, "a modified ⏎ is not Continue");
+  major.doc.fire("keydown", { key: "Enter", target: byClass(major.app, "ob-step")[0] });
+  await settle();
+  assert.equal(major.actions.length, before, "a disabled Continue stays unpressed");
 });
 
 // The two halves of the paper step: accepting it is awaited, reading it is not.

@@ -100,20 +100,20 @@ test("the OS picker offers macOS, Windows and Linux, and each OS its two chips",
   assert.deepEqual(optionTexts(page.app), ["x64", "ARM64"]);
 });
 
-test("a Mac walks terminal, Claude Code, then the connect command with the code and --no-open", () => {
+test("a Mac walks terminal, then the connect command with the code and --no-open; the keys are stated, not drawn", () => {
   const page = mount();
   walk(page, "macOS", "Apple Silicon");
   assert.equal(textOf(one(page.app, "ob-title")), "Open a terminal");
   assert.match(textOf(one(page.app, "ob-sub")), /⌘ Space.*Terminal.*⏎/);
-  assert.equal(byClass(page.app, "ob-pdot").length, 3);
-  assert.ok(byClass(page.app, "ob-ins-key").length > 30, "a keyboard of keys");
-
-  cta(page.app).fire("click");
-  assert.equal(textOf(one(page.app, "ob-title")), "Install Claude Code");
-  assert.deepEqual(cmds(page.app), ["curl -fsSL https://claude.ai/install.sh | bash"]);
+  assert.equal(byClass(page.app, "ob-pdot").length, 2);
+  assert.deepEqual(byClass(page.app, "ob-kbd").map(textOf), ["⌘", "Space", "⏎"], "the chords as key chips");
+  assert.deepEqual(byClass(page.app, "ob-ins-say").map(textOf), ["type Terminal"], "what to type is said, not acted out");
+  assert.equal(byClass(page.app, "ob-ins-key").length, 0, "no drawn keyboard");
 
   cta(page.app).fire("click");
   assert.equal(textOf(one(page.app, "ob-title")), "Install Engelbart and connect this account");
+  assert.match(textOf(one(page.app, "ob-sub")), /installs Claude Code if this machine has none/);
+  assert.deepEqual(byClass(page.app, "ob-kbd").map(textOf), ["⌘", "V", "⏎"]);
   assert.deepEqual(cmds(page.app), ["curl -fsSL https://berkeley.mathetic.com/engelbart/install.sh | sh -s -- --code " + CODE + " --no-open"]);
   assert.match(textOf(one(page.app, "ob-hint")), /works once and expires in 15 minutes/);
 });
@@ -122,9 +122,9 @@ test("Windows is given the PowerShell installers", () => {
   const page = mount();
   walk(page, "Windows", "x64");
   assert.match(textOf(one(page.app, "ob-sub")), /⊞.*PowerShell/);
+  assert.deepEqual(byClass(page.app, "ob-kbd").map(textOf), ["⊞", "⏎"]);
   cta(page.app).fire("click");
-  assert.deepEqual(cmds(page.app), ["irm https://claude.ai/install.ps1 | iex"]);
-  cta(page.app).fire("click");
+  assert.deepEqual(byClass(page.app, "ob-kbd").map(textOf), ["Ctrl", "V", "⏎"]);
   assert.deepEqual(cmds(page.app), ["& ([scriptblock]::Create((irm https://berkeley.mathetic.com/engelbart/install.ps1))) --code " + CODE + " --no-open"]);
 });
 
@@ -132,18 +132,16 @@ test("Linux opens the terminal with Ctrl Alt T and pastes with Ctrl Shift V", ()
   const page = mount();
   walk(page, "Linux", "ARM64");
   assert.equal(textOf(one(page.app, "ob-sub")), "Press Ctrl Alt T.");
+  assert.deepEqual(byClass(page.app, "ob-kbd").map(textOf), ["Ctrl", "Alt", "T"]);
   cta(page.app).fire("click");
-  const lit = () => byClass(page.app, "ob-ins-key").filter((k) => k.attrs["data-on"] === "1").map((k) => k.attrs["data-key"]).sort();
-  assert.deepEqual(lit(), ["ctrl", "shift", "v"], "the first frame is the paste chord");
+  assert.deepEqual(byClass(page.app, "ob-kbd").map(textOf), ["Ctrl", "⇧", "V", "⏎"]);
 });
 
 test("Back walks steps, then the chip, then the OS", () => {
   const page = mount();
   walk(page, "macOS", "Intel");
-  cta(page.app).fire("click"); cta(page.app).fire("click");
+  cta(page.app).fire("click");
   assert.equal(textOf(one(page.app, "ob-title")), "Install Engelbart and connect this account");
-  back(page.app);
-  assert.equal(textOf(one(page.app, "ob-title")), "Install Claude Code");
   back(page.app);
   assert.equal(textOf(one(page.app, "ob-title")), "Open a terminal");
   back(page.app);
@@ -157,7 +155,7 @@ test("the final screen's button reaches onDone, and Get a new code reaches onNew
   const page = mount();
   let done = 0, fresh = 0;
   walk(page, "macOS", "Apple Silicon", { onDone: () => { done += 1; }, onNewCode: () => { fresh += 1; } });
-  cta(page.app).fire("click"); cta(page.app).fire("click");
+  cta(page.app).fire("click");
   const again = byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Get a new code");
   assert.ok(again, "a Get a new code button"); again.fire("click");
   assert.equal(fresh, 1);
@@ -194,7 +192,7 @@ test("Copy writes the command and says so for a moment", async () => {
   assert.equal(textOf(copy), "Copy");
   copy.fire("click");
   await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual(written, ["curl -fsSL https://claude.ai/install.sh | bash"]);
+  assert.deepEqual(written, ["curl -fsSL https://berkeley.mathetic.com/engelbart/install.sh | sh -s -- --code " + CODE + " --no-open"]);
   assert.equal(textOf(copy), "Copied");
   await new Promise((r) => setTimeout(r, 1450));
   assert.equal(textOf(copy), "Copy");
@@ -205,24 +203,18 @@ test("Copy writes the command and says so for a moment", async () => {
   assert.equal(textOf(one(bare.app, "ob-cmd-copy")), "Copy");
 });
 
-test("rendering again replaces the screen and stops the old animation; stop() clears the last one", () => {
+test("rendering again replaces the screen; nothing animates, so nothing outlives a screen", () => {
   const page = mount();
   page.render({ variant: "install", code: CODE, os: "mac", arch: "arm64" });
-  assert.equal(page.timers.live.size, 1, "one animation on a step");
+  assert.equal(page.timers.live.size, 0, "a step starts no timer");
   page.render({ variant: "bart", os: "linux", arch: "x64" });
-  assert.equal(page.timers.live.size, 1, "the first animation was cleared");
   assert.equal(page.app.children.length, 1, "one screen in the container");
   assert.equal(textOf(one(page.app, "ob-sub")), "Press Ctrl Alt T.");
 
   cta(page.app).fire("click"); cta(page.app).fire("click"); cta(page.app).fire("click");
-  assert.equal(page.timers.live.size, 0, "the final screen has no keyboard, so no timer");
-
-  page.render({ variant: "install", code: CODE, os: "mac", arch: "arm64" });
-  assert.equal(page.timers.live.size, 1);
-  page.api.stop(page.app);
   assert.equal(page.timers.live.size, 0);
-  page.render({ variant: "install", code: CODE });
-  assert.equal(page.timers.live.size, 0, "the picker animates nothing");
+  page.api.stop(page.app);   // kept for the page that calls it; nothing to stop
+  assert.equal(page.timers.live.size, 0);
 });
 
 test("a bad stored pick falls back to the picker; a good one skips it", () => {
