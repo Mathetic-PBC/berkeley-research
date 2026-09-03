@@ -1,0 +1,105 @@
+name: Cross-platform simulation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 10 * * 1"
+  workflow_dispatch:
+    inputs:
+      claude_plugins_ref:
+        description: claude-plugins branch, tag, or SHA to test
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-repo-simulation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-round-trip:
+    name: ${{ matrix.os }} + Chromium
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+      - name: Check out Berkeley onboarding
+        uses: actions/checkout@v7
+        with:
+          path: berkeley-research
+      - name: Check out Engelbart CLI and plugin
+        uses: actions/checkout@v7
+        with:
+          repository: divadbaroon/claude-plugins
+          ref: ${{ inputs.claude_plugins_ref || 'main' }}
+          path: claude-plugins
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: berkeley-research/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: npm ci
+        working-directory: berkeley-research
+      - name: Install Chromium and Linux dependencies
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+        working-directory: berkeley-research
+      - name: Install Chromium
+        if: runner.os != 'Linux'
+        run: npx playwright install chromium
+        working-directory: berkeley-research
+      - name: Run the native browser → CLI → browser round trip
+        run: npm run test:e2e:round-trip
+        working-directory: berkeley-research
+        env:
+          CLAUDE_PLUGINS_DIR: ${{ github.workspace }}/claude-plugins
+      - name: Keep the failure trace
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-${{ matrix.os }}-chromium
+          path: berkeley-research/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  browser-compatibility:
+    name: Ubuntu + Firefox/WebKit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: berkeley-research
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: berkeley-research/package-lock.json
+      - name: Install test dependencies
+        run: npm ci
+        working-directory: berkeley-research
+      - name: Install Firefox and WebKit
+        run: npx playwright install --with-deps firefox webkit
+        working-directory: berkeley-research
+      - name: Run the compatibility slice
+        run: npm run test:e2e:compat
+        working-directory: berkeley-research
+      - name: Keep the failure trace
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-ubuntu-compatibility
+          path: berkeley-research/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
