@@ -883,6 +883,26 @@
     return c;
   }
 
+  // A user turn written before the answers travelled with it: the text is
+  // "question title answer" per line, so the answers can be read back off it.
+  function legacyGiven(card, content) {
+    var lines = str(content).split("\n"), answers = {}, rest = [], hit = false;
+    var items = card && card.card === "questions" && card.questions ? card.questions.items : [];
+    lines.forEach(function (line) {
+      var q = items.filter(function (x) { return line.indexOf(x.title + " ") === 0; })[0];
+      if (!q) { if (line.trim()) rest.push(line); return; }
+      var a = line.slice(q.title.length + 1).trim(); hit = true;
+      if (q.type === "mcq" || q.type === "select_all") {
+        var labels = (q.options || []).map(function (o) { return o.label; }), parts = a.split("; ").filter(function (x) { return labels.indexOf(x) >= 0; });
+        answers[q.id] = q.type === "select_all" ? parts : (parts[0] || a);
+      } else answers[q.id] = a;
+    });
+    if (card && card.card === "focus" && lines[0] && lines[0].indexOf("Focus: ") === 0) {
+      var f = lines[0].slice(7).split(" — "); return { pick: f[0], note: f.slice(1).join(" — ") };
+    }
+    return hit ? { answers: answers, text: rest.join("\n") || undefined } : { text: str(content) };
+  }
+
   function lastCard() {
     for (var i = st.turns.length - 1; i >= 0; i--) if (st.turns[i].role === "assistant") return st.turns[i].card || { card: "none" };
     return null;
@@ -929,7 +949,7 @@
       }
       var next = st.turns[i + 1], live = i === st.turns.length - 1 && !bs.thinking;
       if (live) drawCard(thread, t.card || { card: "none" }, null);
-      else if (next && next.role === "user") drawCard(thread, t.card || { card: "none" }, next.card || { text: str(next.content) });
+      else if (next && next.role === "user") drawCard(thread, t.card || { card: "none" }, next.card || legacyGiven(t.card, next.content));
     });
     if (bs.thinking) { var th = el("div", "ob-bs-turn"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); thread.appendChild(th); }
     box.appendChild(thread);
