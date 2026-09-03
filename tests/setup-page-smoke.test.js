@@ -539,7 +539,7 @@ test("clicking a block offers Ask about this in the gutter, and the button opens
   page.doc.fire("click", { target: btn });
   await settle();
   assert.ok(one(page.app, "ob-ask"), "the ask panel opened");
-  assert.match(textOf(one(page.app, "ob-ask-quote")), /The math/);
+  assert.equal(textOf(one(page.app, "ob-ask-quote")), "“The math w”", "the block's words, spaced, not its glyphs");
   // A click on empty space puts the button away.
   const fresh = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
   await settle();

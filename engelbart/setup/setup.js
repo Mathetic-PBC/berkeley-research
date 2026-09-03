@@ -1453,6 +1453,20 @@
     }
     return null;
   }
+  // The words of a block, one space between its parts, without the glyphs
+  // that are furniture (a caret, a check) rather than something to ask about.
+  function blockText(node) {
+    var parts = [];
+    (function walk(n) {
+      if (!n) return;
+      var tag = String(n.tagName || "").toLowerCase();
+      if (tag === "button" || tag === "input" || tag === "textarea") return;
+      var kids = n.childNodes && n.childNodes.length ? n.childNodes : n.children;
+      if (!kids || !kids.length) { var t = str(n.textContent).trim(); if (t) parts.push(t); return; }
+      for (var i = 0; i < kids.length; i++) walk(kids[i]);
+    })(node);
+    return parts.join(" ").replace(/[›‹✓·]/g, " ").replace(/\s+/g, " ").trim();
+  }
   if (document.addEventListener) document.addEventListener("click", function (e) {
     var c = document.getElementById("content"), t = e.target;
     if (!c || !askable() || st.ui.askOpen) return;
@@ -1462,7 +1476,7 @@
       if (st.ui.askBtn && st.ui.askBtn.gutter && !(t && classes(t).indexOf("ob-askbtn") >= 0)) { st.ui.askBtn = null; var w0 = draws; setTimeout(function () { if (draws === w0) draw(); }, 0); }
       return;
     }
-    var text = str(block.textContent).replace(/\s+/g, " ").trim(); if (text.length < 3) return;
+    var text = blockText(block); if (text.length < 3) return;
     var r = block.getBoundingClientRect(), cr = c.getBoundingClientRect();
     st.ui.askBtn = { text: text.slice(0, 240), gutter: true, y: r.top - cr.top + r.height / 2 };
     // The element's own handler usually redraws; when nothing does, draw here.
