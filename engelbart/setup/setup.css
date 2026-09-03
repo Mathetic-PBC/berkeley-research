@@ -460,8 +460,6 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-bs+.ob-hint{margin-top:10px}
 
 /* --- assets: the list, a row, its body, the chat --- */
-.ob-as-lead{color:var(--fnt)}
-.ob-as-chip{display:inline-block;padding:4px 10px;font:var(--text-11);color:var(--mut);border:1px solid var(--bd);border-radius:var(--radius-pill)}
 .ob-as-tools{margin-top:16px;display:flex;justify-content:flex-end;gap:14px}
 .ob-as-list{margin-top:10px;background:var(--panel2);border:1px solid var(--bd);border-radius:var(--radius-lg);overflow:hidden}
 .ob-as-row+.ob-as-row{border-top:1px solid var(--bd)}

@@ -1121,12 +1121,6 @@
     head.appendChild(el("span", "ob-count", list.length + " found · " + list.reduce(function (n, a) { return n + (a.children || []).length; }, 0) + " added at your level"));
     box.appendChild(head);
     box.appendChild(el("div", "ob-title", "What do you want to build on?"));
-    if (lv.locus) { var lc = el("div", "ob-sub"); lc.appendChild(el("span", "ob-as-lead", "Where the problem solving lies for you · ")); lc.appendChild(el("span", "", lv.locus)); box.appendChild(lc); }
-    if (lv.sticky && lv.sticky.length) {
-      var chips = el("div", "ob-seeds");
-      lv.sticky.forEach(function (sk) { chips.appendChild(el("span", "ob-as-chip", sk)); });
-      box.appendChild(chips);
-    }
     var tools = el("div", "ob-as-tools");
     var expand = el("button", "ob-tiny", "Expand all ⤢"); expand.type = "button";
     on(expand, "click", function () { list.forEach(function (a) { as.open[a.title] = true; }); draw(); });
