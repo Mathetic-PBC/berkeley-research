@@ -270,7 +270,7 @@ function paperPrefix(input) {
 
 const LINK_KINDS = ["live_demo", "source_code", "download", "docs", "paper", "other"];
 const AVAILABILITY = ["usable", "partial", "unavailable", "unknown"];
-const MAX_ASSETS = 12;
+const MAX_ASSETS = 5;
 const MAX_CHILDREN = 3;
 // "Search quite aggressively": a dozen searches for the hunt, eight for the
 // stand-ins, which already know what they are looking for.
