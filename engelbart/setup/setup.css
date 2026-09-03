@@ -380,9 +380,11 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-cap{margin-top:18px;font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--fnt)}
 .ob-goal-title{margin-top:6px;font:var(--text-goal-title);letter-spacing:var(--track-goal-title);color:var(--ink);text-wrap:pretty}
 .ob-rows{margin-top:16px;display:flex;flex-direction:column}
-.ob-trow{display:flex;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px solid var(--line-soft)}
+.ob-trow{display:flex;align-items:flex-start;gap:10px;padding:6px 4px;border-bottom:1px solid var(--line-soft)}
 .ob-trow .dash{flex:none;font:13px/1 var(--font-sans);color:var(--fnt)}
-.ob-trow input{all:unset;display:block;flex:1;font:13px/1.6 var(--font-sans);color:var(--ink)}
+.ob-trow input,.ob-trow textarea{all:unset;display:block;flex:1;min-width:0;font:13px/1.6 var(--font-sans);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.ob-trow textarea{resize:none;overflow:hidden;min-height:1.6em;field-sizing:content}
+.ob-trow .dash{padding-top:3px}
 .ob-trow .x{flex:none;padding:0 3px;font:13px/1 var(--font-sans);color:var(--bd2);background:none;border:none;cursor:pointer}
 .ob-trow .x:hover{color:var(--del)}
 .ob-namerow{margin-top:22px;display:flex;align-items:center;gap:10px;padding:5px 5px 5px 16px;background:var(--panel2);border:1px solid var(--bd);border-radius:var(--radius-pill)}

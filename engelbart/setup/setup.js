@@ -1339,8 +1339,13 @@
     var rows = el("div", "ob-rows");
     todos.forEach(function (t, i) {
       var row = el("div", "ob-trow"); row.appendChild(el("span", "dash", "–"));
-      var input = el("input"); input.value = t; input.spellcheck = false;
-      on(input, "input", function () { todos[i] = input.value; create.disabled = off(); }); row.appendChild(input);
+      // A textarea that grows: a todo is a sentence, and a sentence should
+      // not be read through a one-line slot.
+      var input = el("textarea"); input.value = t; input.spellcheck = false; input.rows = 1;
+      function grow() { if (typeof input.scrollHeight !== "number") return; input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; }
+      on(input, "input", function () { todos[i] = input.value; grow(); create.disabled = off(); });
+      on(input, "keydown", function (e) { if (e.key === "Enter") e.preventDefault(); });
+      setTimeout(grow, 0); row.appendChild(input);
       var x = el("button", "x", "×"); x.type = "button";
       row.appendChild(on(x, "click", function () { todos.splice(i, 1); draw(); })); rows.appendChild(row);
     });

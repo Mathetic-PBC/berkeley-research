@@ -622,7 +622,7 @@ test("direction and subgoals are one proposal each; a change request revises in 
   assert.match(textOf(page.app), /todos are written for this one/);
   page.cta().fire("click");
   await settle();
-  const rows = find(page.app, (n) => n.tagName === "input" && n.placeholder !== "add a todo…" && n.placeholder !== "project name…");
+  const rows = find(page.app, (n) => n.tagName === "textarea" && n.parentNode && String(n.parentNode.className).includes("ob-trow"));
   assert.equal(rows.length, 2);
   assert.match(textOf(page.app), /One pose drawn/);
   assert.doesNotMatch(textOf(page.app), /First piece|The other two pieces/);
