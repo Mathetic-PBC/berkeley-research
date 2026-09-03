@@ -303,8 +303,13 @@ test("the register control rewrites what is on the screen and moves the profile'
   assert.equal(one(early.app, "ob-reg"), undefined, "not before the paper");
   const page = mount({ row: fullRow({ step: 6, depth: "some" }) });
   await settle();
-  const reg = one(page.app, "ob-reg");
+  let reg = one(page.app, "ob-reg");
   assert.ok(reg, "the control is on the topics step");
+  assert.equal(textOf(one(reg, "ob-reg-word")), "Some detail", "folded, it is the one word: the current register");
+  assert.equal(byClass(reg, "ob-slider").length, 0, "and nothing else");
+  one(reg, "ob-reg-word").fire("click");
+  reg = one(page.app, "ob-reg");
+  assert.ok(one(reg, "ob-slider"), "the word opens the slider");
   assert.equal(byClass(reg, "ob-reg-go").length, 0, "no Regenerate until the slider moves");
   const question = textOf(one(page.app, "ob-q"));
   byClass(reg, "ob-stop")[3].fire("click");                    // Expert
@@ -318,6 +323,8 @@ test("the register control rewrites what is on the screen and moves the profile'
   assert.ok(sent.texts.includes(question), "the question on the screen was among the passages");
   assert.equal(textOf(one(page.app, "ob-q")), "★ " + question, "and it is shown rewritten");
   assert.equal(page.row().depth, "expert");
+  assert.equal(byClass(one(page.app, "ob-reg"), "ob-slider").length, 0, "it folds again once done");
+  assert.equal(textOf(one(one(page.app, "ob-reg"), "ob-reg-word")), "Expert");
   byClass(page.app, "ob-pdot")[1].fire("click");
   byClass(page.app, "ob-pdot")[0].fire("click");
   assert.equal(textOf(one(page.app, "ob-q")), "★ " + question, "the rewrite survives redraws on the step");

@@ -71,7 +71,7 @@
       askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null,
       bs: { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false },   // brainstorm
       as: { open: {}, picked: "" },     // assets
-      reg: { pos: null, busy: false, rewrites: {} },   // the register control: pending slider position, in-flight, rewritten text by step
+      reg: { open: false, pos: null, busy: false, rewrites: {} },   // the register control: unfolded, pending slider position, in-flight, rewritten text by step
       todoConfirm: -1,                  // the todo row whose × was pressed once
       tour: false,                      // the one-time tour between Install and Topics
       change: { open: false, text: "", thinking: false, log: [] }                             // direction / subgoals
@@ -140,7 +140,7 @@
   function go(n) {
     st.step = n;
     st.error = "";
-    st.ui.todoConfirm = -1; st.ui.reg.pos = null;
+    st.ui.todoConfirm = -1; st.ui.reg.pos = null; st.ui.reg.open = false;
     if (st.ui.askOpen) st.ui.askOpen = false;
     st.ui.askBtn = null;
     draw();
@@ -470,8 +470,13 @@
   function registerView() {
     var reg = st.ui.reg, cur = regDepth(), pos = reg.pos != null ? reg.pos : (regIndex(cur) + 1) / DEPTHS.length;
     var next = DEPTHS[snap(pos, DEPTHS.length)].key, changed = next !== cur;
-    var box = attr(el("div", "ob-reg"), "data-busy", reg.busy ? "1" : "0");
-    box.appendChild(el("div", "ob-reg-cap", "Explanations"));
+    // Folded, it is one word: the current register. That word opens it.
+    var box = attr(attr(el("div", "ob-reg"), "data-busy", reg.busy ? "1" : "0"), "data-open", reg.open || reg.busy ? "1" : "0");
+    var word = el("button", "ob-reg-word", DEPTHS[regIndex(cur)].label); word.type = "button";
+    word.setAttribute("aria-label", reg.open ? "hide the explanations slider" : "change how technical the page is");
+    on(word, "click", function () { reg.open = !reg.open; if (!reg.open) reg.pos = null; draw(); });
+    box.appendChild(word);
+    if (!reg.open && !reg.busy) return box;
     box.appendChild(slider({ stops: DEPTHS, pos: pos, grid: true, onCommit: function (p) { reg.pos = p; draw(); } }));
     var acts = el("div", "ob-reg-acts");
     if (reg.busy) { acts.appendChild(dots()); acts.appendChild(el("span", "ob-hint", "Rewriting")); }
@@ -491,7 +496,7 @@
     texts = texts.slice(0, 40);
     reg.busy = true; st.error = ""; draw();
     api("rewrite", { from: cur, to: to, texts: texts }).then(function (out) {
-      reg.busy = false; reg.pos = null;
+      reg.busy = false; reg.pos = null; reg.open = false;
       var map = reg.rewrites[st.step] || (reg.rewrites[st.step] = {});
       texts.forEach(function (t, i) { var r = str(out.texts && out.texts[i]).trim(); if (r && r !== t) map[t] = r; });
       st.row.depth = out.level || to;
