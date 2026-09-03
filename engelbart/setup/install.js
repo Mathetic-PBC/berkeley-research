@@ -19,6 +19,12 @@
   "use strict";
 
   var STORE = "engelbart.install";
+  // Where the reader is in the walk, kept across renders: the page redraws
+  // its whole column on any click (an "Ask about this" offer, the register
+  // control), and each redraw renders this module into a fresh container. A
+  // walk that forgot its step on every redraw would snap back to "Open a
+  // terminal" each time.
+  var LAST = null;
 
   var OSES = [
     { key: "mac", label: "macOS", ask: "Which Mac?", why: "Apple menu › About This Mac names the chip.",
@@ -231,6 +237,7 @@
     var box = st.phase === "os" ? drawOs(st) : st.phase === "arch" ? drawArch(st) : drawStep(st);
     st.container.textContent = "";
     st.container.appendChild(box);
+    LAST = { variant: st.opts.variant || "install", os: st.os ? st.os.key : null, arch: st.arch ? st.arch.key : null, phase: st.phase, i: st.i };
   }
 
   // --- the api -----------------------------------------------------------------
@@ -250,6 +257,9 @@
     st.os = osOf(os);
     st.arch = archOf(st.os, arch);
     st.phase = !st.os ? "os" : !st.arch ? "arch" : "step";
+    if (LAST && LAST.variant === (opts.variant || "install") && LAST.os === (st.os ? st.os.key : null) && LAST.arch === (st.arch ? st.arch.key : null)) {
+      st.phase = LAST.phase; st.i = LAST.i;
+    }
     container.__engelbartInstall = st;
     draw(st);
     return { stop: function () {} };
