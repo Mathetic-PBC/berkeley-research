@@ -222,11 +222,18 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-label[data-active="1"]{color:var(--ink)}
 .ob-label[data-done="1"]{font:var(--text-microcap);letter-spacing:1.2px;text-transform:uppercase;color:var(--fnt)}
 .ob-value{display:block;margin-top:3px;font:500 12.5px/1.3 var(--font-sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ob-profile{margin-top:var(--space-7);padding:8px 12px;border:1px solid var(--bd);border-radius:var(--radius-sm);display:flex;flex-direction:column;gap:6px;font:var(--text-12);color:var(--fnt)}
+.ob-profile-line{font:500 12.5px/1.3 var(--font-sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ob-profile .ob-link{text-align:left;font-size:12px}
+.ob-test{margin-top:auto;padding-top:24px;display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.ob-test-cap{font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--mut)}
 .ob-reading{margin-top:28px;display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px dashed var(--bd2);border-radius:var(--radius-md);animation:rise var(--dur-rise) both;font:var(--text-12);color:var(--mut)}
 .ob-main{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;padding:var(--space-9)}
 .ob-body{width:var(--wizard-body-width);max-width:100%}
 .ob-content{position:relative}
 .ob-step{animation:rise var(--dur-rise) var(--ease-rise) both}
+/* A redraw within the same step (a pick, a slider release, a grade) is not an arrival: setup.js flags it and the entry animations hold. */
+.ob[data-still="1"] .ob-step,.ob[data-still="1"] .ob-wait,.ob[data-still="1"] .ob-reading,.ob[data-still="1"] .ob-ask-item{animation:none}
 .ob-count{font:var(--text-microcap-lg);letter-spacing:var(--track-microcap-lg);text-transform:uppercase;color:var(--fnt)}
 .ob-title{margin-top:14px;font:500 24px/1.35 var(--font-sans);letter-spacing:-0.3px;text-wrap:pretty}
 .ob-sub{margin-top:6px;font:var(--text-12-5);color:var(--fnt);text-wrap:pretty}
@@ -407,3 +414,87 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-ask-cancel{display:flex;justify-content:flex-end;margin-top:8px}
 .ob-ask-think{margin-top:10px;display:flex;align-items:center;gap:8px}
 .ob-ask-rm{margin-left:auto}
+
+/* --- install: OS, variant, steps, keyboard --- */
+/* install.js draws these inside the Install and Done steps. The keyboard is
+   divs in rows; a lit key is data-on="1", ink on white, and only that
+   attribute changes on an animation tick. No shadows, no images. */
+.ob-ins-opt-why{margin-left:auto;font:var(--text-12);color:var(--fnt);white-space:nowrap}
+.ob-ins-hint{margin-top:10px}
+.ob-ins-cmd{margin:14px 0 0;max-width:none;align-items:flex-start;border-radius:var(--radius-md)}
+.ob-ins-cmd .ob-cmd-text{white-space:normal;overflow:visible;word-break:break-all}
+.ob-ins-kwrap{margin-top:22px;display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.ob-ins-kbd{display:inline-flex;flex-direction:column;gap:4px;padding:10px;border:1px solid var(--bd);border-radius:var(--radius-sm);background:var(--panel2);max-width:100%;box-sizing:border-box}
+.ob-ins-krow{display:flex;gap:4px}
+.ob-ins-krow[data-i="2"]{padding-left:8px}
+.ob-ins-key{flex:none;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font:500 10px/1 var(--font-sans);text-transform:uppercase;color:var(--mut);background:var(--panel);border:1px solid var(--bd);border-radius:5px;user-select:none;transition:background var(--dur-fast),color var(--dur-fast),border-color var(--dur-fast)}
+.ob-ins-key[data-w="wide"]{width:44px}
+.ob-ins-key[data-w="mod"]{width:36px;text-transform:none}
+.ob-ins-key[data-w="space"]{flex:1;min-width:120px}
+.ob-ins-key[data-on="1"]{background:var(--ink);color:var(--onacc);border-color:var(--ink)}
+.ob-ins-kcap{min-height:10px;font:var(--text-microcap-lg);letter-spacing:var(--track-microcap-lg);text-transform:uppercase;color:var(--fnt);transition:opacity var(--dur-fast)}
+.ob-ins-kcap[data-on="0"]{opacity:0}
+@media(max-width:760px){.ob-ins-key{width:22px;height:24px}.ob-ins-key[data-w="wide"]{width:38px}.ob-ins-key[data-w="mod"]{width:32px}.ob-ins-key[data-w="space"]{min-width:80px}}
+
+/* --- brainstorm: the thread, the cards, the composer --- */
+.ob-bs{margin-top:22px;display:flex;flex-direction:column;gap:14px}
+.ob-bs-turn{display:flex;gap:16px;align-items:flex-start}
+.ob-bs-turn[data-who="user"] .ob-bs-text{color:var(--mut)}
+.ob-bs-who{flex:none;width:52px;padding-top:3px;font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--fnt)}
+.ob-bs-text{flex:1;min-width:0;font:var(--text-13);color:var(--ink);text-wrap:pretty}
+.ob-bs-text p{margin:0}
+.ob-bs-text p+p{margin-top:8px}
+.ob-bs-card{margin-left:68px;padding:14px 16px 16px;border:1px solid var(--bd);border-radius:var(--radius-lg);background:var(--panel)}
+.ob-bs-card .ob-question{margin-top:8px;font:var(--text-question);letter-spacing:var(--track-question)}
+.ob-bs-q+.ob-bs-q{margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)}
+.ob-bs-card .ob-opts{margin-top:12px}
+.ob-bs-card .ob-field{margin-top:12px}
+.ob-bs-offer{border-color:var(--ink)}
+.ob-bs-row{margin-top:22px;display:flex;align-items:flex-end;gap:10px;padding:10px 10px 10px 14px;background:var(--tint);border:1px solid var(--bd);border-radius:var(--radius-md)}
+.ob-bs-row textarea{all:unset;flex:1;min-width:0;font:14px/1.6 var(--font-sans);color:var(--ink);resize:none}
+.ob-bs+.ob-hint{margin-top:10px}
+
+/* --- assets: the list, a row, its body, the chat --- */
+.ob-as-lead{color:var(--fnt)}
+.ob-as-chip{display:inline-block;padding:4px 10px;font:var(--text-11);color:var(--mut);border:1px solid var(--bd);border-radius:var(--radius-pill)}
+.ob-as-tools{margin-top:16px;display:flex;justify-content:flex-end;gap:14px}
+.ob-as-list{margin-top:10px;background:var(--panel2);border:1px solid var(--bd);border-radius:var(--radius-lg);overflow:hidden}
+.ob-as-row+.ob-as-row{border-top:1px solid var(--bd)}
+.ob-as-row[data-child="1"]+.ob-as-row[data-child="1"],.ob-as-row[data-child="0"]+.ob-as-row[data-child="1"]{border-top:1px dashed var(--bd)}
+.ob-as-head{display:flex;align-items:flex-start;gap:12px;padding:13px 18px;cursor:pointer}
+.ob-as-head:hover{background:var(--hov)}
+.ob-as-row[data-child="1"] .ob-as-head{padding-left:34px}
+.ob-as-elbow{flex:none;width:12px;height:12px;margin:3px 0 0 5px;border-left:1.5px solid var(--bd2);border-bottom:1.5px solid var(--bd2);border-radius:0 0 0 3px}
+.ob-as-head .ob-mark{margin-top:3px}
+.ob-as-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ob-as-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.ob-as-title{font:var(--text-card-title)}
+.ob-as-row[data-child="1"] .ob-as-title{font-size:13.5px}
+.ob-as-meta{font:var(--text-meta);color:var(--fnt)}
+.ob-as-level{font:var(--text-microcap);letter-spacing:1.2px;text-transform:uppercase;color:var(--acc)}
+.ob-as-desc{font:var(--text-13);color:var(--mut);text-wrap:pretty}
+.ob-as-why{font:var(--text-11-5);color:var(--fnt);text-wrap:pretty}
+.ob-as-caret{flex:none;padding:2px 4px;font:14px/1 var(--font-sans);color:var(--bd2);background:none;border:none;cursor:pointer}
+.ob-as-caret:hover{color:var(--ink)}
+.ob-as-body{padding:0 18px 14px 44px;animation:rise 200ms both}
+.ob[data-still="1"] .ob-as-body{animation:none}
+.ob-as-row[data-child="1"] .ob-as-body{padding-left:60px}
+.ob-as-can{margin-top:8px;font:var(--text-13);color:var(--ink);text-wrap:pretty}
+.ob-as-links{margin-top:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:baseline}
+.ob-as-link{font:var(--text-13);color:var(--acc);text-decoration:none}
+.ob-as-link:hover{text-decoration:underline}
+.ob-as-chatbtn{margin-left:auto;text-transform:none;letter-spacing:0;font:var(--text-13);color:var(--mut)}
+.ob-as-chat{margin-top:12px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;background:var(--panel);border:1px solid var(--bd);border-radius:var(--radius-sm)}
+.ob-as-chat .ob-ask-row{margin-top:2px}
+
+/* --- direction and subgoals: one proposal, and the box that changes it --- */
+.ob-dir-body{margin-top:14px;font:var(--text-14);color:var(--ink);text-wrap:pretty}
+.ob-dir-line{margin-top:10px;font:var(--text-13);color:var(--mut);text-wrap:pretty}
+.ob-sg-list{margin-top:18px;display:flex;flex-direction:column;gap:12px}
+.ob-sg{display:flex;gap:14px;align-items:flex-start;padding:13px 16px;border:1px solid var(--bd);border-radius:var(--radius-sm)}
+.ob-sg .ob-circle{margin-top:2px}
+.ob-sg-label{font:var(--text-card-title)}
+.ob-sg-desc{margin-top:4px;font:var(--text-13);color:var(--mut);text-wrap:pretty}
+.ob-sg-why{margin-top:4px;font:var(--text-11-5);color:var(--fnt)}
+.ob-sg-first{margin-top:6px;font:var(--text-microcap);letter-spacing:1.2px;text-transform:uppercase;color:var(--acc)}
+.ob-ins-host{margin-top:0}

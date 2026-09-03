@@ -181,6 +181,12 @@ For EACH selected area, produce exactly five independently answerable calibratio
 100 — CAN REASON WITH IT
 "I could spot mistakes, compare approaches, and explain when an idea would or wouldn't work."
 
+Questions are about the AREA -- the field and the concepts you selected -- never about this paper. Do not ask the student to recall, summarise, or review anything specific to the paper: its method, results, figures, terminology, or claims. The student may not have read it. A 75- or 100-level question may describe a realistic situation of the kind this project involves, but it must be answerable by someone who knows the area and has never seen the paper.
+
+Vocabulary rises one step per level. Level 0 uses no jargon at all: an undergraduate from any field must be able to read the question and say something in reply. Level 25 may name the one or two most common terms of the area, in plain words. Levels 50 and above may use the area's own terms.
+
+The student's chosen technical depth (above) governs every computing or programming term in every question: at "Everyday", avoid the term or explain it inside the question; at "Some detail", ordinary terms (file, function, server, dataset) stand alone and narrower ones get a few words; at "Technical" and "Expert", precise terms stand alone.
+
 Levels should progress from CONCEPTUAL FAMILIARITY to APPLIED REASONING:
 
 - 0 — RECOGNITION: Does the student know what the area is about and recognize its basic concepts? Surface unknown unknowns.
@@ -197,7 +203,7 @@ Levels 0–50 primarily measure familiarity and understanding; 75–100 measure 
 
 Difficulty should come from deeper understanding and reasoning, not obscure terminology, trivia, tedious mathematics, or memorization.
 
-Whenever possible, ground 75- and 100-level questions in realistic situations from THIS PROJECT. Lower levels may be more direct when needed to determine whether the student possesses the relevant concepts.
+Whenever possible, ground 75- and 100-level questions in realistic situations of the KIND this project involves, described in the area's general terms rather than the paper's specifics. Lower levels may be more direct when needed to determine whether the student possesses the relevant concepts.
 
 Questions should usually be answerable in 1–4 sentences and should not depend on incidental paper details.
 
@@ -307,6 +313,8 @@ Before outputting, silently verify:
 
 - 0–50 show progressively stronger familiarity and understanding;
 
+- no question depends on having read the paper, and level 0 has no jargon;
+
 - 75 requires genuine application;
 - 100 requires evaluation, comparison, diagnosis, or adaptation;
 
@@ -345,9 +353,9 @@ ${JSON_ONLY}
 // The project-scoping questions of the Details step. Inputs: reader (for
 // readerBlock), paper {title, one_liner}, draft, registerNote (a sentence
 // saying the register was shifted, or "").
-function detailsPrompt({ reader, paper, draft, registerNote }) {
+function detailsPrompt({ reader, paper, draft, registerNote, resources }) {
   return [
-    ...readerBlock(reader), "",
+    ...readerBlock(reader), ...resourcesBlock(resources), "",
     `They are building on "${paper.title}" -- ${paper.one_liner}`,
     `Their project, in their words: "${draft}"`,
     registerNote ? registerNote : "",
@@ -362,7 +370,7 @@ function detailsPrompt({ reader, paper, draft, registerNote }) {
 
 // Four goals to choose a first project from. Inputs: reader, paper, draft,
 // details {questions, answers} (answers keyed by question id).
-function goalsPrompt({ reader, paper, draft, details }) {
+function goalsPrompt({ reader, paper, draft, details, resources }) {
   const answered = (details && Array.isArray(details.questions) ? details.questions : [])
     .map((q) => {
       const a = details.answers ? details.answers[q.id] : null;
@@ -370,7 +378,7 @@ function goalsPrompt({ reader, paper, draft, details }) {
       return `- ${q.title} ${Array.isArray(a) ? a.join("; ") : a}`;
     }).filter(Boolean);
   return [
-    ...readerBlock(reader), "",
+    ...readerBlock(reader), ...resourcesBlock(resources), "",
     `They are building on "${paper.title}" -- ${paper.one_liner}`,
     `Their project, in their words: "${draft}"`,
     answered.length ? "What they said when asked:" : "", ...answered,
@@ -382,28 +390,32 @@ function goalsPrompt({ reader, paper, draft, details }) {
   ].join("\n");
 }
 
-// The rows for the chosen goal, and a name for the project. Inputs: reader,
-// paper, draft, goal (the label), details.
-function todosPrompt({ reader, paper, draft, goal, details }) {
+// The rows for the FIRST subgoal of the direction, and a name for the
+// project. Inputs: reader, paper {title, one_liner}, direction, subgoal,
+// resources (the leveled assets, for resourcesBlock).
+function todosPrompt({ reader, paper, direction, subgoal, resources }) {
+  const d = direction || {};
+  const sg = subgoal || {};
   return [
-    ...readerBlock(reader), "",
+    ...readerBlock(reader), ...resourcesBlock(resources), "",
     `They are building on "${paper.title}" -- ${paper.one_liner}`,
-    `Their project, in their words: "${draft}"`,
-    `The goal they picked: "${goal}"`,
+    `The direction: "${d.title}" -- ${d.what_you_would_make || ""}`,
+    `The first piece of it, the one to start on now: "${sg.label}"${sg.description ? " -- " + sg.description : ""}`,
     "",
-    "Write 2 to 4 TODO rows for that goal: each one piece of work in the imperative that a coding agent could pick up and finish in one sitting, ordered easiest first, each naming its finish line. No phases, no headings. Then propose a project name of two or three words a folder could be called.",
+    "Write the TODO rows for that first piece only. Two to four rows, in the imperative, each one thing a coding agent working with them could pick up and finish -- concrete, checkable, small enough for a session. The first row must produce something they can see or run. Where a resource above is the right starting point, name it in the row. Do not write rows for the other pieces.",
+    "Also propose a short project name: two to four lowercase words joined by hyphens.",
     "Write at the register above.",
     "",
     JSON_ONLY,
-    '{"todos": ["..."], "name": "two or three words"}',
+    '{"todos": ["row", "row"], "name": "short-hyphenated-name"}',
   ].join("\n");
 }
 
 // "Ask about this": a question about text the reader selected. Inputs:
 // reader (with depth set to the register asked for), paper, quote, question.
-function askPrompt({ reader, paper, quote, question }) {
+function askPrompt({ reader, paper, quote, question, resources }) {
   return [
-    ...readerBlock(reader), "",
+    ...readerBlock(reader), ...resourcesBlock(resources), "",
     `Context: they are setting up a first project building on "${paper.title}" -- ${paper.one_liner}`,
     `They selected this text on the page: "${quote}"`,
     `They ask: "${question}"`,
@@ -415,8 +427,207 @@ function askPrompt({ reader, paper, quote, question }) {
   ].join("\n");
 }
 
+// The paper as a shared, cacheable prefix. Both calls that read the whole
+// paper -- the diagnostic and the asset hunt -- begin with these same two
+// blocks, so the second pays for the cached tokens rather than the paper.
+const PAPER_PREFIX = "The PhD student's paper follows as an attached document. Every prompt below refers to it as \"the paper\".";
+
+const ASSET_TYPES = ["dataset", "task", "codebook", "paradigm", "model", "simulation", "pipeline", "survey", "library", "code", "demo", "other"];
+
+// What the work rests on or produces that a person could get hold of. In the
+// paper's own register: this is NOT shown to a student as it is (levelPrompt
+// re-cuts it), so it should use the field's terms. Inputs: none beyond the
+// paper, which the caller supplies as the cached prefix.
+function assetsPrompt() {
+  return `Read the paper above and identify the concrete inputs and outputs of the work: the things it rests on or produces that a person could get hold of and manipulate digitally, or at least extend. Look specifically for: datasets; tasks and apparatus; codebooks; experimental paradigms; mathematical and computational models; simulations; analysis pipelines; surveys, instruments and coding schemes; domain-specific libraries; source code; trained models; live demos. Prefer things that exist as files, repositories, services or well-specified procedures over ideas. Where the paper's own artifact is unavailable, a standard public equivalent of the same thing (the dataset it was trained on, the library it wraps) counts, and say that it is one.
+
+For each one, hunt down where it actually lives. Search the web aggressively: project pages, GitHub, Hugging Face, Zenodo, OSF, Dataverse, lab pages, package registries, the paper's own references and supplementary material. Prefer the canonical home over a mirror. Give up to six links per asset, each with its kind. When nothing can be found, say so with availability "unavailable" rather than inventing a URL; a plausible-looking link that does not exist is worse than none.
+
+For each asset write:
+- title: a short name
+- description: a short paragraph, two to four sentences, saying what it is and how the work uses it. Use the paper's and the field's own terms; do not simplify.
+- one_liner: one plain sentence naming what it is, for a brainstorming prompt
+- type: one of ${ASSET_TYPES.map((t) => `"${t}"`).join(" | ")}
+- links: [{"kind": "live_demo" | "source_code" | "download" | "docs" | "paper" | "other", "url": "https://..."}]
+- what_you_can_do_with_it: one sentence on what a person could do with it: run, query, extend, re-analyse, modify
+- availability: "usable" | "partial" | "unavailable" | "unknown"
+
+Order by how central each is to the paper's contribution. At most 12.
+
+${JSON_ONLY}
+{"assets": [{"title": "", "description": "", "one_liner": "", "type": "", "links": [{"kind": "", "url": ""}], "what_you_can_do_with_it": "", "availability": ""}]}`;
+}
+
+// What the topic questions found, as a block. assessment = {areas:[{area,
+// self_level, graded_level, rationale, answers:[...]}], mean, depth}.
+function assessmentBlock(assessment) {
+  const a = assessment && typeof assessment === "object" ? assessment : null;
+  const areas = a && Array.isArray(a.areas) ? a.areas : [];
+  if (!areas.length) return [];
+  const out = ["", "How they did on the topic questions (graded against sample answers; the grade, not their self-rating, is the evidence):"];
+  for (const x of areas) {
+    const r = rung(x.graded_level != null ? x.graded_level : x.self_level);
+    const said = Array.isArray(x.answers) && x.answers.length ? ` They wrote: "${String(x.answers[x.answers.length - 1]).slice(0, 240)}"` : "";
+    out.push(`- ${x.area}: rated themselves ${rung(x.self_level) ? rung(x.self_level).phrase : "?"}; graded ${r ? r.phrase + " (" + r.level + ")" : "ungraded"}${x.rationale ? " -- " + x.rationale : ""}.${said}`);
+  }
+  return out;
+}
+
+// The assets, re-cut for one reader. Inputs: reader (with graded knowledge),
+// assessment, assets (the raw list). The lens: level is set by the sticky
+// information and where the locus of problem solving lies for THIS reader,
+// not by the paper's field in general.
+function levelPrompt({ reader, assessment, assets, interest }) {
+  return [
+    ...readerBlock(reader), ...assessmentBlock(assessment), "",
+    interest ? `What they seem drawn to so far: "${interest}"` : "They have not said what they want to make yet.",
+    "",
+    "Below are the concrete things the paper rests on or produces, written in the paper's own register.",
+    JSON.stringify({ assets }, null, 0),
+    "",
+    "First decide where the locus of problem solving would lie for this reader in a first project on this paper, and which knowledge is sticky -- the part they must actually hold in their head to make decisions -- versus the part an AI coding assistant will carry for them (they need to know what a library does and what it returns, not its syntax). Someone representing dance poses for math education needs geometry and a working notion of what pose detection returns, not computer vision.",
+    "Then, for each asset, judge from the grades above whether this reader can pick it up as it is. Where they cannot, add up to three `children`: simpler, standard, well-documented stand-ins at their level that teach the same idea or skill -- a toy dataset before the real one (MNIST before a custom image corpus), a hosted demo before the library, a notebook before the codebase, a spreadsheet before the pipeline. Search the web for real ones. Each child has the same shape as an asset plus a `why`: one sentence, to the reader, on why this is the right on-ramp for them, naming the sticky idea it teaches. Do not invent links.",
+    "Finally rewrite every asset's `description`, `one_liner` and `what_you_can_do_with_it` at the reader's register (the rule at the top). Keep every original asset, its `title`, `type` and `links`.",
+    "",
+    JSON_ONLY,
+    '{"locus": "one sentence: where the problem solving lies for this reader", "sticky": ["the two to five ideas they must hold themselves"], "assets": [{"title": "", "description": "", "one_liner": "", "type": "", "links": [], "what_you_can_do_with_it": "", "availability": "", "children": [{"title": "", "description": "", "one_liner": "", "type": "", "links": [], "what_you_can_do_with_it": "", "availability": "", "why": ""}]}]}',
+  ].join("\n");
+}
+
+// The brainstorm's mini list: what the paper rests on, one line each.
+function briefBlock(brief) {
+  const list = Array.isArray(brief) ? brief : [];
+  if (!list.length) return [];
+  return ["", "The concrete things the paper rests on or produces (a separate search is finding where each lives; do not promise links):",
+    ...list.map((b) => `- ${b.title} (${b.type}): ${b.one_liner || ""}`)];
+}
+
+function transcriptBlock(turns, cap = 24) {
+  const list = (Array.isArray(turns) ? turns : []).slice(-cap);
+  if (!list.length) return [];
+  return ["", "The conversation so far:", ...list.map((t) => `${t.role === "user" ? "They" : "You"}: ${String(t.content || "").slice(0, 1200)}`)];
+}
+
+// One brainstorm turn. Engelbart's brainstorm card grammar (questions,
+// focus, none), pointed at extending this paper. Inputs: reader, paper,
+// assessment, brief (assets_brief), turns (the transcript so far, the
+// reader's latest turn last), leveledReady (whether the plan can start).
+function brainstormPrompt({ reader, paper, assessment, brief, turns }) {
+  return [
+    ...readerBlock(reader), ...assessmentBlock(assessment), "",
+    `They are about to start a first project that builds on "${paper.title}" -- ${paper.one_liner}`,
+    ...briefBlock(brief),
+    ...transcriptBlock(turns),
+    "",
+    "You are brainstorming with them about what to build. Many people arrive with a vague sense -- something between computer science and education, electrical engineering and music -- and some with a narrow one. Your job is to find, with them, the piece of this paper worth extending or reproducing in a small first project that would hold their attention, and to learn what they already know along the way. Ask about their familiarity with the things above, follow up on what they say, explore sideways, and reflect back what you hear. Use the graded levels above: do not ask what the grades already answered.",
+    "",
+    "Reply with ONE JSON object and nothing else:",
+    '{"say": "<what you say to them, plain prose, two to five sentences>",',
+    ' "card": "questions" | "focus" | "none",',
+    ' "questions": {"eyebrow": "<two or three words>", "items": [{"id": "<short slug>", "type": "mcq" | "select_all" | "free" | "open", "title": "<the question>", "subtitle": "<optional>", "options": [{"label": "<the choice>", "why": "<optional: what it buys them>"}], "placeholder": "<for free and open>"}]},',
+    ' "focus": {"title": "<what you are asking them to choose between>", "options": [{"label": "<one reading of what they could build>", "why": "<why this one>"}]},',
+    ' "interest": "<one sentence: what they seem drawn to so far, in the third person; empty if you cannot tell yet>"}',
+    "",
+    "Only the key for the card you name is read. `questions` is for one to three questions whose answers change what you would suggest -- mcq (one answer), select_all (say so in the subtitle), free (one line), open (a paragraph); never questions you could assume the answer to. `focus` is for when what they want could be read two or three ways and which one decides everything after it; two to four options with a why each. `none` is for a turn that only needs prose. Do not propose goals, todos, or a plan; that comes later. Keep `say` short. Write at the register above.",
+  ].join("\n");
+}
+
+// A question about one asset. Inputs: reader, paper, asset (the leveled
+// entry, with children if any), thread (prior turns on this asset), question.
+function assetAskPrompt({ reader, paper, asset, thread, question }) {
+  return [
+    ...readerBlock(reader), "",
+    `Context: they are choosing what to build on from "${paper.title}" -- ${paper.one_liner}`,
+    "The thing they are asking about:",
+    JSON.stringify(asset, null, 0),
+    ...transcriptBlock(thread, 12),
+    "",
+    `They ask: "${question}"`,
+    "",
+    "Answer in two to five sentences at the register above. Be concrete: what they would actually change first, how long it takes to get running, why it is in the paper, what it would teach them. Refer to the links above by kind when they matter; do not invent others.",
+    "",
+    JSON_ONLY,
+    '{"answer": "..."}',
+  ].join("\n");
+}
+
+// One direction, or a revision of it. Inputs: reader, paper, interest,
+// assessment, turns (the brainstorm, condensed by cap), asset (the one they
+// picked), leveled ({locus, sticky}), previous (the direction being revised,
+// or null), feedback (their change request, or "").
+function directionPrompt({ reader, paper, interest, assessment, turns, asset, leveled, previous, feedback }) {
+  const lv = leveled || {};
+  return [
+    ...readerBlock(reader), ...assessmentBlock(assessment), "",
+    `They are starting a first project that builds on "${paper.title}" -- ${paper.one_liner}`,
+    interest ? `What they are drawn to: "${interest}"` : "",
+    lv.locus ? `Where the problem solving lies for them: ${lv.locus}` : "",
+    Array.isArray(lv.sticky) && lv.sticky.length ? `What they must hold in their head: ${lv.sticky.join("; ")}` : "",
+    "The thing they chose to build on:",
+    JSON.stringify(asset || {}, null, 0),
+    ...transcriptBlock(turns, 16),
+    previous ? "" : "",
+    previous ? "The direction you proposed before:" : "",
+    previous ? JSON.stringify(previous, null, 0) : "",
+    feedback ? `What they want changed: "${feedback}"` : "",
+    "",
+    previous
+      ? "Revise the direction to do what they asked. Keep what they did not object to."
+      : "Choose ONE direction for their first project. Not three to pick from: the one that best fits everything above. It must be something they could build, run, or modify within a couple of weeks with an AI coding assistant, using the thing they chose; it must produce something they can see or play with early -- attention first, usefulness to the PhD student second; and it must sit where the problem solving lies for THEM, not in the part a library or the assistant will carry.",
+    "Write at the register above.",
+    "",
+    JSON_ONLY,
+    '{"title": "2-6 words", "what_you_would_make": "two or three sentences, to them", "uses": ["what it uses, by title"], "why_it_fits": "one or two sentences: why this one, for them, given what they said and how they did", "first_visible_result": "one sentence: the first thing they would see working"}',
+  ].join("\n");
+}
+
+// Three subgoals for the direction, or a revision. Inputs: reader, paper,
+// direction, asset, leveled, previous (the subgoals being revised, or null),
+// feedback.
+function subgoalsPrompt({ reader, paper, direction, asset, leveled, previous, feedback }) {
+  const lv = leveled || {};
+  const d = direction || {};
+  return [
+    ...readerBlock(reader), "",
+    `They are building on "${paper.title}" -- ${paper.one_liner}`,
+    `The direction: "${d.title}" -- ${d.what_you_would_make || ""}${d.first_visible_result ? " First visible result: " + d.first_visible_result : ""}`,
+    "Built on:",
+    JSON.stringify(asset || {}, null, 0),
+    lv.locus ? `Where the problem solving lies for them: ${lv.locus}` : "",
+    previous ? "The subgoals you proposed before:" : "",
+    previous ? JSON.stringify(previous, null, 0) : "",
+    feedback ? `What they want changed: "${feedback}"` : "",
+    "",
+    previous
+      ? "Revise the three subgoals to do what they asked. Keep what they did not object to."
+      : "Break the direction into exactly three subgoals, in order. Each is an outcome someone could tell you they had reached, not a phase or a heading. The first must be the smallest thing that produces the first visible result; the second builds the substance; the third reaches toward the paper's actual contribution or their own twist. Each carries a description (two sentences, what done looks like) and a why (one sentence, why it comes where it does).",
+    "Write at the register above.",
+    "",
+    JSON_ONLY,
+    '{"subgoals": [{"label": "an outcome, 3-10 words", "description": "two sentences", "why": "one sentence"}, {}, {}]}',
+  ].join("\n");
+}
+
+// The resources a reader has at hand, appended to every user-facing prompt
+// once they exist. Empty when there are none.
+function resourcesBlock(resources) {
+  const list = Array.isArray(resources) ? resources : [];
+  if (!list.length) return [];
+  const out = ["", "Resources at hand (from the paper; children are stand-ins at their level):"];
+  for (const r of list) {
+    const link = Array.isArray(r.links) && r.links[0] ? ` <${r.links[0].url}>` : "";
+    out.push(`- ${r.title} (${r.type}): ${r.what_you_can_do_with_it || r.one_liner || r.description || ""}${link}`);
+    for (const c of Array.isArray(r.children) ? r.children : []) {
+      const clink = Array.isArray(c.links) && c.links[0] ? ` <${c.links[0].url}>` : "";
+      out.push(`  - start with ${c.title} (${c.type}): ${c.what_you_can_do_with_it || c.one_liner || c.description || ""}${clink}`);
+    }
+  }
+  return out;
+}
+
 module.exports = {
-  DEPTHS, FAMILIARITY, LADDER, JSON_ONLY,
-  depthOf, rung, readerBlock,
+  DEPTHS, FAMILIARITY, LADDER, JSON_ONLY, ASSET_TYPES,
+  depthOf, rung, readerBlock, assessmentBlock, briefBlock, transcriptBlock,
   analyzePrompt, gradePrompt, detailsPrompt, goalsPrompt, todosPrompt, askPrompt,
+  PAPER_PREFIX, assetsPrompt, levelPrompt, brainstormPrompt, assetAskPrompt, directionPrompt, subgoalsPrompt, resourcesBlock,
 };

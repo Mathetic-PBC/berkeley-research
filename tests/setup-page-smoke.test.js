@@ -13,6 +13,8 @@ const vm = require("node:vm");
 
 const ROOT = path.join(__dirname, "..");
 const SRC = fs.readFileSync(path.join(ROOT, "engelbart", "setup", "setup.js"), "utf8");
+// The install module ships beside the page and draws two of its steps.
+const INSTALL = fs.readFileSync(path.join(ROOT, "engelbart", "setup", "install.js"), "utf8");
 
 // --- the smallest document setup.js can be drawn on ---------------------------
 
@@ -72,12 +74,27 @@ const DETAILS = { intro: "", questions: [{ id: "who", kind: "choice", title: "Wh
 const GOALS = { goals: [1, 2, 3, 4].map((n) => ({ label: `Goal ${n}`, short: `g${n}`, why: `why ${n}` })) };
 const PAPER = "22222222-2222-2222-2222-222222222222";
 
+const LEVELED = { locus: "the geometry", sticky: ["angles"], assets: [
+  { title: "Pose viewer", one_liner: "views poses", description: "A viewer.", type: "demo", availability: "usable",
+    links: [{ kind: "live_demo", url: "https://x.org/demo" }], what_you_can_do_with_it: "play",
+    children: [{ title: "Toy poses", one_liner: "ten poses", type: "dataset", why: "small first", links: [] }] },
+  { title: "Dance corpus", one_liner: "videos", type: "dataset", availability: "partial", links: [] },
+] };
+const ASSESSMENT = { areas: [{ area: "A", graded_level: 50 }, { area: "B", graded_level: 25 }], mean: 38, depth: "some" };
+const DIRECTION = { title: "Pose to angles", what_you_would_make: "A page that turns a pose into angles.", uses: ["Pose viewer"],
+  why_it_fits: "Geometry is the point.", first_visible_result: "one labelled skeleton" };
+const SUBGOALS = [{ label: "One pose drawn", description: "d1", why: "w1" }, { label: "Angles computed", description: "d2", why: "w2" },
+  { label: "A sequence compared", description: "d3", why: "w3" }];
+
 // A row far enough along that any step can be drawn from it.
 function fullRow(extra) {
   return { step: 0, name: "Ada", year: "First year", major: "Physics", depth: "some",
-    paper_id: PAPER, paper_title: "Zebra Tuning", paper_familiarity: 2, project_draft: "a thing",
-    analysis: ANALYSIS, analysis_status: "done", details: DETAILS,
-    goal_chosen: "a goal", todos: ["one", "two"], ...extra };
+    paper_id: PAPER, paper_title: "Zebra Tuning", paper_familiarity: 2,
+    analysis: ANALYSIS, analysis_status: "done", assets_status: "done", assets: { assets: LEVELED.assets },
+    assets_brief: [{ title: "Pose viewer", type: "demo", one_liner: "views poses" }],
+    assessment: ASSESSMENT, leveled_status: "done", leveled: LEVELED, interest: "geometry",
+    asset_chosen: { key: "Pose viewer", title: "Pose viewer" }, direction: DIRECTION, subgoals: SUBGOALS,
+    goal_chosen: "Pose to angles", todos: ["one", "two"], ...extra };
 }
 
 // Mounts the page. `replies` overrides one action's answer; `refuse` makes one
@@ -86,7 +103,8 @@ function mount(options = {}) {
   const app = makeEl("div");
   const actions = [];
   const bodies = [];
-  let row = { step: 0, status: "open", analysis_status: "none", ...options.row };
+  let row = { step: 0, status: "open", analysis_status: "none", assets_status: "none", leveled_status: "none", ...options.row };
+  const turns = options.turns || [];
   const refuse = options.refuse || {};
   const replies = options.replies || {};
 
@@ -106,13 +124,23 @@ function mount(options = {}) {
     }
     if (body && replies[body.action]) return replies[body.action](body);
     if (url === "/api/engelbart-onboarding") {
-      if (body.action === "open") return answer({ onboarding: row, calibrations: [] });
+      if (body.action === "open") return answer({ onboarding: row, calibrations: [], turns, profile_reused: Boolean(options.profileReused) });
+      if (body.action === "reset") { row = { step: 0, status: "open", analysis_status: "none" }; return answer({ onboarding: row, calibrations: [], profile_reused: false }); }
       if (body.action === "step") { row = { ...row, ...body.fields, step: body.step }; return answer({ onboarding: row }); }
       if (body.action === "sources") return answer({ ok: true, analysis_status: "none" });
       if (body.action === "analysis") return answer({ analysis_status: "done", analysis: ANALYSIS });
+      if (body.action === "assets") return answer({ assets_status: "done", assets: { assets: LEVELED.assets }, assets_brief: row.assets_brief || [] });
       if (body.action === "answer") return answer({ graded_level: 50, grade_confidence: 0.8, grade_rationale: "fine" });
-      if (body.action === "details") return answer(DETAILS);
-      if (body.action === "goals") return answer(GOALS);
+      if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 7 }; return answer({ assessment: ASSESSMENT }); }
+      if (body.action === "leveled") return answer({ leveled_status: "done", leveled: LEVELED, assets_status: "done" });
+      if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick
+        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status }
+        : { turn_id: "t1", say: "What drew you to this paper?", card: "questions", leveled_status: row.leveled_status,
+            questions: { eyebrow: "first", items: [{ id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math", why: "w" }] }] } });
+      if (body.action === "asset_ask") return answer({ answer: "Start with the toy.", turn_id: "a1" });
+      if (body.action === "choose_asset") { row = { ...row, asset_chosen: { key: body.key, title: body.key.split(" :: ").pop() }, step: 9 }; return answer({ asset_chosen: row.asset_chosen }); }
+      if (body.action === "direction") { const d = body.revise ? { ...DIRECTION, title: "Pose to angles, live" } : DIRECTION; row = { ...row, direction: d }; return answer({ direction: d }); }
+      if (body.action === "subgoals") { row = { ...row, subgoals: SUBGOALS }; return answer({ subgoals: SUBGOALS }); }
       if (body.action === "todos") return answer({ todos: ["do a", "do b"], name: "zebra-runner" });
       if (body.action === "ask") return answer({ answer: "Because.", level: "some" });
       if (body.action === "create") return answer({ ok: true, pending_setup_id: "p" });
@@ -130,15 +158,20 @@ function mount(options = {}) {
   }
 
   const win = makeEl("window");
-  win.location = { href: "" };
+  win.location = { href: "", search: options.search || "" };
+  win.confirm = () => true;
   win.supabase = { createClient: () => ({ auth: {
     onAuthStateChange() {},
     getSession: () => Promise.resolve({ data: { session: { access_token: "jwt" } } }),
   } }) };
 
-  const sandbox = { window: win, fetch: fetchStub, setTimeout, clearTimeout, setInterval, clearInterval, console, URL,
+  // Timers that do not hold the process open: a test may end on a step whose
+  // keyboard is still animating, or whose poll has not fired yet.
+  const loose = (fn, ms) => { const t = setInterval(fn, ms); if (t.unref) t.unref(); return t; };
+  const sandbox = { window: win, fetch: fetchStub, setTimeout, clearTimeout, setInterval: loose, clearInterval, console, URL,
     navigator: {}, document: { getElementById: () => app, createElement: makeEl } };
   sandbox.globalThis = sandbox;
+  vm.runInNewContext(INSTALL, sandbox, { filename: "engelbart/setup/install.js" });
   vm.runInNewContext(SRC, sandbox, { filename: "engelbart/setup/setup.js" });
 
   return { app, actions, bodies, win,
@@ -155,19 +188,20 @@ function mount(options = {}) {
 
 test("every step draws from the record, and none of them throws", async () => {
   const titles = ["What is your name?", "What year are you?", "What is your major?",
-    "How technical should explanations be?", "Which paper are you building on?", "What's your project?",
-    "How familiar are you with what the paper leans on?", "Who is it for?", "What should the first project be about?", "a goal"];
+    "How technical should explanations be?", "Which paper are you building on?", "Which computer are you on?",
+    "How familiar are you with what the paper leans on?", "What in this paper is worth building on?",
+    "What do you want to build on?", "Pose to angles", "Pose to angles", "Pose to angles"];
   for (let step = 0; step < titles.length; step += 1) {
-    const page = mount({ row: fullRow({ step }) });
+    const page = mount({ row: fullRow({ step }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] });
     await settle();
     assert.equal(page.title(), titles[step], `step ${step}`);
   }
-  const done = mount({ row: fullRow({ step: 9, status: "created" }) });
+  const done = mount({ row: fullRow({ step: 12, status: "created" }) });
   await settle();
-  assert.equal(done.title(), "Your project is made");
+  assert.match(textOf(done.app), /Open a new Claude chat on your machine/);
 });
 
-test("the walk from Name to Project writes every step as it goes", async () => {
+test("the walk from Name to Install writes every step as it goes, and fires the reading and the hunt", async () => {
   const page = mount();
   await settle();
 
@@ -202,19 +236,22 @@ test("the walk from Name to Project writes every step as it goes", async () => {
   page.cta().fire("click");
   await settle();
 
-  assert.equal(page.title(), "What's your project?");
-  const draft = page.input();
-  draft.value = "a tool that reads a paper"; draft.fire("input");
-  page.cta().fire("click");
-  await settle();
-
-  assert.equal(page.title(), "How familiar are you with what the paper leans on?");
+  assert.equal(page.title(), "Which computer are you on?", "the install step follows the paper");
   assert.deepEqual(page.actions, ["open", "step", "step", "step", "step",
-    "own_paper", "own_paper_saved", "sources", "analysis", "step", "step"]);
+    "own_paper", "own_paper_saved", "sources", "analysis", "assets", "step", "issue"]);
   assert.equal(page.row().name, "Ada");
   assert.equal(page.row().year, "Second year");
   assert.equal(page.row().depth, "technical");
-  assert.equal(page.row().project_draft, "a tool that reads a paper");
+  assert.equal(page.row().step, 5);
+  // Through the module: macOS, Apple Silicon, three steps, then done.
+  byClass(page.app, "ob-opt")[0].fire("click");
+  byClass(page.app, "ob-opt")[0].fire("click");
+  page.cta().fire("click"); page.cta().fire("click");
+  assert.match(textOf(page.app), /--code ABCD-EFGH-IJKL --no-open/, "the connect command carries the issued code");
+  page.cta().fire("click");
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.title(), "How familiar are you with what the paper leans on?");
   assert.equal(page.row().step, 6);
 });
 
@@ -232,8 +269,8 @@ test("an accepted paper starts the reading and moves on without waiting for it",
   await settle();
 
   // The reading has not answered yet, and the reader is already a step on.
-  assert.equal(page.title(), "What's your project?");
-  assert.deepEqual(page.actions, ["open", "sources", "analysis", "step"]);
+  assert.equal(page.title(), "Which computer are you on?");
+  assert.deepEqual(page.actions, ["open", "sources", "analysis", "assets", "step", "issue"]);
   assert.equal(page.bodies.find((b) => b.action === "analysis").run, true);
   assert.equal(page.bodies.find((b) => b.action === "sources").paper_id, PAPER);
   assert.equal(page.bodies.find((b) => b.action === "sources").paper_familiarity, 2);
@@ -324,7 +361,7 @@ test("typing a major narrows the seeds without replacing the field", async () =>
 test("topics are answered one area at a time, a disagreeing grade asks once more, and samples never show", async () => {
   let calls = 0;
   const page = mount({
-    row: fullRow({ step: 6, details: null, goals: null, todos: null, goal_chosen: "" }),
+    row: fullRow({ step: 6, assessment: null, leveled_status: "none", leveled: null, todos: null, goal_chosen: "" }),
     replies: { answer: () => { calls += 1; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
       calls === 1 ? { graded_level: 25, grade_rationale: "recognises only", follow_up: { question_level: 25, question: "A question at 25" } }
                  : { graded_level: 50 }) }); } },
@@ -338,7 +375,8 @@ test("topics are answered one area at a time, a disagreeing grade asks once more
   page.cta().fire("click");
   await settle();
   assert.equal(textOf(one(page.app, "ob-q")), "A question at 25", "the follow-up is asked at the graded level");
-  assert.match(textOf(one(page.app, "ob-grade")), /can follow it/);
+  assert.equal(one(page.app, "ob-grade"), undefined, "and the grade itself is never shown");
+  assert.doesNotMatch(textOf(page.app), /can follow it/);
   answerBox().value = "it weights inputs"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
@@ -347,37 +385,199 @@ test("topics are answered one area at a time, a disagreeing grade asks once more
   answerBox().value = "tensors"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "Who is it for?", "the last area leads to the details questions");
-  assert.equal(page.actions.filter((a) => a === "details").length, 1);
+  assert.equal(page.title(), "What in this paper is worth building on?", "the last area compiles the assessment and opens the brainstorm");
+  assert.deepEqual(page.actions.slice(-4), ["answer", "topics_done", "leveled", "brainstorm"]);
+  assert.equal(page.bodies.find((b) => b.action === "leveled").run, true);
 });
 
-test("details, focus, todos and done reach the install code", async () => {
-  const page = mount({ row: fullRow({ step: 7, goals: null, todos: null, goal_chosen: "", project_name: "" }) });
+test("moving the slider on a follow-up asks the ladder's own question at that level instead", async () => {
+  const page = mount({
+    row: fullRow({ step: 6, assessment: null }),
+    replies: { answer: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
+      { graded_level: 25, follow_up: { question_level: 25, question: "A question at 25" } }) }) },
+  });
   await settle();
-  assert.equal(page.title(), "Who is it for?");
-  byClass(page.app, "ob-opt")[0].fire("click");
-  await settle();
+  const answerBox = () => find(page.app, (n) => n.tagName === "input" && n.placeholder === "one sentence is enough…")[0];
+  answerBox().value = "attention weights"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "What should the first project be about?");
-  assert.equal(page.bodies.find((b) => b.action === "step" && b.fields.details_answers).fields.details_answers.who, "Just me");
+  assert.equal(textOf(one(page.app, "ob-q")), "A question at 25");
+  byClass(page.app, "ob-track")[0].fire("pointerdown", { clientX: 300, pointerId: 1 });
+  page.win.fire("pointerup", {});
+  await settle();
+  assert.equal(textOf(one(page.app, "ob-q")), "A question at 75", "the follow-up is dropped for the level they moved to");
+  assert.doesNotMatch(textOf(page.app), /One more/);
+});
+
+test("the brainstorm opens with the model's card, sends answers, and offers the plan once the resources are fitted", async () => {
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
+  await settle();
+  assert.equal(page.title(), "What in this paper is worth building on?");
+  assert.equal(page.actions.filter((a) => a === "brainstorm").length, 1, "the opening turn is asked for once");
+  assert.equal(page.bodies.find((b) => b.action === "brainstorm").text, undefined);
+  assert.match(textOf(page.app), /What drew you to this paper\?/);
+  assert.equal(one(page.app, "ob-bs-offer"), undefined, "no plan offer while the resources are being fitted");
   byClass(page.app, "ob-goal")[1].fire("click");
-  await settle();
   page.cta().fire("click");
   await settle();
-  assert.equal(page.bodies.find((b) => b.action === "todos").goal, "Goal 2");
-  assert.equal(page.title(), "Goal 2");
+  const sent = page.bodies.filter((b) => b.action === "brainstorm")[1];
+  assert.deepEqual(sent.answers, { drew: "The math" });
+  assert.match(textOf(page.app), /What drew you\? The math/, "their answer is on the thread");
+  assert.match(textOf(page.app), /Angles it is/);
+  // The fitting finishes: the next redraw carries the offer.
+  page.row().leveled_status = "done"; page.row().leveled = LEVELED;
+  const composer = find(page.app, (n) => n.tagName === "textarea")[0];
+  composer.value = "I like the timing side"; composer.fire("input");
+  find(page.app, (n) => n.tagName === "button" && textOf(n) === "Send")[0].fire("click");
+  await settle();
+  assert.ok(one(page.app, "ob-bs-offer"), "ready to plan is asked after the turn");
+  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Keep brainstorming").fire("click");
+  assert.equal(one(page.app, "ob-bs-offer"), undefined);
+  composer.value = "more"; composer.fire("input");
+  find(page.app, (n) => n.tagName === "button" && textOf(n) === "Send")[0].fire("click");
+  await settle();
+  assert.ok(one(page.app, "ob-bs-offer"), "and asked again after the next turn");
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.title(), "What do you want to build on?");
+});
+
+test("the assets list expands, asks, and a child can be picked; the pick resets the plan", async () => {
+  const page = mount({ row: fullRow({ step: 8, asset_chosen: null, direction: null, subgoals: null, todos: null }) });
+  await settle();
+  const rows = byClass(page.app, "ob-as-row");
+  assert.equal(rows.length, 3, "two assets and one child");
+  assert.deepEqual(byClass(page.app, "ob-as-title").map(textOf), ["Pose viewer", "Toy poses", "Dance corpus"]);
+  assert.match(textOf(rows[1]), /at your level[\s\S]*small first/);
+  assert.equal(page.cta().disabled, true, "nothing picked yet");
+  byClass(page.app, "ob-as-caret")[0].fire("click");
+  assert.match(textOf(page.app), /What you can do with it · play/);
+  assert.equal(find(page.app, (n) => n.tagName === "a")[0].href, "https://x.org/demo");
+  byClass(page.app, "ob-as-chatbtn")[0].fire("click");
+  byClass(page.app, "ob-seed")[0].fire("click");
+  await settle();
+  assert.equal(page.bodies.find((b) => b.action === "asset_ask").key, "Pose viewer");
+  assert.match(textOf(page.app), /Start with the toy/);
+  byClass(page.app, "ob-as-head")[1].fire("click");
+  assert.match(textOf(one(page.app, "ob-hint")), /building on · Toy poses/);
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.bodies.find((b) => b.action === "choose_asset").key, "Pose viewer :: Toy poses");
+  assert.equal(page.title(), "Pose to angles", "the direction is generated and shown");
+  assert.equal(page.actions.filter((a) => a === "direction").length, 1);
+});
+
+test("direction and subgoals are one proposal each; a change request revises in place; todos come for the first piece", async () => {
+  const page = mount({ row: fullRow({ step: 9, direction: null, subgoals: null, todos: null, project_name: "" }) });
+  await settle();
+  assert.equal(page.title(), "Pose to angles");
+  assert.match(textOf(page.app), /First thing you'd see · one labelled skeleton/);
+  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Change something").fire("click");
+  const box = find(page.app, (n) => n.tagName === "input" && /smaller, closer/.test(n.placeholder))[0];
+  box.value = "make it live"; box.fire("input");
+  box.fire("keydown", { key: "Enter" });
+  await settle();
+  assert.equal(page.bodies.filter((b) => b.action === "direction")[1].revise, "make it live");
+  assert.equal(page.title(), "Pose to angles, live");
+  page.cta().fire("click");
+  await settle();
+  assert.deepEqual(byClass(page.app, "ob-sg-label").map(textOf), ["One pose drawn", "Angles computed", "A sequence compared"]);
+  assert.match(textOf(page.app), /todos are written for this one/);
+  page.cta().fire("click");
+  await settle();
   const rows = find(page.app, (n) => n.tagName === "input" && n.placeholder !== "add a todo…" && n.placeholder !== "project name…");
   assert.equal(rows.length, 2);
+  assert.match(textOf(page.app), /First piece[\s\S]*One pose drawn/);
   const nameBox = find(page.app, (n) => n.placeholder === "project name…")[0];
   assert.equal(nameBox.value, "zebra-runner");
   const create = one(page.app, "ob-pill");
   assert.equal(create.disabled, false);
   create.fire("click");
   await settle();
-  assert.equal(page.title(), "zebra-runner is made");
-  assert.match(textOf(one(page.app, "ob-cmd-text")), /^bunx engelbart-cli --code ABCD-EFGH-IJKL$/);
   const made = page.bodies.find((b) => b.action === "create");
   assert.deepEqual(made.todos, ["do a", "do b"]);
-  assert.equal(made.goal_chosen, "Goal 2");
+  assert.equal(made.goal_chosen, undefined, "the direction is the goal; the page does not name it");
+  assert.match(textOf(page.app), /zebra-runner is saved/);
+  // The last screen: the same keyboard walk, now to a new chat and /bart.
+  byClass(page.app, "ob-opt")[0].fire("click");
+  byClass(page.app, "ob-opt")[0].fire("click");
+  page.cta().fire("click");
+  assert.match(textOf(page.app), /claude/);
+  page.cta().fire("click");
+  assert.match(textOf(page.app), /\/bart/, "and the last screen walks them to /bart");
+});
+
+// --- a redraw within a step is not an arrival ------------------------------------
+
+test("only a change of step replays the entry animation; a pick or a slider release holds it", async () => {
+  const page = mount({ row: fullRow({ step: 3 }) });
+  await settle();
+  assert.equal(page.app.attrs["data-still"], "0", "arriving on the step animates");
+  byClass(page.app, "ob-stop")[1].fire("click");
+  assert.equal(page.app.attrs["data-still"], "1", "a slider release redraws in place");
+  assert.equal(textOf(one(page.app, "ob-slider-name")), "Some detail");
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.title(), "Which paper are you building on?");
+  assert.equal(page.app.attrs["data-still"], "0", "the next step animates in");
+  const year = mount({ row: fullRow({ step: 1, year: "" }) });
+  await settle();
+  byClass(year.app, "ob-opt")[4].fire("click");
+  assert.equal(year.app.attrs["data-still"], "1", "toggling Something else redraws in place");
+});
+
+// --- the profile is asked once ----------------------------------------------------
+
+test("a second setup starts at the paper and counts six steps from there", async () => {
+  const page = mount({ profileReused: true, row: fullRow({ step: 4, paper_id: null, analysis: null, analysis_status: "none" }) });
+  await settle();
+  assert.equal(page.title(), "Which paper are you building on?");
+  assert.equal(textOf(one(page.app, "ob-count")), "Step 1 of 8");
+  assert.deepEqual(byClass(page.app, "ob-label").map(textOf), ["Paper", "Install", "Topics", "Brainstorm", "Assets", "Direction", "Subgoals", "Todos"]);
+  assert.equal(textOf(one(page.app, "ob-caption")), "Setting up another project");
+  assert.equal(textOf(one(page.app, "ob-profile-line")), "Ada · First year · Physics · Some detail");
+  // The way back to the four answers, for the member whose situation changed.
+  one(page.app, "ob-profile").children.find((n) => n.tagName === "button").fire("click");
+  assert.equal(page.title(), "What is your name?");
+  assert.equal(textOf(one(page.app, "ob-count")), "Step 1 of 12");
+  assert.equal(byClass(page.app, "ob-label").length, 12);
+});
+
+test("a first setup still counts twelve", async () => {
+  const page = mount({ row: fullRow({ step: 4 }) });
+  await settle();
+  assert.equal(textOf(one(page.app, "ob-count")), "Step 5 of 12");
+  assert.equal(byClass(page.app, "ob-label").length, 12);
+  assert.equal(one(page.app, "ob-profile"), undefined);
+});
+
+// --- test mode ------------------------------------------------------------------
+
+test("?test=true makes every step clickable and offers the two clears", async () => {
+  const page = mount({ search: "?test=true", row: fullRow({ step: 2 }) });
+  await settle();
+  assert.equal(page.app.attrs["data-test"], "1");
+  const rows = byClass(page.app, "ob-row");
+  assert.equal(rows.length, 12);
+  assert.deepEqual(rows.map((r) => r.attrs["data-reach"]), ["1", "1", "0", "1", "1", "1", "1", "1", "1", "1", "1", "1"], "all but the active step answer a click");
+  rows[8].fire("click");
+  await settle();
+  assert.equal(page.title(), "What do you want to build on?", "a step ahead of the record opens");
+  assert.deepEqual(byClass(page.app, "ob-test").length, 1);
+  const buttons = byClass(one(page.app, "ob-test"), "ob-ghost");
+  assert.deepEqual(buttons.map(textOf), ["Clear this project", "Clear everything"]);
+  buttons[1].fire("click");
+  await settle();
+  assert.equal(page.bodies.find((b) => b.action === "reset").scope, "all");
+  assert.equal(page.title(), "What is your name?", "and the page redraws from the fresh record");
+  assert.equal(page.input().value, "");
+});
+
+test("without ?test the rail only reaches back", async () => {
+  const page = mount({ row: fullRow({ step: 2 }) });
+  await settle();
+  assert.equal(page.app.attrs["data-test"], "0");
+  assert.equal(one(page.app, "ob-test"), undefined);
+  const rows = byClass(page.app, "ob-row");
+  assert.deepEqual(rows.map((r) => r.attrs["data-reach"]), ["1", "1", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]);
 });

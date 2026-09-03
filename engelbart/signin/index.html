@@ -68,6 +68,25 @@
             Sign in</button>
           <p id="login-status" class="status" aria-live="polite"></p>
         </form>
+        <p class="switch"><button id="forgot-password" class="link-button" type="button">Forgot your password?</button></p>
+      </div>
+
+      <div id="reset-view" class="hidden">
+        <form id="reset-form" class="stack">
+          <div class="field">
+            <label for="reset-email">Email</label>
+            <input id="reset-email" name="email" type="email" autocomplete="email" required>
+          </div>
+          <button class="button" type="submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
+              <path d="M21 3 L10 13"></path>
+            </svg>
+            Email me a reset link</button>
+          <p class="fine-print">The link opens this page with a place to choose a new password.</p>
+          <p id="reset-status" class="status" aria-live="polite"></p>
+        </form>
+        <p class="switch"><button id="reset-back" class="link-button" type="button">Back to sign in</button></p>
       </div>
 
       <div id="signup-view" class="hidden">
@@ -113,6 +132,22 @@
       </div>
     </section>
 
+    <section id="recovery-panel" class="hidden" aria-label="Choose a new password">
+      <form id="recovery-form" class="stack">
+        <div class="field">
+          <label for="new-password">New password</label>
+          <input id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+        </div>
+        <button class="button" type="submit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 3 L3 11 L10 13 L12 20 L21 3 Z"></path>
+            <path d="M21 3 L10 13"></path>
+          </svg>
+          Save password</button>
+        <p id="recovery-status" class="status" aria-live="polite"></p>
+      </form>
+    </section>
+
     <section id="pairing-panel" class="pairing hidden" aria-label="Connect a terminal">
       <div id="pairing-request">
         <p class="pairing-identity"><span class="dot" aria-hidden="true"></span><span id="pairing-email"></span></p>
@@ -150,12 +185,12 @@
       <p id="pairing-status" class="status" aria-live="polite"></p>
     </section>
 
-    <section id="download-panel" class="hidden" aria-labelledby="download-title">
+    <section id="download-panel" class="account hidden" aria-labelledby="download-title">
       <h2 id="download-title">You're in.</h2>
-      <p class="callout">New here? <a href="/engelbart/setup">Set your first project
-        up on the web</a> — describe the work, approve a plan, and get an
-        install command that opens it on your machine.</p>
       <p id="credit-status" class="status" aria-live="polite"></p>
+      <div id="credit-meter" class="meter hidden" role="img" aria-label="Credit remaining">
+        <span id="credit-fill" class="meter-fill"></span>
+      </div>
       <form id="credit-invite-form" class="stack credit-invite hidden">
         <div class="field">
           <label for="credit-invite-code">Credit invite code</label>
@@ -164,28 +199,24 @@
         <button class="button" type="submit">Claim Mathetic Claude credits</button>
         <p id="credit-invite-status" class="status" aria-live="polite"></p>
       </form>
-      <div id="credit-meter" class="meter hidden" role="img" aria-label="Credit remaining">
-        <span id="credit-fill" class="meter-fill"></span>
-      </div>
 
       <div id="key-block" class="key-block hidden">
-        <div class="key-head">
-          <span class="dm-eyebrow">YOUR API KEY</span>
-          <button id="reveal-key" class="link-button" type="button">Show</button>
-        </div>
-        <code id="api-key" class="code key-value"></code>
-        <div class="button-row">
-          <button id="copy-key" class="button secondary" type="button">Copy key</button>
+        <p class="cap"><span>Your API key</span><button id="reveal-key" class="cap-button" type="button">Show</button></p>
+        <div class="cmd">
+          <code id="api-key" class="cmd-text"></code>
+          <button id="copy-key" class="cmd-copy" type="button">Copy</button>
         </div>
 
-        <p class="key-lede">Point Claude Code at it — run this once, then run <code class="inline-code">claude</code>.</p>
-        <code id="setup-cmd" class="code setup-cmd"></code>
-        <div class="button-row">
-          <button id="copy-setup" class="button secondary" type="button">Copy setup command</button>
+        <p class="cap"><span>Point Claude Code at it</span></p>
+        <p class="account-note">Run this once, then run <code class="inline-code">claude</code>. The key works with every model Claude Code offers. Already have your own Anthropic key? The installer has a local-only bypass, so nothing you build has to run through us.</p>
+        <div class="cmd cmd-multi">
+          <code id="setup-cmd" class="cmd-text"></code>
+          <button id="copy-setup" class="cmd-copy" type="button">Copy</button>
         </div>
       </div>
 
-      <p class="callout">The key works with every Claude model Claude Code offers. Already have your own Anthropic key? The installer has a local-only bypass, so nothing you build has to run through us.</p>
+      <p class="cap"><span>First project</span></p>
+      <p class="account-note">New here? <a href="/engelbart/setup">Set it up on the web</a> — describe the work, approve a plan, and get an install command that opens it on your machine.</p>
       <p class="sign">&lt;3 Hudson and David</p>
     </section>
 

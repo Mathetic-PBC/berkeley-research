@@ -356,15 +356,19 @@ function normalizeSubgoals(value) {
     if (!PATH_PHASES.includes(phase)) phase = "";
     const paper = normalizePaperRef(row.paper);
     const document = normalizeDocumentRef(row.document);
-    // Keep a subgoal that carries WORK (todos), a PATH PHASE, or a RESOURCE (a
-    // paper or a document): an Understand paper goal and a Brainstorm document
-    // goal may have no todos of their own. Only an empty heading is dropped.
-    if (!label || (!rows.length && !phase && !paper && !document)) continue;
+    const why = one(row.why, MAX_WHY);
+    const description = long(row.description, MAX_DESC);
+    // Keep a subgoal that carries WORK (todos), a PATH PHASE, a RESOURCE (a
+    // paper or a document), or says what it is and why: an Understand paper
+    // goal and a Brainstorm document goal have no todos of their own, and
+    // the web setup puts rows under the first of a direction's three pieces
+    // only, leaving the others described but empty for the reader to fill.
+    // Only a bare heading is dropped. hc's _normalize_subgoals keeps the
+    // same rule.
+    if (!label || (!rows.length && !phase && !paper && !document && !why && !description)) continue;
     const sg = { label, todos: rows };
     if (phase) sg.phase = phase;
-    const why = one(row.why, MAX_WHY);
     if (why) sg.why = why;
-    const description = long(row.description, MAX_DESC);
     if (description) sg.description = description;
     if (paper) sg.paper = paper;
     if (document) sg.document = document;

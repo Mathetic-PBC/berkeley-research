@@ -11,6 +11,15 @@
   // pairing is nothing more than proving who is sitting in front of it.
   var pendingCode = readPendingCode();
   var pairingResolved = false;
+  // Set while an account is being created. Supabase announces the new session
+  // to onAuthStateChange before signUp() resolves, and this page's answer to a
+  // session is the account panel -- credit meter, key, spend. A member who
+  // just signed up is on their way to setup, so that panel must never paint:
+  // the listener sends them on instead of drawing it.
+  var signingUp = false;
+  // Set by the auth listener when the session arrived through a password
+  // reset link: the account panel waits until a new password is saved.
+  var recovering = false;
 
   var el = {
     loading: document.getElementById("loading-panel"),
@@ -22,6 +31,16 @@
     signupView: document.getElementById("signup-view"),
     loginForm: document.getElementById("login-form"),
     loginStatus: document.getElementById("login-status"),
+    forgotPassword: document.getElementById("forgot-password"),
+    resetView: document.getElementById("reset-view"),
+    resetForm: document.getElementById("reset-form"),
+    resetEmail: document.getElementById("reset-email"),
+    resetStatus: document.getElementById("reset-status"),
+    resetBack: document.getElementById("reset-back"),
+    recovery: document.getElementById("recovery-panel"),
+    recoveryForm: document.getElementById("recovery-form"),
+    newPassword: document.getElementById("new-password"),
+    recoveryStatus: document.getElementById("recovery-status"),
     inviteForm: document.getElementById("invite-form"),
     inviteCode: document.getElementById("invite-code"),
     signupEmail: document.getElementById("signup-email"),
@@ -97,6 +116,8 @@
   var DEF = {
     login: "Sign in to connect Engelbart.",
     signup: "Your invite code reserves one account, and one Claude credit.",
+    forgot: "Say which email, and a reset link is on its way.",
+    recovery: "Choose a new password for this account.",
     session: "Use your own Claude access, or claim a Mathetic credit.",
   };
 
@@ -107,19 +128,27 @@
     if (window.EngelbartFlight) window.EngelbartFlight.fly();
   }
 
+  // login | signup | forgot. Forgot is the sign-in tab's other face: the same
+  // pill stays lit, and the form asks only for the email.
   function selectMode(next) {
     var was = mode;
-    mode = next === "signup" ? "signup" : "login";
-    var login = mode === "login";
+    mode = next === "signup" || next === "forgot" ? next : "login";
+    var login = mode === "login", signup = mode === "signup", forgot = mode === "forgot";
     el.loginView.classList.toggle("hidden", !login);
-    el.signupView.classList.toggle("hidden", login);
-    el.def.textContent = login ? DEF.login : DEF.signup;
-    el.loginTab.classList.toggle("on", login);
-    el.signupTab.classList.toggle("on", !login);
+    el.signupView.classList.toggle("hidden", !signup);
+    el.resetView.classList.toggle("hidden", !forgot);
+    el.def.textContent = DEF[mode];
+    el.loginTab.classList.toggle("on", !signup);
+    el.signupTab.classList.toggle("on", signup);
     if (was !== mode) replayFlight();
   }
 
+  function leaveForSetup() {
+    window.location.href = "/engelbart/setup";
+  }
+
   function showSession(session) {
+    if (signingUp && session && session.user && !pendingCode) { leaveForSetup(); return; }
     // boot.js guessed the first paint from the URL and localStorage. The real
     // session is known now, so those guesses stop applying - and not a moment
     // earlier, or a stored session flashes the signed-out form on its way in.
@@ -134,6 +163,10 @@
     el.pairingNote.classList.toggle("hidden", signedIn || !pendingCode);
     var connecting = pairing || pairingResolved;
     el.pairing.classList.toggle("hidden", !connecting);
+    // A reset link signs the member in; the only thing to do with that
+    // session is choose the new password, and the account panel comes after.
+    var resetting = signedIn && recovering && !connecting;
+    el.recovery.classList.toggle("hidden", !resetting);
     // Answering the terminal is the only thing on screen while a code is live,
     // and the answer is still the only thing on screen once it has been given:
     // whatever the CLI needs next, it says in the terminal the member is
@@ -146,18 +179,18 @@
       document.documentElement.setAttribute(
         "data-auth-mode", pairingResolved ? "connected" : "pairing");
     }
-    el.download.classList.toggle("hidden", !signedIn || connecting);
+    el.download.classList.toggle("hidden", !signedIn || connecting || resetting);
     el.navAuth.classList.toggle("hidden", signedIn);
     el.navSession.classList.toggle("hidden", !signedIn);
     if (signedIn) {
-      el.def.textContent = DEF.session;
+      el.def.textContent = resetting ? DEF.recovery : DEF.session;
       el.sessionEmail.textContent = session.user.email || "Signed in";
       el.pairingEmail.textContent = session.user.email || "Signed in";
       if (pairing) el.pairingCode.textContent = pendingCode;
       // While pairing, credit provisioning is part of the explicit approval
       // action below. Keeping it out of this render avoids racing the CLI's
       // credential fetch against the browser's LiteLLM key creation.
-      if (!pairing) provisionCredits(session);
+      if (!pairing && !resetting) provisionCredits(session);
     }
     if (was !== signedIn) replayFlight();
   }
@@ -379,6 +412,65 @@
 
   el.loginTab.addEventListener("click", function () { selectMode("login"); });
   el.signupTab.addEventListener("click", function () { selectMode("signup"); });
+  el.forgotPassword.addEventListener("click", function () {
+    el.resetEmail.value = el.resetEmail.value || document.getElementById("login-email").value;
+    selectMode("forgot");
+  });
+  el.resetBack.addEventListener("click", function () { selectMode("login"); });
+
+  // The link in the email comes back to this page with a recovery session,
+  // which the auth listener turns into the new-password panel below. The
+  // address must be on the Supabase redirect allowlist, like the signup one.
+  el.resetForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var email = shared.normalizeEmail(el.resetEmail.value);
+    if (!shared.isPlausibleEmail(email)) {
+      setStatus(el.resetStatus, "Enter the email you signed up with.", "error");
+      return;
+    }
+    setStatus(el.resetStatus, "Sending the link…");
+    setBusy(el.resetForm, true);
+    var result = await client.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + "/engelbart/signin",
+    });
+    setBusy(el.resetForm, false);
+    if (result.error) {
+      var message = String(result.error.message || "");
+      setStatus(el.resetStatus, /rate limit/i.test(message)
+        ? "Too many emails just now. Try again in a minute."
+        : "The link could not be sent. Check the email and try again.", "error");
+      return;
+    }
+    // Supabase answers the same way whether or not the email has an account,
+    // and so does this line: the page is not an address book.
+    setStatus(el.resetStatus, "If that email has an account, the link is on its way. Check your inbox.", "success");
+  });
+
+  el.recoveryForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var password = String(el.newPassword.value || "");
+    if (password.length < 8) {
+      setStatus(el.recoveryStatus, "Use at least 8 characters.", "error");
+      return;
+    }
+    setStatus(el.recoveryStatus, "Saving…");
+    setBusy(el.recoveryForm, true);
+    var result = await client.auth.updateUser({ password: password });
+    setBusy(el.recoveryForm, false);
+    if (result.error) {
+      var said = String(result.error.message || "");
+      setStatus(el.recoveryStatus, /password/i.test(said) ? said : "Could not save that password. Try again.", "error");
+      return;
+    }
+    recovering = false;
+    el.newPassword.value = "";
+    setStatus(el.recoveryStatus, "");
+    // The recovery token rode in on the URL fragment; it is spent now.
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    showSession(currentSession);
+  });
 
   el.loginForm.addEventListener("submit", async function (event) {
     event.preventDefault();
@@ -440,6 +532,7 @@
     // Same ordering trap as the sign-in form above.
     var password = new FormData(el.passwordSignupForm).get("password");
     setBusy(el.passwordSignupForm, true);
+    signingUp = !pendingCode;
     var result = await client.auth.signUp({
       email: approvedEmail,
       password: String(password || ""),
@@ -447,6 +540,7 @@
     });
     setBusy(el.passwordSignupForm, false);
     if (result.error) {
+      signingUp = false;
       setStatus(el.signupStatus, shared.safeMessage(result.error, "Could not create the account."), "error");
       return;
     }
@@ -457,10 +551,13 @@
         showSession(result.data.session);
         return;
       }
-      // Otherwise setting up the first project is next, and it has its own page.
-      window.location.href = "/engelbart/setup";
+      // Otherwise setting up the first project is next, and it has its own
+      // page. The auth listener has usually already sent them; this is for a
+      // session that arrives only in the reply.
+      leaveForSetup();
       return;
     }
+    signingUp = false;
     setStatus(el.signupStatus, "Check your email to confirm the account; the link opens your project setup.", "success");
   });
 
@@ -477,6 +574,7 @@
   el.signOut.addEventListener("click", async function () {
     await client.auth.signOut();
     pairingResolved = false;
+    recovering = false;
     credentials = null;
     keyVisible = false;
     provisionedUser = "";
@@ -508,7 +606,10 @@
       client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
         auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
       });
-      client.auth.onAuthStateChange(function (_event, session) { showSession(session); });
+      client.auth.onAuthStateChange(function (event, session) {
+        if (event === "PASSWORD_RECOVERY") recovering = true;
+        showSession(session);
+      });
       var sessionResult = await client.auth.getSession();
       if (sessionResult.error) throw sessionResult.error;
       showSession(sessionResult.data.session);

@@ -114,12 +114,11 @@ test("analyze sends the PDF as a document block where the paper tag sits, and bi
   assert.ok(signal instanceof AbortSignal);
   const blocks = body.messages[0].content;
   const doc = blocks.findIndex((b) => b.type === "document");
-  assert.ok(doc > 0 && doc < blocks.length - 1);
+  assert.equal(doc, 1, "the paper is the cached prefix");
   assert.equal(blocks[doc].source.media_type, "application/pdf");
-  assert.match(blocks[doc - 1].text, /<phd_student_paper>\s*$/);
-  assert.match(blocks[doc + 1].text, /^\s*<\/phd_student_paper>/);
+  assert.match(blocks[doc + 1].text, /<phd_student_paper>\s*\(the paper attached above\)\s*<\/phd_student_paper>/);
   assert.match(blocks[doc + 1].text, /https:\/\/x\.org[\s\S]*page text/);
-  assert.match(blocks[0].text, /I wouldn't know where to start/);
+  assert.match(blocks[doc + 1].text, /I wouldn't know where to start/);
 });
 
 test("analyze with text instead of a PDF sends one text block", async () => {
@@ -129,8 +128,10 @@ test("analyze with text instead of a PDF sends one text block", async () => {
   await OM.analyze({ familiarityLabel: "f", familiarityDesc: "", depthLabel: "d", depthDesc: "",
     pdfText: "paper words", urls: [] }, CREDS, { fetchImpl: modelSaying(reply, calls) });
   const blocks = calls[0].body.messages[0].content;
-  assert.equal(blocks.length, 1);
-  assert.match(blocks[0].text, /<phd_student_paper>\s*paper words\s*<\/phd_student_paper>/);
+  assert.equal(blocks.length, 2);
+  assert.match(blocks[0].text, /<paper_text>\s*paper words\s*<\/paper_text>/);
+  assert.deepEqual(blocks[0].cache_control, { type: "ephemeral" });
+  assert.match(blocks[1].text, /<phd_student_paper>\s*\(the paper attached above\)/);
 });
 
 test("page text cannot rewrite the prompt it is spliced into", async () => {
@@ -181,4 +182,96 @@ test("readerBlock names the person, the register rule, and what they already kno
   assert.match(text, /PyTorch: can use it \(75\)/i);
   assert.match(text, new RegExp(P.DEPTHS[1].rule.split("\n")[0].slice(0, 20)));
   assert.deepEqual(P.readerBlock({}), []);
+});
+
+test("assets are bounded, links must be http(s), children only one level deep and carry a why", () => {
+  const out = OM.normalizeAssets({ assets: [
+    { title: "Pose viewer", description: "d".repeat(1200), one_liner: "a viewer", type: "demo",
+      links: [{ kind: "live_demo", url: "https://x.org/demo" }, { kind: "weird", url: "ftp://nope" }, { kind: "docs", url: "javascript:alert(1)" }],
+      what_you_can_do_with_it: "play", availability: "usable",
+      children: [{ title: "Toy", type: "dataset", why: "small first", links: [{ kind: "download", url: "https://x.org/toy" }],
+        children: [{ title: "too deep", type: "dataset" }] }] },
+    { title: "", type: "dataset" },
+    { title: "Lib", type: "spaceship", availability: "sort of" },
+  ] });
+  assert.equal(out.assets.length, 2);
+  assert.equal(out.assets[0].description.length, 900);
+  assert.equal(out.assets[0].one_liner, "a viewer");
+  assert.deepEqual(out.assets[0].links, [{ kind: "live_demo", url: "https://x.org/demo" }]);
+  assert.equal(out.assets[0].children.length, 1);
+  assert.equal(out.assets[0].children[0].why, "small first");
+  assert.equal(out.assets[0].children[0].children, undefined);
+  assert.equal(out.assets[1].type, "other");
+  assert.equal(out.assets[1].availability, "unknown");
+  assert.equal(OM.normalizeAssets(null), null);
+  assert.deepEqual(OM.briefOf(out.assets)[0], { title: "Pose viewer", type: "demo", one_liner: "a viewer" });
+  const lev = OM.normalizeLeveled({ locus: "geometry", sticky: ["poses", "", "angles"], assets: [{ title: "A" }] });
+  assert.deepEqual(lev.sticky, ["poses", "angles"]);
+  assert.equal(lev.locus, "geometry");
+});
+
+test("a brainstorm turn is prose plus at most one card; a direction needs a title; subgoals come in threes", () => {
+  const q = OM.normalizeBrainstorm({ say: "Hi", card: "questions", interest: "poses",
+    questions: { eyebrow: "first", items: [
+      { id: "a", type: "mcq", title: "Worked with pose data?", options: ["Never", { label: "Some", why: "w" }] },
+      { id: "b", type: "select_all", title: "one option only", options: ["x"] },
+      { type: "open", title: "Tell me", placeholder: "the story…" }, { title: "" }, { id: "e", type: "free", title: "fourth" }] } });
+  assert.equal(q.card, "questions");
+  assert.equal(q.questions.items.length, 3);
+  assert.equal(q.questions.items[0].options[1].why, "w");
+  assert.equal(q.questions.items[1].type, "free", "a choice with one option becomes a line");
+  assert.equal(q.questions.items[2].id, "q3");
+  assert.equal(q.interest, "poses");
+  const f = OM.normalizeBrainstorm({ say: "", card: "focus", focus: { title: "Which?", options: [{ label: "A" }, { label: "B" }] } });
+  assert.equal(f.card, "focus");
+  assert.equal(OM.normalizeBrainstorm({ say: "", card: "focus", focus: { options: [{ label: "A" }] } }), null);
+  assert.equal(OM.normalizeBrainstorm({ say: "Just prose", card: "offer" }).card, "none");
+  assert.equal(OM.normalizeDirection({ title: "" }), null);
+  assert.deepEqual(OM.normalizeDirection({ title: "Pose to angles", uses: ["A", 3, ""], what_you_would_make: "w" }).uses, ["A"]);
+  assert.equal(OM.normalizeSubgoals({ subgoals: [{ label: "a" }, { label: "b" }] }), null);
+  assert.equal(OM.normalizeSubgoals({ subgoals: [{ label: "a" }, { label: "b" }, { label: "c" }, { label: "d" }] }).subgoals.length, 3);
+});
+
+test("the asset hunt shares the paper prefix with analyze, asks for web search, and falls back without it", async () => {
+  const calls = [];
+  const reply = { assets: [{ title: "Pose viewer", type: "demo", links: [{ kind: "live_demo", url: "https://x.org" }] }] };
+  const out = await OM.assets({ pdfBase64: "JVBERi0=" }, CREDS, { fetchImpl: modelSaying(reply, calls) });
+  assert.equal(out.searched, true);
+  assert.equal(out.assets[0].title, "Pose viewer");
+  const body = calls[0].body;
+  assert.equal(body.tools[0].type, "web_search_20250305");
+  assert.equal(body.messages[0].content[1].type, "document");
+  assert.deepEqual(body.messages[0].content[1].cache_control, { type: "ephemeral" });
+  assert.equal(body.messages[0].content[0].text, P.PAPER_PREFIX);
+
+  let n = 0;
+  const flaky = async (url, init) => {
+    n += 1;
+    if (n === 1) return { ok: false, status: 400, async json() { return { error: { message: "tools not supported" } }; } };
+    return modelSaying(reply)(url, init);
+  };
+  const again = await OM.assets({ pdfBase64: "JVBERi0=" }, CREDS, { fetchImpl: flaky });
+  assert.equal(again.searched, false);
+  assert.equal(n, 2);
+});
+
+test("analyze begins with the same cached paper prefix", async () => {
+  const calls = [];
+  const reply = { title: "T", one_liner: "o", date: null, areas: [
+    { area: "A", questions: fiveQuestions() }, { area: "B", questions: fiveQuestions() }] };
+  await OM.analyze({ familiarityLabel: "f", familiarityDesc: "", depthLabel: "d", depthDesc: "",
+    pdfBase64: "JVBERi0=", urls: [] }, CREDS, { fetchImpl: modelSaying(reply, calls) });
+  const blocks = calls[0].body.messages[0].content;
+  assert.equal(blocks[0].text, P.PAPER_PREFIX);
+  assert.equal(blocks[1].type, "document");
+  assert.deepEqual(blocks[1].cache_control, { type: "ephemeral" });
+  assert.match(blocks[2].text, /<phd_student_paper>[\s\S]*the paper attached above[\s\S]*<\/phd_student_paper>/);
+});
+
+test("resourcesBlock lists assets and their children, or nothing", () => {
+  assert.deepEqual(P.resourcesBlock([]), []);
+  const lines = P.resourcesBlock([{ title: "Pose viewer", type: "demo", what_you_can_do_with_it: "play",
+    links: [{ kind: "live_demo", url: "https://x.org" }], children: [{ title: "Toy", type: "dataset", description: "small", links: [] }] }]);
+  assert.match(lines.join("\n"), /Pose viewer \(demo\): play <https:\/\/x\.org>/);
+  assert.match(lines.join("\n"), /start with Toy \(dataset\): small/);
 });

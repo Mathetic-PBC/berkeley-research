@@ -1,6 +1,6 @@
 /* Setting up a first project, after an account exists.
  *
- * Ten steps, one row on the server: every Continue writes what was typed,
+ * Twelve steps, one row on the server: every Continue writes what was typed,
  * so a closed tab loses nothing and a reload redraws at the stored step.
  * The paper is read in the background from the moment it is submitted;
  * the reader keeps going and meets its questions two steps later.
@@ -18,7 +18,8 @@
   var SETUP_API = "/api/engelbart-setup";
   var DEVICE_API = "/api/engelbart-device";
 
-  var LABELS = ["Name", "Year", "Major", "Explanations", "Paper", "Project", "Topics", "Details", "Focus", "Todos"];
+  var LABELS = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Topics", "Brainstorm", "Assets", "Direction", "Subgoals", "Todos"];
+  var DONE = LABELS.length;  // the step after the last label
   var YEARS = ["First year", "Second year", "Third year", "Fourth year"];
   var MAJORS = ["Computer Science", "Electrical Engineering & Computer Sciences", "Data Science", "Cognitive Science",
     "Molecular & Cell Biology", "Bioengineering", "Mechanical Engineering", "Applied Mathematics", "Statistics", "Physics",
@@ -54,8 +55,11 @@
     screen: "loading",  // loading | signin | flow | error
     row: null,          // the onboarding row as the server last returned it
     cals: [],           // calibration rows
+    turns: [],          // the brainstorm transcript, as stored
     credit: null,
     step: 0,            // the step on screen (row.step is the furthest reached)
+    base: 0,            // 4 once the profile steps are behind them: Paper is then the first of six
+    test: false,        // ?test=true: every step is a click away, and the record can be cleared
     ui: {
       yearOther: false, yearText: "",
       depthPos: 0.25, depthTouched: false,
@@ -64,7 +68,10 @@
       draft: "",
       fIdx: 0, fam: {}, fAnswers: {}, followUp: null, lastGrade: null,
       qIdx: 0, goalPick: "", goalOther: "", goalOtherOn: false, todos: [], newTodo: "", projName: "",
-      askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null
+      askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null,
+      bs: { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false },   // brainstorm
+      as: { open: {}, picked: "", threads: {}, drafts: {}, chatOpen: {}, thinking: {} },     // assets
+      change: { open: false, text: "", thinking: false, log: [] }                             // direction / subgoals
     },
     busy: "",           // what is being generated, for the indicator
     error: ""
@@ -114,11 +121,17 @@
       // was read from may be older than what this tab already knows.
       var was = st.row;
       st.row = out.onboarding;
-      if (was && (was.analysis_status === "done" || was.analysis_status === "error") && st.row.analysis_status !== "done") {
-        st.row.analysis_status = was.analysis_status; st.row.analysis = was.analysis; st.row.analysis_error = was.analysis_error;
-      }
+      if (was) keepFinished(was, st.row, "analysis"), keepFinished(was, st.row, "assets"), keepFinished(was, st.row, "leveled");
       return out;
     });
+  }
+
+  function keepFinished(was, now, name) {
+    var status = name + "_status", error = name + "_error";
+    if ((was[status] === "done" || was[status] === "error") && now[status] !== "done") {
+      now[status] = was[status]; now[name] = was[name]; now[error] = was[error];
+      if (name === "assets") now.assets_brief = was.assets_brief;
+    }
   }
 
   function go(n) {
@@ -132,6 +145,7 @@
   function adopt(out) {
     st.row = out.onboarding;
     st.cals = out.calibrations || [];
+    st.turns = out.turns || [];
     if (out.credit) st.credit = out.credit;
     var r = st.row;
     st.ui.yearOther = !!r.year && YEARS.indexOf(r.year) < 0;
@@ -143,7 +157,29 @@
     if (typeof r.paper_familiarity === "number") st.ui.pfam = (r.paper_familiarity + 1) / 5;
     st.ui.draft = r.project_draft || "";
     st.ui.goalPick = r.goal_chosen || ""; st.ui.todos = (r.todos || []).slice(); st.ui.projName = r.project_name || "";
-    st.step = r.status === "created" ? 10 : Math.min(9, r.step || 0);
+    // The profile is asked once. A member who has finished a setup before
+    // starts the next one at the paper, and the rail counts from there.
+    st.base = out.profile_reused ? 4 : 0;
+    st.step = r.status === "created" ? DONE : Math.max(st.base, Math.min(DONE - 1, r.step || 0));
+  }
+
+  // What only this tab knew about the record it is leaving behind.
+  function forgetUi() {
+    st.ui.fam = {}; st.ui.fAnswers = {}; st.ui.followUp = null; st.ui.lastGrade = null; st.ui.fIdx = 0; st.ui.qIdx = 0;
+    st.ui.goalPick = ""; st.ui.goalOther = ""; st.ui.goalOtherOn = false; st.ui.todos = []; st.ui.newTodo = ""; st.ui.projName = "";
+    st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.draft = "";
+    st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false };
+    st.ui.as = { open: {}, picked: "", threads: {}, drafts: {}, chatOpen: {}, thinking: {} };
+    st.ui.change = { open: false, text: "", thinking: false, log: [] };
+    st.turns = [];
+    st.ui.yearOther = false; st.ui.yearText = ""; st.ui.depthPos = 0.25; st.ui.depthTouched = false;
+    st.ui.plink = ""; st.ui.prepo = ""; st.ui.pfam = 0.2; st.ui.psending = false; st.ui.popen = null;
+  }
+
+  // The paper is the fifth step of ten on a first setup, and the first of six
+  // once the profile is behind them: the count on screen says which.
+  function count(i, suffix) {
+    return "Step " + (i - st.base + 1) + " of " + (DONE - st.base) + (suffix ? " \u00b7 " + suffix : "");
   }
 
   // --- the rail ----------------------------------------------------------------
@@ -152,27 +188,41 @@
   function railValues() {
     var r = st.row || {}, u = st.ui;
     return [str(r.name), str(r.year), str(r.major), r.depth ? DEPTHS[depthIndex()].label : "",
-      u.pfile ? trunc(u.pfile.name, 26) : "", trunc(str(r.project_draft), 26),
-      r.analysis && st.step > 6 ? r.analysis.areas.length + " areas" : "",
-      r.details && st.step > 7 ? Object.keys(r.details.answers || {}).length + " of " + r.details.questions.length + " answered" : "",
-      st.step > 8 ? trunc(str(r.goal_chosen), 26) : "", st.step >= 10 ? (r.todos || []).length + " todos" : ""];
+      u.pfile ? trunc(u.pfile.name, 26) : "", st.step > 5 ? "Connected" : "",
+      r.assessment && st.step > 6 ? r.assessment.areas.length + " areas" : "",
+      st.step > 7 ? trunc(str(r.interest) || "Brainstormed", 26) : "",
+      r.asset_chosen && st.step > 8 ? trunc(str(r.asset_chosen.title), 26) : "",
+      r.direction && st.step > 9 ? trunc(str(r.direction.title), 26) : "",
+      r.subgoals && st.step > 10 ? r.subgoals.length + " pieces" : "",
+      st.step >= DONE ? (r.todos || []).length + " todos" : ""];
   }
 
   function railView() {
     var rail = el("div", "ob-rail");
     rail.appendChild(el("div", "ob-brand", "Engelbart"));
-    rail.appendChild(el("div", "ob-caption", "Setting up your first project"));
-    var steps = el("div", "ob-steps");
+    rail.appendChild(el("div", "ob-caption", st.base ? "Setting up another project" : "Setting up your first project"));
     var vals = railValues(), reach = (st.row && st.row.step) || 0;
+    if (st.base) {
+      // The four answers the rail no longer walks through, and the way back to them.
+      var profile = el("div", "ob-profile");
+      profile.appendChild(el("div", "ob-profile-line", vals.slice(0, 4).filter(Boolean).join(" \u00b7 ")));
+      var change = el("button", "ob-link", "Change who this is for"); change.type = "button";
+      profile.appendChild(on(change, "click", function () { st.base = 0; go(0); }));
+      rail.appendChild(profile);
+    }
+    var steps = el("div", "ob-steps");
     LABELS.forEach(function (label, i) {
+      if (i < st.base) return;
       var wrap = el("div");
-      if (i > 0) wrap.appendChild(attr(el("span", "ob-con"), "data-on", st.step >= i ? "1" : "0"));
-      var done = !!vals[i] && st.step > i, active = st.step === i, reachable = i <= reach && st.step < 10;
+      if (i > st.base) wrap.appendChild(attr(el("span", "ob-con"), "data-on", st.step >= i ? "1" : "0"));
+      var done = !!vals[i] && st.step > i, active = st.step === i;
+      // In test mode every step is a click away, whatever the record holds.
+      var reachable = st.test || (i <= reach && st.step < DONE);
       var row = el("div", "ob-row");
       attr(row, "data-active", active ? "1" : "0");
       attr(row, "data-reach", reachable && !active ? "1" : "0");
       if (reachable && !active) on(row, "click", function () { go(i); });
-      var circle = el("span", "ob-circle", done ? "✓" : String(i + 1));
+      var circle = el("span", "ob-circle", done ? "✓" : String(i - st.base + 1));
       attr(circle, "data-state", done ? "done" : active ? "now" : "todo");
       row.appendChild(circle);
       var text = el("span", "ob-grow");
@@ -184,13 +234,42 @@
       row.appendChild(text); wrap.appendChild(row); steps.appendChild(wrap);
     });
     rail.appendChild(steps);
-    if (st.row && st.row.analysis_status === "running") {
+    var r0 = st.row || {};
+    var working = r0.analysis_status === "running" ? "Reading your paper in the background"
+      : r0.assets_status === "running" ? "Finding what the paper rests on"
+      : r0.leveled_status === "running" ? "Fitting the resources to you" : "";
+    if (working) {
       var reading = el("div", "ob-reading");
       reading.appendChild(dots());
-      reading.appendChild(el("span", "", "Reading your paper in the background"));
+      reading.appendChild(el("span", "", working));
       rail.appendChild(reading);
     }
+    if (st.test) rail.appendChild(testBar());
     return rail;
+  }
+
+  // --- test mode -----------------------------------------------------------------
+  //
+  // ?test=true on the URL. The rail's steps all answer a click, and two
+  // buttons clear the record on the server: this project, or everything the
+  // account has said here (the account itself stays).
+
+  function testBar() {
+    var bar = el("div", "ob-test");
+    bar.appendChild(el("div", "ob-test-cap", "Test mode"));
+    bar.appendChild(el("div", "ob-hint", "Every step above is clickable."));
+    [{ label: "Clear this project", scope: "project", ask: "Delete this setup and start a new one?" },
+      { label: "Clear everything", scope: "all", ask: "Delete every setup, its answers, and the saved profile? The account stays." }]
+      .forEach(function (b) {
+        var bt = el("button", "ob-ghost", b.label); bt.type = "button";
+        on(bt, "click", function () {
+          if (window.confirm && !window.confirm(b.ask)) return;
+          st.busy = "reset"; draw();
+          api("reset", { scope: b.scope }).then(function (o) { st.busy = ""; forgetUi(); adopt(o); draw(); }).catch(fail);
+        });
+        bar.appendChild(bt);
+      });
+    return bar;
   }
 
   function dots() {
@@ -276,7 +355,19 @@
 
   // --- drawing -----------------------------------------------------------------
 
+  // A redraw within a step must not look like a new page: the entry animation
+  // is for arriving, and every click, pick and slider release redraws. The
+  // stylesheet reads this flag and holds the animation while it is set.
+  var drawn = { screen: "", step: -1 };
+
+  var lastContent = null;
+
   function draw() {
+    var still = drawn.screen === st.screen && drawn.step === st.step;
+    drawn = { screen: st.screen, step: st.step };
+    if (lastContent && window.EngelbartInstall) window.EngelbartInstall.stop(lastContent);
+    app.setAttribute("data-still", still ? "1" : "0");
+    app.setAttribute("data-test", st.test ? "1" : "0");
     app.textContent = "";
     if (st.screen === "loading") { app.appendChild(el("div", "ob-wait", st.error || "Waking up…")); return; }
     if (st.screen === "signin") { window.location.href = "/engelbart/signin"; return; }
@@ -284,8 +375,10 @@
     app.appendChild(railView());
     var main = el("div", "ob-main"), body = el("div", "ob-body"), content = el("div", "ob-content");
     content.id = "content";
-    var drawers = [drawName, drawYear, drawMajor, drawDepth, drawPaper, drawProject, drawTopics, drawDetails, drawFocus, drawTodos, drawDone];
-    drawers[st.step](content);
+    lastContent = content;
+    var drawers = [drawName, drawYear, drawMajor, drawDepth, drawPaper, drawInstall, drawTopics, drawBrainstorm, drawAssets,
+      drawDirection, drawSubgoals, drawTodos, drawDone];
+    drawers[Math.min(st.step, drawers.length - 1)](content);
     if (st.error) content.appendChild(el("div", "ob-err", st.error));
     body.appendChild(content);
     if (typeof askPanel === "function") askPanel(body);
@@ -338,7 +431,7 @@
 
   // 0 Name
   function drawName(content) {
-    var box = stepBox(content, "Step 1 of 10", "What is your name?");
+    var box = stepBox(content, count(0), "What is your name?");
     var name = str(st.row.name);
     var next = function () { if (!name.trim()) return; save(1, { name: name.trim() }).then(function () { go(1); }).catch(fail); };
     // The button exists before the field that enables it can be typed into.
@@ -351,7 +444,7 @@
 
   // 1 Year
   function drawYear(content) {
-    var box = stepBox(content, "Step 2 of 10", "What year are you?");
+    var box = stepBox(content, count(1), "What year are you?");
     var opts = el("div", "ob-opts");
     YEARS.forEach(function (label) {
       opts.appendChild(option(label, !st.ui.yearOther && st.row.year === label, function () {
@@ -373,7 +466,7 @@
 
   // 2 Major
   function drawMajor(content) {
-    var box = stepBox(content, "Step 3 of 10", "What is your major?");
+    var box = stepBox(content, count(2), "What is your major?");
     var major = str(st.row.major);
     var next = function () { if (!major.trim()) return; save(3, { major: major.trim() }).then(function () { go(3); }).catch(fail); };
     var seeds = el("div", "ob-seeds");
@@ -402,7 +495,7 @@
 
   // 3 Explanations
   function drawDepth(content) {
-    var box = stepBox(content, "Step 4 of 10", "How technical should explanations be?");
+    var box = stepBox(content, count(3), "How technical should explanations be?");
     var panel = el("div", "ob-panel");
     panel.appendChild(slider({ stops: DEPTHS, pos: st.ui.depthPos, grid: true,
       onCommit: function (p) {
@@ -439,7 +532,7 @@
   }
 
   function drawPaper(content) {
-    var box = stepBox(content, "Step 5 of 10", "Which paper are you building on?");
+    var box = stepBox(content, count(4), "Which paper are you building on?");
     var card = el("div", "ob-card"), stack = el("div", "ob-stack"), p = st.ui.pfile;
     if (!p) {
       var drop = attr(el("label", "ob-drop"), "data-over", st.ui.pover ? "1" : "0");
@@ -502,18 +595,16 @@
         }
         st.row.analysis_status = "running";
         st.row.analysis_error = "";
-        // Not awaited: the reader has left this step by the time it answers,
-        // so it reports into the rail and never through fail().
-        api("analysis", { run: true }).then(function (read) {
-          // A run the server superseded was reading a paper this row no longer
-          // has: it answers about nothing, so nothing here changes.
-          if (read.analysis_status === "superseded") return;
-          st.row.analysis_status = read.analysis_status;
-          if (read.analysis) st.row.analysis = read.analysis;
-          st.row.analysis_error = read.analysis_error || "";
-          draw();
-        }).catch(function (e) {
+        st.row.assets_status = "running";
+        st.row.assets_error = "";
+        // Neither awaited: the reader has left this step by the time they
+        // answer, so they report into the rail and never through fail().
+        // The reading and the hunt run side by side.
+        api("analysis", { run: true }).then(readingUpdate).catch(function (e) {
           st.row.analysis_status = "error"; st.row.analysis_error = e.message; draw();
+        });
+        api("assets", { run: true }).then(huntUpdate).catch(function (e) {
+          st.row.assets_status = "error"; st.row.assets_error = e.message; draw();
         });
         return save(5, {}).then(function () { go(5); });
       }).catch(function (e) { st.ui.psending = false; fail(e); });
@@ -533,14 +624,29 @@
 
   function hostOf(u) { try { return new URL(/^https?:/.test(u) ? u : "https://" + u).hostname.replace(/^www\./, ""); } catch (e) { return u; } }
 
-  // 5 Project
-  function drawProject(content) {
-    var box = stepBox(content, "Step 6 of 10", "What's your project?");
-    var next = function () { if (!st.ui.draft.trim()) return; save(6, { project_draft: st.ui.draft.trim() }).then(function () { go(6); }).catch(fail); };
-    var acts = el("div", "ob-actions"), button = cta("Continue", !st.ui.draft.trim(), next);
-    box.appendChild(field(st.ui.draft, "e.g. a command-line tool that reads a paper and turns its method into runnable code",
-      function (v) { st.ui.draft = v; button.disabled = !v.trim(); }, next, true));
-    acts.appendChild(button); box.appendChild(acts);
+  function huntUpdate(read) {
+    // A run the server superseded was hunting for a paper this row no longer
+    // has: it answers about nothing, so nothing here changes.
+    if (!read || read.assets_status === "superseded") return;
+    st.row.assets_status = read.assets_status;
+    if (read.assets) st.row.assets = read.assets;
+    if (read.assets_brief) st.row.assets_brief = read.assets_brief;
+    st.row.assets_error = read.assets_error || "";
+    draw();
+  }
+
+  // 5 Install -- the connect code is issued here, and the module draws the
+  // OS pick, the variant pick, and the steps with the keyboard.
+  function drawInstall(content) {
+    if (!st.ui.made) {
+      if (st.busy !== "code") { st.busy = "code"; issueCode().then(function () { st.busy = ""; draw(); }).catch(fail); }
+      var box = stepBox(content, count(5), "Install Engelbart on your machine");
+      generating(box, "Getting your connect code"); return;
+    }
+    if (!window.EngelbartInstall) { stepBox(content, count(5), "Install Engelbart on your machine"); return; }
+    window.EngelbartInstall.render(content, { variant: "install", code: st.ui.made.code, expiresInSeconds: st.ui.made.expiresInSeconds,
+      onDone: function () { save(6, {}).then(function () { go(6); }).catch(fail); },
+      onNewCode: function () { st.ui.made = null; draw(); } });
   }
 
   function generating(content, text) { var w = el("div", "ob-wait"); w.appendChild(dots()); w.appendChild(el("div", "ob-wait-t", text)); content.appendChild(w); }
@@ -587,7 +693,7 @@
       startReading({ run: true });
     }
     if (r.analysis_status === "error") {
-      var box = stepBox(content, "Step 7 of 10", "The paper could not be read");
+      var box = stepBox(content, count(6), "The paper could not be read");
       box.appendChild(el("div", "ob-sub", r.analysis_error || "Something went wrong while reading it."));
       var acts = el("div", "ob-actions");
       acts.appendChild(cta("Try again", false, function () { startReading({ retry: true }); draw(); }));
@@ -601,7 +707,7 @@
     }
     var a = r.analysis, areas = a.areas, fi = Math.min(st.ui.fIdx || 0, areas.length - 1), area = areas[fi];
     var box2 = el("div", "ob-step");
-    box2.appendChild(el("div", "ob-count", "Step 7 of 10 · Topics"));
+    box2.appendChild(el("div", "ob-count", count(6, "Topics")));
     box2.appendChild(el("div", "ob-title", "How familiar are you with what the paper leans on?"));
     var paper = el("div", "ob-paper"); paper.appendChild(el("div", "ob-paper-icon"));
     var pt = el("div", "ob-grow"), line = el("div", "ob-paper-line");
@@ -618,8 +724,10 @@
     var q = area.questions.filter(function (x) { return x.level === level; })[0] || area.questions[0];
     var key = fi + ":" + level, answer = st.ui.fAnswers[key] || "";
     // Only the question is shown; the sample answers in the analysis stay unseen.
+    // Moving the slider on a follow-up drops the follow-up: they answer the
+    // ladder's own question at the level they moved to instead.
     card.appendChild(slider({ stops: LADDER, pos: famOf(fi), ends: ["Beginner", "Expert"],
-      onCommit: function (v) { if (follow) return; st.ui.fam[fi] = v; draw(); } }));
+      onCommit: function (v) { st.ui.followUp = null; st.ui.lastGrade = null; st.ui.fam[fi] = v; draw(); } }));
     var qbox = el("div");
     qbox.appendChild(el("div", "ob-q-label", follow ? "One more, at the level your answer showed" : "Question"));
     qbox.appendChild(el("div", "ob-q", q.question));
@@ -628,15 +736,23 @@
     on(input, "input", function () { st.ui.fAnswers[key] = input.value; ab.setAttribute("data-filled", input.value.trim() ? "1" : "0"); next.disabled = !input.value.trim() || !!st.busy; });
     on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); submit(); } });
     ab.appendChild(input); qbox.appendChild(ab);
-    var lastGrade = st.ui.lastGrade && st.ui.lastGrade.area === fi ? st.ui.lastGrade : null;
-    if (lastGrade) { var g = el("div", "ob-grade"); g.appendChild(el("span", "tag", "Graded")); g.appendChild(el("span", "", lastGrade.text)); qbox.appendChild(g); }
+    // The grade is kept, never shown: the follow-up is the only sign of it.
     card.appendChild(qbox); box2.appendChild(card);
 
     var last = fi === areas.length - 1;
     function labelFor(lvl) { var hit = LADDER.filter(function (l) { return l.level === lvl; })[0]; return hit ? hit.label.toLowerCase() : String(lvl); }
     function advance() {
       st.ui.followUp = null; st.ui.lastGrade = null;
-      if (last) save(7, {}).then(function () { go(7); }).catch(fail); else { st.ui.fIdx = fi + 1; draw(); }
+      if (!last) { st.ui.fIdx = fi + 1; draw(); return; }
+      // The last answer compiles the assessment; the fitting of the resources
+      // to them starts at once and reports into the brainstorm.
+      st.busy = "compiling"; draw();
+      api("topics_done").then(function (out) {
+        st.busy = "";
+        st.row.assessment = out.assessment;
+        startLeveled();
+        go(7);
+      }).catch(fail);
     }
     function submit() {
       var said = (st.ui.fAnswers[key] || "").trim(); if (!said || st.busy) return;
@@ -647,7 +763,7 @@
         st.cals.push({ area_index: fi, question_level: level, answered_at: new Date().toISOString(), graded_level: out.graded_level });
         if (out.follow_up && !follow) {
           st.ui.followUp = { area: fi, question_level: out.follow_up.question_level };
-          st.ui.lastGrade = { area: fi, text: "Your answer read as “" + labelFor(out.graded_level) + "”" + (out.grade_rationale ? " — " + out.grade_rationale : "") };
+          st.ui.lastGrade = { area: fi, level: out.graded_level };
           draw(); return;
         }
         advance();
@@ -663,101 +779,451 @@
       on(d, "click", function () { st.ui.followUp = null; st.ui.fIdx = i; draw(); }); pd.appendChild(d);
     });
     nav.appendChild(pd);
-    var next = cta(st.busy === "grading" ? "Grading…" : last && !follow ? "On to the project" : "Next", !answer.trim() || !!st.busy, submit);
+    var next = cta(st.busy === "grading" ? "Sending…" : st.busy === "compiling" ? "One moment…" : last && !follow ? "On to brainstorming" : "Next", !answer.trim() || !!st.busy, submit);
     nav.appendChild(next); box2.appendChild(nav); content.appendChild(box2);
   }
 
-  // --- 7 Details ---------------------------------------------------------------
+  // --- the leveled resources, fitted to them in the background ------------------
+  //
+  // Started when the topics are answered. Until the hunt has finished it is
+  // told to wait; the brainstorm asks again every few seconds, and the
+  // "ready to plan?" card appears once it is done.
 
-  function drawDetails(content) {
-    var r = st.row;
-    if (!r.details || !r.details.questions) {
-      if (!st.busy) { st.busy = "details"; api("details").then(function (d) { st.busy = ""; st.row.details = d; st.ui.qIdx = 0; draw(); }).catch(fail); }
-      generating(content, "Writing your questions"); return;
-    }
-    var qs = r.details.questions, qi = Math.min(st.ui.qIdx || 0, qs.length - 1), q = qs[qi], answers = r.details.answers || {};
-    var ans = answers[q.id];
-    var box = el("div", "ob-step");
-    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", "Step 8 of 10 · Details")); head.appendChild(el("span", "ob-count", (qi + 1) + " of " + qs.length)); box.appendChild(head);
-    if (r.details.intro) { var intro = el("div", "ob-intro"); intro.appendChild(el("span", "tag", "Taken into account")); intro.appendChild(el("span", "t", r.details.intro)); box.appendChild(intro); }
-    box.appendChild(el("div", "ob-question", q.title));
-    if (q.hint) box.appendChild(el("div", "ob-sub", q.hint));
-    var lastQ = qi >= qs.length - 1;
-    function empty(v) { return v == null || v === "" || (Array.isArray(v) && !v.length) || (typeof v === "string" && !v.trim()); }
-    function persist(value) {
-      var f = {}; f[q.id] = value == null ? null : value;
-      return save(lastQ ? 8 : 7, { details_answers: f }).then(function () { if (lastQ) go(8); else { st.ui.qIdx = qi + 1; draw(); } }).catch(fail);
-    }
-    function setAns(v) { answers[q.id] = v; r.details.answers = answers; draw(); }
-    var nextBtn;
-    if (q.kind === "short") {
-      var draft = typeof ans === "string" ? ans : "";
-      box.appendChild(field(draft, q.placeholder || "", function (v) { draft = v; nextBtn.disabled = !v.trim(); }, function () { if (draft.trim()) persist(draft.trim()); }, true));
-      nextBtn = cta(lastQ ? "Pick a focus" : "Next", !draft.trim(), function () { if (draft.trim()) persist(draft.trim()); });
-    } else {
-      var opts = el("div", "ob-opts"), multi = q.kind === "multi", cur = Array.isArray(ans) ? ans : [];
-      (q.options || []).forEach(function (label) {
-        var on_ = multi ? cur.indexOf(label) >= 0 : ans === label;
-        opts.appendChild(option(label, on_, function () { if (multi) setAns(on_ ? cur.filter(function (x) { return x !== label; }) : cur.concat([label])); else setAns(on_ ? null : label); }, multi));
+  var levelTimer = null;
+  function leveledUpdate(out) {
+    if (!out || out.leveled_status === "superseded") return;
+    if (out.assets_status) st.row.assets_status = out.assets_status;
+    if (out.assets_error) st.row.assets_error = out.assets_error;
+    if (out.leveled_status === "waiting") { st.row.leveled_status = st.row.leveled_status === "done" ? "done" : "none"; return; }
+    st.row.leveled_status = out.leveled_status;
+    if (out.leveled) st.row.leveled = out.leveled;
+    st.row.leveled_error = out.leveled_error || "";
+  }
+  function startLeveled() {
+    if (!st.row.assessment) return;
+    if (st.row.leveled_status === "done") return;
+    st.row.leveled_status = st.row.assets_status === "done" ? "running" : st.row.leveled_status;
+    api("leveled", { run: true }).then(function (out) { leveledUpdate(out); draw(); }).catch(function (e) {
+      st.row.leveled_status = "error"; st.row.leveled_error = e.message; draw();
+    });
+  }
+  function pollLeveled() {
+    if (levelTimer) return;
+    levelTimer = setInterval(function () {
+      var r = st.row;
+      if (!r || (st.step !== 7 && st.step !== 8) || r.leveled_status === "done") { clearInterval(levelTimer); levelTimer = null; return; }
+      if (r.leveled_status === "running") {
+        api("leveled").then(function (out) { leveledUpdate(out); if (out.leveled_status !== "running") draw(); }).catch(function () {});
+      } else if (r.assets_status === "error" || r.leveled_status === "error") {
+        // Nothing to wait for; the card offers a retry.
+      } else {
+        startLeveled();
+      }
+    }, 6000);
+  }
+
+  // --- 7 Brainstorm ---------------------------------------------------------------
+  //
+  // A conversation, one card at a time, about what in this paper is worth
+  // building on. The transcript is the server's; this draws it and sends
+  // each turn as it is made.
+
+  function sayOf(turn) {
+    // The stored assistant turn is what it said plus what it asked, one line
+    // each; only the prose is shown, the card draws the rest.
+    var text = str(turn.content);
+    var cut = text.indexOf("\n(");
+    return turn.role === "assistant" && cut >= 0 ? text.slice(0, cut) : text;
+  }
+
+  function sendTurn(body) {
+    var bs = st.ui.bs;
+    bs.thinking = true; bs.planAsked = false; st.error = "";
+    // Shown at once; the server writes it in the same call.
+    var said = [];
+    if (body.text) said.push(body.text);
+    if (body.pick) said.push("Focus: " + body.pick + (body.note ? " — " + body.note : ""));
+    if (body.answers) {
+      var last = lastCard();
+      if (last && last.questions) last.questions.items.forEach(function (q) {
+        var a = body.answers[q.id]; if (a == null || a === "" || (Array.isArray(a) && !a.length)) return;
+        said.push(q.title + " " + (Array.isArray(a) ? a.join("; ") : a));
       });
-      box.appendChild(opts);
-      if (multi) box.appendChild(el("div", "ob-multi-note", "Pick all that apply."));
-      nextBtn = cta(lastQ ? "Pick a focus" : "Next", empty(ans), function () { if (!empty(ans)) persist(ans); });
     }
-    var nav = attr(el("div", "ob-nav"), "data-rule", "1");
-    var back = el("button", "ob-arrow", "←"); back.type = "button";
-    if (qi === 0) back.setAttribute("disabled", "disabled"); else on(back, "click", function () { st.ui.qIdx = qi - 1; draw(); });
-    nav.appendChild(back);
-    var pd = el("span", "ob-pdots");
-    qs.forEach(function (_, i) { var d = attr(el("span", "ob-pdot"), "data-on", i === qi ? "1" : "0"); on(d, "click", function () { st.ui.qIdx = i; draw(); }); pd.appendChild(d); });
-    nav.appendChild(pd);
-    var end = el("div", "ob-nav-end");
-    var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
-    end.appendChild(on(skip, "click", function () { persist(null); }));
-    end.appendChild(nextBtn); nav.appendChild(end); box.appendChild(nav);
+    if (said.length) st.turns.push({ role: "user", content: said.join("\n"), card: null, local: true });
+    draw();
+    api("brainstorm", body).then(function (out) {
+      bs.thinking = false; bs.answers = {}; bs.pick = ""; bs.note = ""; bs.text = "";
+      st.turns.push({ id: out.turn_id, role: "assistant", content: out.say, card: { card: out.card, questions: out.questions, focus: out.focus } });
+      if (out.interest) st.row.interest = out.interest;
+      if (out.leveled_status) st.row.leveled_status = out.leveled_status === "done" ? "done" : st.row.leveled_status;
+      draw();
+    }).catch(function (e) { bs.thinking = false; fail(e); });
+  }
+
+  function lastCard() {
+    for (var i = st.turns.length - 1; i >= 0; i--) if (st.turns[i].role === "assistant") return st.turns[i].card || { card: "none" };
+    return null;
+  }
+
+  function drawBrainstorm(content) {
+    var r = st.row, bs = st.ui.bs;
+    if (r.analysis_status !== "done" || !r.assessment) {
+      var w = el("div", "ob-wait"); w.appendChild(dots());
+      w.appendChild(el("div", "ob-wait-t", r.analysis_status !== "done" ? "Still reading your paper" : "Answer the topic questions first"));
+      content.appendChild(w); if (r.analysis_status !== "done") pollAnalysis(); return;
+    }
+    if (!st.turns.length && !bs.thinking) { sendTurn({}); return; }
+    if (r.leveled_status !== "done") pollLeveled();
+    var box = el("div", "ob-step");
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(7, "Brainstorm")));
+    head.appendChild(el("span", "ob-count", r.leveled_status === "done" ? "resources ready" : "fitting resources to you")); box.appendChild(head);
+    box.appendChild(el("div", "ob-title", "What in this paper is worth building on?"));
+    var thread = el("div", "ob-bs");
+    st.turns.forEach(function (t, i) {
+      var row = attr(el("div", "ob-bs-turn"), "data-who", t.role);
+      row.appendChild(el("span", "ob-bs-who", t.role === "user" ? "you" : "claude"));
+      var body = el("div", "ob-bs-text");
+      sayOf(t).split("\n").forEach(function (line) { if (line.trim()) body.appendChild(el("p", "", line)); });
+      row.appendChild(body); thread.appendChild(row);
+      if (t.role === "assistant" && i === st.turns.length - 1 && !bs.thinking) drawCard(thread, t.card || { card: "none" });
+    });
+    if (bs.thinking) { var th = el("div", "ob-bs-turn"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); thread.appendChild(th); }
+    box.appendChild(thread);
+    if (!bs.thinking && st.turns.length && r.leveled_status === "done" && !bs.planAsked) drawPlanOffer(box);
+    if (!bs.thinking && (r.leveled_status === "error" || r.assets_status === "error")) {
+      var bad = el("div", "ob-grade"); bad.appendChild(el("span", "tag", "Resources"));
+      bad.appendChild(el("span", "", (r.assets_status === "error" ? r.assets_error : r.leveled_error) || "Something went wrong finding the resources."));
+      var retry = el("button", "ob-tiny", "try again"); retry.type = "button";
+      on(retry, "click", function () {
+        if (r.assets_status === "error") { r.assets_status = "running"; api("assets", { retry: true }).then(huntUpdate).catch(function (e) { r.assets_status = "error"; r.assets_error = e.message; draw(); }); }
+        else { r.leveled_status = "running"; api("leveled", { retry: true }).then(function (o) { leveledUpdate(o); draw(); }).catch(function (e) { r.leveled_status = "error"; r.leveled_error = e.message; draw(); }); }
+        draw();
+      });
+      bad.appendChild(retry); box.appendChild(bad);
+    }
+    // The composer: always there, under whatever card is up.
+    var row = el("div", "ob-bs-row"), input = el("textarea"); input.rows = 2;
+    input.value = bs.text; input.placeholder = "say something…"; input.spellcheck = false;
+    var send = el("button", "ob-pill", "Send"); send.type = "button";
+    if (!bs.text.trim() || bs.thinking) send.setAttribute("disabled", "disabled");
+    on(input, "input", function () { bs.text = input.value; send.disabled = !input.value.trim() || bs.thinking; });
+    on(input, "keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (bs.text.trim() && !bs.thinking) sendTurn({ text: bs.text.trim() }); } });
+    on(send, "click", function () { if (bs.text.trim() && !bs.thinking) sendTurn({ text: bs.text.trim() }); });
+    row.appendChild(input); row.appendChild(send); box.appendChild(row);
+    box.appendChild(el("div", "ob-hint", "Enter sends · shift-enter for a new line · the resources it mentions come next"));
     content.appendChild(box);
   }
 
-  // --- 8 Focus -----------------------------------------------------------------
-
-  function drawFocus(content) {
-    var r = st.row;
-    if (st.busy === "todos") { generating(content, "Writing todos"); return; }
-    if (!r.goals || !r.goals.goals) {
-      if (!st.busy) { st.busy = "goals"; api("goals").then(function (g) { st.busy = ""; st.row.goals = g; draw(); }).catch(fail); }
-      generating(content, "Writing goals"); return;
+  // Engelbart's question shapes: mcq, select_all, free, open; and focus.
+  function drawCard(thread, card) {
+    var bs = st.ui.bs;
+    if (card.card === "questions" && card.questions) {
+      var qcard = el("div", "ob-bs-card");
+      qcard.appendChild(el("div", "ob-cap", card.questions.eyebrow || "a few questions"));
+      var sendBtn;
+      function ready() { return card.questions.items.some(function (q) { var a = bs.answers[q.id]; return Array.isArray(a) ? a.length : str(a).trim(); }); }
+      card.questions.items.forEach(function (q) {
+        var qb = el("div", "ob-bs-q");
+        qb.appendChild(el("div", "ob-question", q.title));
+        if (q.subtitle) qb.appendChild(el("div", "ob-sub", q.subtitle));
+        else if (q.type === "select_all") qb.appendChild(el("div", "ob-sub", "select all that apply"));
+        if (q.type === "mcq" || q.type === "select_all") {
+          var opts = el("div", "ob-opts"), many = q.type === "select_all";
+          (q.options || []).forEach(function (o) {
+            var cur = bs.answers[q.id], on_ = many ? (Array.isArray(cur) && cur.indexOf(o.label) >= 0) : cur === o.label;
+            var rowEl = attr(el("div", "ob-goal"), "data-on", on_ ? "1" : "0");
+            var mark = el("span", "ob-mark"); if (many) attr(mark, "data-square", "1"); rowEl.appendChild(mark);
+            var t = el("span", "ob-grow"); t.appendChild(el("span", "ob-goal-label", o.label)); if (o.why) t.appendChild(el("span", "ob-goal-why", o.why)); rowEl.appendChild(t);
+            on(rowEl, "click", function () {
+              if (many) { var list = Array.isArray(cur) ? cur.slice() : []; bs.answers[q.id] = on_ ? list.filter(function (x) { return x !== o.label; }) : list.concat([o.label]); }
+              else bs.answers[q.id] = on_ ? "" : o.label;
+              draw();
+            });
+            opts.appendChild(rowEl);
+          });
+          qb.appendChild(opts);
+        } else {
+          qb.appendChild(field(str(bs.answers[q.id]), q.placeholder || "", function (v) { bs.answers[q.id] = v; sendBtn.disabled = !ready(); }, null, q.type === "open"));
+        }
+        qcard.appendChild(qb);
+      });
+      var acts = attr(el("div", "ob-actions"), "data-between", "1");
+      var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
+      acts.appendChild(on(skip, "click", function () { sendTurn({ text: "(skipped those)" }); }));
+      sendBtn = cta("Send answers", !ready(), function () { sendTurn({ answers: bs.answers }); });
+      acts.appendChild(sendBtn); qcard.appendChild(acts); thread.appendChild(qcard);
+    } else if (card.card === "focus" && card.focus) {
+      var fcard = el("div", "ob-bs-card");
+      fcard.appendChild(el("div", "ob-cap", "focus"));
+      fcard.appendChild(el("div", "ob-question", card.focus.title || "What should we focus on?"));
+      var list = el("div", "ob-opts");
+      card.focus.options.forEach(function (o) {
+        var on_ = bs.pick === o.label;
+        var rowEl = attr(el("div", "ob-goal"), "data-on", on_ ? "1" : "0"); rowEl.appendChild(el("span", "ob-mark"));
+        var t = el("span", "ob-grow"); t.appendChild(el("span", "ob-goal-label", o.label)); if (o.why) t.appendChild(el("span", "ob-goal-why", o.why)); rowEl.appendChild(t);
+        on(rowEl, "click", function () { bs.pick = on_ ? "" : o.label; draw(); });
+        list.appendChild(rowEl);
+      });
+      fcard.appendChild(list);
+      fcard.appendChild(el("div", "ob-cap", "anything else it should know"));
+      fcard.appendChild(field(bs.note, "constraints, what to leave alone, where to start…", function (v) { bs.note = v; }, null, true));
+      var facts = el("div", "ob-actions");
+      facts.appendChild(cta("Continue", !bs.pick, function () { sendTurn({ pick: bs.pick, note: bs.note.trim() }); }));
+      fcard.appendChild(facts); thread.appendChild(fcard);
     }
-    var box = el("div", "ob-step");
-    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", "Step 9 of 10 · Focus")); head.appendChild(el("span", "ob-count", "One goal")); box.appendChild(head);
-    box.appendChild(el("div", "ob-question", "What should the first project be about?"));
-    box.appendChild(el("div", "ob-sub", "Pick one. The rest can be later projects."));
-    var list = el("div", "ob-opts");
-    var rows = r.goals.goals.concat([{ label: "Something else", why: "tell it what to start on instead and it will use that", other: true }]);
-    rows.forEach(function (g) {
-      var on_ = g.other ? st.ui.goalOtherOn : (!st.ui.goalOtherOn && st.ui.goalPick === g.label);
-      var row = attr(el("div", "ob-goal"), "data-on", on_ ? "1" : "0"); row.appendChild(el("span", "ob-mark"));
-      var t = el("span", "ob-grow"); t.appendChild(el("span", "ob-goal-label", g.label)); t.appendChild(el("span", "ob-goal-why", g.why)); row.appendChild(t);
-      on(row, "click", function () { if (g.other) { st.ui.goalOtherOn = !on_; st.ui.goalPick = ""; } else { st.ui.goalOtherOn = false; st.ui.goalPick = on_ ? "" : g.label; } draw(); });
-      list.appendChild(row);
-    });
-    box.appendChild(list);
-    var gen;
-    if (st.ui.goalOtherOn) box.appendChild(field(st.ui.goalOther || "", "what to start on instead…", function (v) { st.ui.goalOther = v; gen.disabled = !v.trim(); }, null));
-    var chosen = st.ui.goalOtherOn ? str(st.ui.goalOther).trim() : st.ui.goalPick;
-    var acts = el("div", "ob-actions");
-    gen = cta("Write todos", !chosen, function () {
-      var goal = st.ui.goalOtherOn ? str(st.ui.goalOther).trim() : st.ui.goalPick;
-      if (!goal) return;
-      st.busy = "todos"; draw();
-      api("todos", { goal: goal }).then(function (out) {
-        st.busy = ""; st.row.goal_chosen = goal; st.ui.todos = out.todos.slice();
-        st.ui.projName = st.ui.projName || out.name || ""; st.row.step = Math.max(st.row.step || 0, 9); go(9);
-      }).catch(fail);
-    });
-    acts.appendChild(gen); box.appendChild(acts); content.appendChild(box);
   }
 
-  // --- 9 Todos -----------------------------------------------------------------
+  // Once the resources are fitted: after every turn, the same question.
+  function drawPlanOffer(box) {
+    var card = el("div", "ob-bs-card ob-bs-offer");
+    card.appendChild(el("div", "ob-cap", "ready when you are"));
+    card.appendChild(el("div", "ob-question", "Ready to start planning your project?"));
+    card.appendChild(el("div", "ob-sub", "The paper's datasets, code and tools have been fitted to what you told me. Or keep brainstorming; I'll ask again."));
+    var acts = attr(el("div", "ob-actions"), "data-between", "1");
+    var later = el("button", "ob-ghost", "Keep brainstorming"); later.type = "button";
+    acts.appendChild(on(later, "click", function () { st.ui.bs.planAsked = true; draw(); }));
+    acts.appendChild(cta("Yes, let's plan", false, function () { save(8, {}).then(function () { go(8); }).catch(fail); }));
+    card.appendChild(acts); box.appendChild(card);
+  }
+
+  // --- 8 Assets ------------------------------------------------------------------
+  //
+  // What the paper rests on, fitted to them: one list, expand for the
+  // description, the links, and a place to ask; children sit under their
+  // parent, marked "at your level". They pick one to build on.
+
+  function keyOf(asset, parent) { return parent ? parent.title + " :: " + asset.title : asset.title; }
+
+  function drawAssets(content) {
+    var r = st.row, as = st.ui.as;
+    if (r.leveled_status !== "done" || !r.leveled) {
+      if (!r.assessment) { stepBox(content, count(8), "Answer the topic questions first"); return; }
+      var w = el("div", "ob-wait"); w.appendChild(dots());
+      w.appendChild(el("div", "ob-wait-t", r.assets_status === "done" ? "Fitting the resources to you" : "Finding what the paper rests on"));
+      w.appendChild(el("div", "ob-wait-s", "Datasets, code, tools and demos, with real links."));
+      if (r.assets_status === "error" || r.leveled_status === "error") {
+        w.appendChild(el("div", "ob-err", (r.assets_status === "error" ? r.assets_error : r.leveled_error) || "Something went wrong."));
+        var acts0 = el("div", "ob-actions");
+        acts0.appendChild(cta("Try again", false, function () {
+          if (r.assets_status === "error") { r.assets_status = "running"; api("assets", { retry: true }).then(huntUpdate).then(startLeveled).catch(function (e) { r.assets_status = "error"; r.assets_error = e.message; draw(); }); }
+          else { r.leveled_status = "running"; api("leveled", { retry: true }).then(function (o) { leveledUpdate(o); draw(); }).catch(function (e) { r.leveled_status = "error"; r.leveled_error = e.message; draw(); }); }
+          draw();
+        }));
+        w.appendChild(acts0);
+      } else { if (r.leveled_status !== "running") startLeveled(); pollLeveled(); }
+      content.appendChild(w); return;
+    }
+    var lv = r.leveled, list = lv.assets || [];
+    if (!as.picked && r.asset_chosen) as.picked = r.asset_chosen.key;
+    var box = el("div", "ob-step");
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(8, "Assets")));
+    head.appendChild(el("span", "ob-count", list.length + " found · " + list.reduce(function (n, a) { return n + (a.children || []).length; }, 0) + " added at your level"));
+    box.appendChild(head);
+    box.appendChild(el("div", "ob-title", "What do you want to build on?"));
+    if (lv.locus) { var lc = el("div", "ob-sub"); lc.appendChild(el("span", "ob-as-lead", "Where the problem solving lies for you · ")); lc.appendChild(el("span", "", lv.locus)); box.appendChild(lc); }
+    if (lv.sticky && lv.sticky.length) {
+      var chips = el("div", "ob-seeds");
+      lv.sticky.forEach(function (sk) { chips.appendChild(el("span", "ob-as-chip", sk)); });
+      box.appendChild(chips);
+    }
+    var tools = el("div", "ob-as-tools");
+    var expand = el("button", "ob-tiny", "Expand all ⤢"); expand.type = "button";
+    on(expand, "click", function () { list.forEach(function (a) { as.open[a.title] = true; }); draw(); });
+    var collapse = el("button", "ob-tiny", "Collapse all ⌃"); collapse.type = "button";
+    on(collapse, "click", function () { as.open = {}; draw(); });
+    tools.appendChild(expand); tools.appendChild(collapse); box.appendChild(tools);
+    var group = el("div", "ob-as-list");
+    list.forEach(function (a) {
+      group.appendChild(assetRow(a, null));
+      (a.children || []).forEach(function (k) { group.appendChild(assetRow(k, a)); });
+    });
+    box.appendChild(group);
+    var picked = as.picked ? findLocal(list, as.picked) : null;
+    var acts = attr(el("div", "ob-actions"), "data-between", "1");
+    acts.appendChild(el("span", "ob-hint", picked ? "building on · " + picked.title : "pick one · expand a row to read about it or ask"));
+    acts.appendChild(cta("Continue", !picked || st.busy === "choose", function () {
+      st.busy = "choose"; draw();
+      api("choose_asset", { key: as.picked }).then(function (out) {
+        st.busy = ""; st.row.asset_chosen = out.asset_chosen; st.row.direction = null; st.row.subgoals = null; st.row.todos = null;
+        st.ui.change = { open: false, text: "", thinking: false, log: [] }; go(9);
+      }).catch(fail);
+    }));
+    box.appendChild(acts);
+    box.appendChild(el("div", "ob-hint", "You can come back and pick another."));
+    content.appendChild(box);
+  }
+
+  function findLocal(list, key) {
+    for (var i = 0; i < list.length; i++) {
+      if (keyOf(list[i]) === key) return list[i];
+      var kids = list[i].children || [];
+      for (var j = 0; j < kids.length; j++) if (keyOf(kids[j], list[i]) === key) return kids[j];
+    }
+    return null;
+  }
+
+  function assetRow(a, parent) {
+    var as = st.ui.as, key = keyOf(a, parent), open_ = !!as.open[key], picked = as.picked === key;
+    var row = attr(el("div", "ob-as-row"), "data-child", parent ? "1" : "0");
+    var head = el("div", "ob-as-head");
+    if (parent) head.appendChild(el("span", "ob-as-elbow"));
+    head.appendChild(attr(el("span", "ob-mark"), "data-on", picked ? "1" : "0"));
+    var text = el("span", "ob-as-text");
+    var line = el("span", "ob-as-line");
+    line.appendChild(el("span", "ob-as-title", a.title));
+    if (parent) line.appendChild(el("span", "ob-as-level", "at your level"));
+    else line.appendChild(el("span", "ob-as-meta", a.type + " · " + (a.availability || "unknown")));
+    text.appendChild(line);
+    if (parent) {
+      if (a.one_liner || a.description) text.appendChild(el("span", "ob-as-desc", a.one_liner || a.description));
+      if (a.why) { var why = el("span", "ob-as-why"); why.appendChild(el("span", "ob-as-lead", "Why · ")); why.appendChild(el("span", "", a.why)); text.appendChild(why); }
+    }
+    head.appendChild(text);
+    var caret = el("button", "ob-as-caret", open_ ? "⌃" : "›"); caret.type = "button";
+    on(caret, "click", function (e) { if (e && e.stopPropagation) e.stopPropagation(); as.open[key] = !open_; draw(); });
+    head.appendChild(caret);
+    on(head, "click", function () { as.picked = key; draw(); });
+    row.appendChild(head);
+    if (open_) {
+      var body = el("div", "ob-as-body");
+      body.appendChild(el("div", "ob-as-desc", a.description || a.one_liner || ""));
+      if (a.what_you_can_do_with_it) { var can = el("div", "ob-as-can"); can.appendChild(el("span", "ob-as-lead", "What you can do with it · ")); can.appendChild(el("span", "", a.what_you_can_do_with_it)); body.appendChild(can); }
+      var links = el("div", "ob-as-links");
+      (a.links || []).forEach(function (l) {
+        var link = el("a", "ob-as-link", l.kind.replace(/_/g, " ") + " ↗"); link.href = l.url; link.target = "_blank"; link.rel = "noopener";
+        on(link, "click", function (e) { if (e && e.stopPropagation) e.stopPropagation(); });
+        links.appendChild(link);
+      });
+      var thread = as.threads[key] || [];
+      var chat = el("button", "ob-tiny ob-as-chatbtn", as.chatOpen[key] ? "Hide chat ⌃" : thread.length ? "Chat · " + thread.length + " ›" : "Ask about this ›"); chat.type = "button";
+      on(chat, "click", function () { as.chatOpen[key] = !as.chatOpen[key]; draw(); });
+      links.appendChild(chat); body.appendChild(links);
+      if (as.chatOpen[key]) body.appendChild(assetChat(a, key));
+      row.appendChild(body);
+    }
+    return row;
+  }
+
+  var STARTERS = ["What would I actually change first?", "How long to get it running?", "Why is this in the paper?"];
+  function assetChat(a, key) {
+    var as = st.ui.as, thread = as.threads[key] || [], panel = el("div", "ob-as-chat");
+    thread.forEach(function (c) {
+      var t = attr(el("div", "ob-bs-turn"), "data-who", c.role); t.appendChild(el("span", "ob-bs-who", c.role === "user" ? "you" : "claude"));
+      t.appendChild(el("div", "ob-bs-text", c.content)); panel.appendChild(t);
+    });
+    if (as.thinking[key]) { var th = el("div", "ob-bs-turn"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); panel.appendChild(th); }
+    function ask(q) {
+      if (!q || as.thinking[key]) return;
+      as.threads[key] = (as.threads[key] || []).concat([{ role: "user", content: q }]); as.drafts[key] = ""; as.thinking[key] = true; draw();
+      api("asset_ask", { key: key, question: q }).then(function (out) {
+        as.thinking[key] = false; as.threads[key] = as.threads[key].concat([{ role: "assistant", content: out.answer }]); draw();
+      }).catch(function (e) { as.thinking[key] = false; as.threads[key] = as.threads[key].concat([{ role: "assistant", content: e.message }]); draw(); });
+    }
+    var asked = thread.filter(function (c) { return c.role === "user"; }).map(function (c) { return c.content; });
+    var left = STARTERS.filter(function (q) { return asked.indexOf(q) < 0; });
+    if (left.length && !as.thinking[key]) {
+      var seeds = el("div", "ob-seeds");
+      left.forEach(function (q) { var bt = el("button", "ob-seed", q); bt.type = "button"; seeds.appendChild(on(bt, "click", function () { ask(q); })); });
+      panel.appendChild(seeds);
+    }
+    var row = el("div", "ob-ask-row"), input = el("input");
+    input.value = as.drafts[key] || ""; input.placeholder = "ask about " + a.title + "…"; input.spellcheck = false;
+    var send = el("button", "ob-pill", "Ask"); send.type = "button";
+    if (!(as.drafts[key] || "").trim()) send.setAttribute("disabled", "disabled");
+    on(input, "input", function () { as.drafts[key] = input.value; send.disabled = !input.value.trim(); });
+    on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); ask((as.drafts[key] || "").trim()); } });
+    on(send, "click", function () { ask((as.drafts[key] || "").trim()); });
+    row.appendChild(input); row.appendChild(send); panel.appendChild(row);
+    return panel;
+  }
+
+  // --- 9 Direction, 10 Subgoals ---------------------------------------------------
+  //
+  // One proposal, not a choice of three. "Looks good" moves on; "Change
+  // something" unfolds a box, and what is typed there revises the proposal.
+
+  function changeBox(box, action, onRevised) {
+    var ch = st.ui.change;
+    var acts = attr(el("div", "ob-actions"), "data-between", "1");
+    var change = el("button", "ob-ghost", ch.open ? "Never mind" : "Change something"); change.type = "button";
+    acts.appendChild(on(change, "click", function () { ch.open = !ch.open; draw(); }));
+    acts.appendChild(cta("Looks good", ch.thinking, function () { onRevised(); }));
+    box.appendChild(acts);
+    if (!ch.open) return;
+    var panel = el("div", "ob-ask");
+    ch.log.forEach(function (c) {
+      var t = attr(el("div", "ob-bs-turn"), "data-who", c.role); t.appendChild(el("span", "ob-bs-who", c.role === "user" ? "you" : "claude"));
+      t.appendChild(el("div", "ob-bs-text", c.content)); panel.appendChild(t);
+    });
+    if (ch.thinking) { var th = el("div", "ob-bs-turn"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); panel.appendChild(th); }
+    panel.appendChild(el("div", "ob-ask-cap", "What should be different?"));
+    var row = el("div", "ob-ask-row"), input = el("input");
+    input.value = ch.text; input.placeholder = "smaller, closer to the paper, use the other dataset, drop the…"; input.setAttribute("autofocus", "");
+    var send = el("button", "ob-pill", "Send"); send.type = "button";
+    if (!ch.text.trim() || ch.thinking) send.setAttribute("disabled", "disabled");
+    function go_() {
+      var text = ch.text.trim(); if (!text || ch.thinking) return;
+      ch.log.push({ role: "user", content: text }); ch.text = ""; ch.thinking = true; draw();
+      api(action, { revise: text }).then(function (out) {
+        ch.thinking = false;
+        if (out.direction) { st.row.direction = out.direction; st.row.subgoals = null; st.row.todos = null; ch.log.push({ role: "assistant", content: "Revised: " + out.direction.title }); }
+        if (out.subgoals) { st.row.subgoals = out.subgoals; st.row.todos = null; ch.log.push({ role: "assistant", content: "Revised the three pieces." }); }
+        draw();
+      }).catch(function (e) { ch.thinking = false; ch.log.push({ role: "assistant", content: e.message }); draw(); });
+    }
+    on(input, "input", function () { ch.text = input.value; send.disabled = !input.value.trim() || ch.thinking; });
+    on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); go_(); } if (e.key === "Escape") { ch.open = false; draw(); } });
+    on(send, "click", go_);
+    row.appendChild(input); row.appendChild(send); panel.appendChild(row);
+    box.appendChild(panel);
+  }
+
+  function drawDirection(content) {
+    var r = st.row;
+    if (!r.asset_chosen) { stepBox(content, count(9), "Pick what to build on first"); return; }
+    if (!r.direction) {
+      if (st.busy !== "direction") { st.busy = "direction"; api("direction").then(function (out) { st.busy = ""; st.row.direction = out.direction; draw(); }).catch(fail); }
+      generating(content, "Choosing a direction"); return;
+    }
+    var d = r.direction, box = el("div", "ob-step");
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(9, "Direction"))); head.appendChild(el("span", "ob-count", "one direction")); box.appendChild(head);
+    box.appendChild(el("div", "ob-question", d.title));
+    box.appendChild(el("div", "ob-dir-body", d.what_you_would_make));
+    if (d.first_visible_result) { var fv = el("div", "ob-dir-line"); fv.appendChild(el("span", "ob-as-lead", "First thing you'd see · ")); fv.appendChild(el("span", "", d.first_visible_result)); box.appendChild(fv); }
+    if (d.why_it_fits) { var wf = el("div", "ob-dir-line"); wf.appendChild(el("span", "ob-as-lead", "Why this one · ")); wf.appendChild(el("span", "", d.why_it_fits)); box.appendChild(wf); }
+    if (d.uses && d.uses.length) { var chips = el("div", "ob-seeds"); d.uses.forEach(function (u) { chips.appendChild(el("span", "ob-as-chip", u)); }); box.appendChild(chips); }
+    changeBox(box, "direction", function () { st.ui.change = { open: false, text: "", thinking: false, log: [] }; save(10, {}).then(function () { go(10); }).catch(fail); });
+    content.appendChild(box);
+  }
+
+  function drawSubgoals(content) {
+    var r = st.row;
+    if (!r.direction) { stepBox(content, count(10), "Settle the direction first"); return; }
+    if (!r.subgoals) {
+      if (st.busy !== "subgoals") { st.busy = "subgoals"; api("subgoals").then(function (out) { st.busy = ""; st.row.subgoals = out.subgoals; draw(); }).catch(fail); }
+      generating(content, "Breaking it into three pieces"); return;
+    }
+    var box = el("div", "ob-step");
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(10, "Subgoals"))); head.appendChild(el("span", "ob-count", "three pieces")); box.appendChild(head);
+    box.appendChild(el("div", "ob-cap", "Direction")); box.appendChild(el("div", "ob-goal-title", r.direction.title));
+    var list = el("div", "ob-sg-list");
+    r.subgoals.forEach(function (g, i) {
+      var row = el("div", "ob-sg");
+      row.appendChild(attr(el("span", "ob-circle"), "data-state", i === 0 ? "now" : "todo")).textContent = String(i + 1);
+      var t = el("div", "ob-grow");
+      t.appendChild(el("div", "ob-sg-label", g.label));
+      if (g.description) t.appendChild(el("div", "ob-sg-desc", g.description));
+      if (g.why) { var w = el("div", "ob-sg-why"); w.appendChild(el("span", "ob-as-lead", "Why here · ")); w.appendChild(el("span", "", g.why)); t.appendChild(w); }
+      if (i === 0) t.appendChild(el("div", "ob-sg-first", "todos are written for this one"));
+      row.appendChild(t); list.appendChild(row);
+    });
+    box.appendChild(list);
+    changeBox(box, "subgoals", function () { st.ui.change = { open: false, text: "", thinking: false, log: [] }; save(11, {}).then(function () { go(11); }).catch(fail); });
+    content.appendChild(box);
+  }
+
+  // --- 11 Todos -----------------------------------------------------------------
 
   function issueCode() {
     return post(DEVICE_API, { action: "issue" }).then(function (v) {
@@ -766,11 +1232,22 @@
   }
 
   function drawTodos(content) {
+    var r = st.row;
+    if (!r.direction || !r.subgoals) { stepBox(content, count(11), "Settle the pieces first"); return; }
     if (st.busy === "create") { generating(content, "Making " + (st.ui.projName || "your project")); return; }
-    var todos = st.ui.todos || [], n = todos.length, canAdd = n < 4;
+    if (!r.todos || !r.todos.length) {
+      if (st.busy !== "todos") {
+        st.busy = "todos";
+        api("todos").then(function (out) { st.busy = ""; st.row.todos = out.todos; st.ui.todos = out.todos.slice(); st.ui.projName = st.ui.projName || out.name || ""; draw(); }).catch(fail);
+      }
+      generating(content, "Writing todos for “" + r.subgoals[0].label + "”"); return;
+    }
+    if (!st.ui.todos.length) st.ui.todos = r.todos.slice();
+    var todos = st.ui.todos, n = todos.length, canAdd = n < 4;
     var box = el("div", "ob-step");
-    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", "Step 10 of 10 · Todos")); head.appendChild(el("span", "ob-count", n + " of 4")); box.appendChild(head);
-    box.appendChild(el("div", "ob-cap", "Goal")); box.appendChild(el("div", "ob-goal-title", st.row.goal_chosen));
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(11, "Todos"))); head.appendChild(el("span", "ob-count", n + " of 4")); box.appendChild(head);
+    box.appendChild(el("div", "ob-cap", "Direction")); box.appendChild(el("div", "ob-goal-title", r.direction.title));
+    box.appendChild(el("div", "ob-cap", "First piece")); box.appendChild(el("div", "ob-sg-label", r.subgoals[0].label));
     var rows = el("div", "ob-rows");
     todos.forEach(function (t, i) {
       var row = el("div", "ob-trow"); row.appendChild(el("span", "dash", "–"));
@@ -787,7 +1264,7 @@
       add.appendChild(ni); rows.appendChild(add);
     }
     box.appendChild(rows);
-    box.appendChild(el("div", "ob-hint", n < 2 ? "At least two todos." : n >= 4 ? "Four is the cap — keep the first project small." : "Edit, remove, or add up to " + (4 - n) + " more."));
+    box.appendChild(el("div", "ob-hint", n < 2 ? "At least two todos." : n >= 4 ? "Four is the cap — keep the first piece small." : "Edit, remove, or add up to " + (4 - n) + " more. The other two pieces get theirs when you reach them."));
     function clean() { return todos.map(function (t) { return str(t).trim(); }).filter(Boolean); }
     function off() { var c = clean(); return c.length < 2 || c.length > 4 || !str(st.ui.projName).trim(); }
     var name = el("div", "ob-namerow");
@@ -800,60 +1277,31 @@
       if (off()) return;
       var rowsClean = clean(), pname = st.ui.projName.trim();
       st.busy = "create"; draw();
-      api("create", { project_name: pname, goal_chosen: st.row.goal_chosen, todos: rowsClean })
-        .then(function () { return issueCode(); })
-        .then(function () { st.busy = ""; st.row.status = "created"; st.row.project_name = pname; st.row.todos = rowsClean; go(10); })
+      api("create", { project_name: pname, todos: rowsClean })
+        .then(function () { st.busy = ""; st.row.status = "created"; st.row.project_name = pname; st.row.todos = rowsClean; st.row.goal_chosen = r.direction.title; go(DONE); })
         .catch(fail);
     });
     name.appendChild(create); box.appendChild(name); content.appendChild(box);
   }
 
-  // --- 10 Done -----------------------------------------------------------------
-
-  function cmdRow(box, label, cmd) {
-    box.appendChild(el("div", "ob-cap", label));
-    var row = el("div", "ob-cmd");
-    row.appendChild(el("span", "ob-cmd-text", cmd));
-    var copy = el("button", "ob-cmd-copy", "Copy"); copy.type = "button";
-    on(copy, "click", function () {
-      if (!navigator.clipboard) return;
-      navigator.clipboard.writeText(cmd).then(function () { copy.textContent = "Copied"; setTimeout(function () { copy.textContent = "Copy"; }, 1400); }, function () {});
-    });
-    row.appendChild(copy); box.appendChild(row);
-  }
+  // --- 12 Done: open a new chat and run /bart -----------------------------------------
 
   function drawDone(content) {
-    var r = st.row, box = el("div", "ob-step ob-done");
-    box.appendChild(el("span", "ob-check", "✓"));
-    box.appendChild(el("div", "ob-done-t", (r.project_name || "Your project") + " is made"));
-    var d = DEPTHS.filter(function (x) { return x.key === r.depth; })[0];
-    box.appendChild(el("div", "ob-done-s", "One goal and " + (r.todos || []).length + " todos, written for " + (r.name || "you") + " — explanations " + (d ? d.phrase : "in everyday language") + "."));
-    if (!st.ui.made) {
-      if (st.busy !== "code") { st.busy = "code"; issueCode().then(function () { st.busy = ""; draw(); }).catch(fail); }
-      generating(box, "Getting your install code");
-    } else {
-      var code = st.ui.made.code;
-      // Mac and Linux run the npm package through bun; Windows takes the
-      // PowerShell installer, which redeems the same code (the npm package
-      // does not install on Windows).
-      cmdRow(box, "Mac or Linux", "bunx engelbart-cli --code " + code);
-      cmdRow(box, "Windows (PowerShell)", "& ([scriptblock]::Create((irm https://berkeley.mathetic.com/engelbart/install.ps1))) --code " + code);
-      var mins = Math.round((st.ui.made.expiresInSeconds || 900) / 60);
-      box.appendChild(el("div", "ob-done-s", "Run the one for your machine in a terminal. It installs Engelbart, connects this account, and opens the project — no second sign-in. The code works once and expires in " + mins + " minutes."));
-    }
+    var r = st.row;
+    var box = el("div", "ob-step");
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", "Done")); head.appendChild(el("span", "ob-count", (r.project_name || "your project") + " is saved")); box.appendChild(head);
+    box.appendChild(el("div", "ob-done-s", "One direction, three pieces, and " + (r.todos || []).length + " todos, written for " + (r.name || "you") + ". Open a new Claude chat on your machine and Engelbart will pick it up."));
+    content.appendChild(box);
+    var host = el("div", "ob-ins-host"); content.appendChild(host);
+    if (window.EngelbartInstall) window.EngelbartInstall.render(host, { variant: "bart", onDone: function () { draw(); } });
     var acts = el("div", "ob-done-acts");
-    var again = el("button", "ob-ghost", "Get a new code"); again.type = "button";
-    acts.appendChild(on(again, "click", function () { st.ui.made = null; draw(); }));
+    var back = el("button", "ob-ghost", "Didn't install Engelbart? Back to install"); back.type = "button";
+    acts.appendChild(on(back, "click", function () { go(5); }));
     var another = el("button", "ob-ghost", "Set up another"); another.type = "button";
     acts.appendChild(on(another, "click", function () {
-      api("open", { fresh: true }).then(function (o) {
-        st.ui.fam = {}; st.ui.fAnswers = {}; st.ui.followUp = null; st.ui.lastGrade = null; st.ui.fIdx = 0; st.ui.qIdx = 0;
-        st.ui.goalPick = ""; st.ui.goalOther = ""; st.ui.goalOtherOn = false; st.ui.todos = []; st.ui.projName = "";
-        st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.draft = "";
-        adopt(o); draw();
-      }).catch(fail);
+      api("open", { fresh: true }).then(function (o) { forgetUi(); adopt(o); draw(); }).catch(fail);
     }));
-    box.appendChild(acts); content.appendChild(box);
+    content.appendChild(acts);
   }
 
   // --- Ask about this ----------------------------------------------------------
@@ -867,7 +1315,7 @@
     if (e.target && e.target.closest && e.target.closest("[data-askbtn]")) return;
     setTimeout(function () {
       var sel = window.getSelection ? window.getSelection() : null, t = sel ? sel.toString().trim() : "", c = document.getElementById("content");
-      if (!t || t.length < 3 || !c || !sel.rangeCount || !c.contains(sel.anchorNode) || st.step < 6 || st.step > 9) { if (st.ui.askBtn) { st.ui.askBtn = null; draw(); } return; }
+      if (!t || t.length < 3 || !c || !sel.rangeCount || !c.contains(sel.anchorNode) || st.step < 6 || st.step > 11) { if (st.ui.askBtn) { st.ui.askBtn = null; draw(); } return; }
       var r = sel.getRangeAt(0).getBoundingClientRect(), cr = c.getBoundingClientRect();
       st.ui.askBtn = { text: t.slice(0, 240), x: r.left - cr.left + r.width / 2, y: r.top - cr.top }; draw();
     }, 0);
@@ -944,6 +1392,7 @@
   // --- boot --------------------------------------------------------------------
 
   function boot() {
+    st.test = /[?&]test=(true|1)(&|$)/.test(String((window.location && window.location.search) || ""));
     draw();
     fetch("/api/engelbart-config", { headers: { Accept: "application/json" } })
       .then(function (r) { if (!r.ok) throw new Error("Engelbart is not configured on this deployment"); return r.json(); })
