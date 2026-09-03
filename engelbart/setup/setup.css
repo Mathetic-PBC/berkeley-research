@@ -462,16 +462,21 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-bs+.ob-hint{margin-top:10px}
 
 /* --- assets: the list, a row, its body, the chat --- */
-.ob-as-tools{margin-top:16px;display:flex;justify-content:flex-end;gap:14px}
-.ob-as-list{margin-top:10px;background:var(--panel2);border:1px solid var(--bd);border-radius:var(--radius-lg);overflow:hidden}
-.ob-as-row+.ob-as-row{border-top:1px solid var(--bd)}
-.ob-as-row[data-child="1"]+.ob-as-row[data-child="1"],.ob-as-row[data-child="0"]+.ob-as-row[data-child="1"]{border-top:1px dashed var(--bd)}
-.ob-as-head{display:flex;align-items:flex-start;gap:12px;padding:13px 18px;cursor:pointer}
-.ob-as-head:hover{background:var(--hov)}
-.ob-as-row[data-child="1"] .ob-as-head{padding-left:34px}
-.ob-as-elbow{flex:none;width:12px;height:12px;margin:3px 0 0 5px;border-left:1.5px solid var(--bd2);border-bottom:1.5px solid var(--bd2);border-radius:0 0 0 3px}
-.ob-as-head .ob-mark{margin-top:3px}
-.ob-as-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ob[data-still="1"] .ob-as-body{animation:none}
+
+/* --- direction and subgoals: one proposal, and the box that changes it --- */
+.ob-as-header{display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
+.ob-as-h1{margin:0;width:100%;font:500 34px/1.2 var(--font-sans);letter-spacing:-0.4px;text-wrap:pretty;color:var(--ink)}
+.ob-as-sub{font:var(--text-13);color:var(--mut)}
+.ob-as-list{margin-top:32px;position:relative;background:var(--panel);border:1px solid var(--bd);border-radius:var(--radius-lg);display:flex;flex-direction:column}
+.ob-as-row{display:flex;align-items:flex-start;gap:14px;padding:14px 18px;border-top:1px solid var(--bd);cursor:pointer}
+.ob-as-row[data-first="1"],.ob-as-row[data-child="1"]{border-top-color:transparent}
+.ob-as-row:hover{background:var(--tint)}
+.ob-as-row[data-child="1"]{padding-left:34px}
+.ob-as-elbow{flex:none;width:12px;height:12px;margin:3px 0 0 -4px;border-left:1.5px solid var(--bd2);border-bottom:1.5px solid var(--bd2);border-radius:0 0 0 3px}
+.ob-as-row .ob-mark{margin-top:5px}
+.ob-as-row[data-on="1"] .ob-mark{border-color:var(--ink);background:var(--ink)}
+.ob-as-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
 .ob-as-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .ob-as-title{font:var(--text-card-title)}
 .ob-as-row[data-child="1"] .ob-as-title{font-size:13.5px}
@@ -479,20 +484,13 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-as-level{font:var(--text-microcap);letter-spacing:1.2px;text-transform:uppercase;color:var(--acc)}
 .ob-as-desc{font:var(--text-13);color:var(--mut);text-wrap:pretty}
 .ob-as-why{font:var(--text-11-5);color:var(--fnt);text-wrap:pretty}
-.ob-as-caret{flex:none;padding:2px 4px;font:14px/1 var(--font-sans);color:var(--bd2);background:none;border:none;cursor:pointer}
-.ob-as-caret:hover{color:var(--ink)}
-.ob-as-body{padding:0 18px 14px 44px;animation:rise 200ms both}
-.ob[data-still="1"] .ob-as-body{animation:none}
-.ob-as-row[data-child="1"] .ob-as-body{padding-left:60px}
-.ob-as-can{margin-top:8px;font:var(--text-13);color:var(--ink);text-wrap:pretty}
-.ob-as-links{margin-top:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:baseline}
+.ob-as-links{display:flex;gap:14px;margin-top:4px;flex-wrap:wrap}
 .ob-as-link{font:var(--text-13);color:var(--acc);text-decoration:none}
-.ob-as-link:hover{text-decoration:underline}
-.ob-as-chatbtn{margin-left:auto;text-transform:none;letter-spacing:0;font:var(--text-13);color:var(--mut)}
-.ob-as-chat{margin-top:12px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;background:var(--panel);border:1px solid var(--bd);border-radius:var(--radius-sm)}
-.ob-as-chat .ob-ask-row{margin-top:2px}
-
-/* --- direction and subgoals: one proposal, and the box that changes it --- */
+.ob-as-link:hover{color:var(--acc-hov);text-decoration:underline}
+.ob-as-toggle{flex:none;display:flex;align-items:center;gap:6px;padding:2px 4px;font:var(--text-microcap);letter-spacing:1.2px;text-transform:uppercase;color:var(--fnt);background:none;border:none;cursor:pointer}
+.ob-as-toggle:hover{color:var(--ink)}
+.ob-as-caret{font:14px/1 var(--font-sans);letter-spacing:0}
+.ob-as-step .ob-actions{margin-top:32px}
 .ob-dir-body{margin-top:14px;font:var(--text-14);color:var(--ink);text-wrap:pretty}
 .ob-dir-line{margin-top:10px;font:var(--text-13);color:var(--mut);text-wrap:pretty}
 .ob-sg-list{margin-top:18px;display:flex;flex-direction:column;gap:12px}

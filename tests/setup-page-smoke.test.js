@@ -186,7 +186,7 @@ function mount(options = {}) {
 
   return { app, actions, bodies, win, doc,
     row: () => row,
-    title: () => textOf(one(app, "ob-title")) || textOf(one(app, "ob-question")) || textOf(one(app, "ob-goal-title"))
+    title: () => textOf(one(app, "ob-title")) || textOf(one(app, "ob-as-h1")) || textOf(one(app, "ob-question")) || textOf(one(app, "ob-goal-title"))
       || textOf(one(app, "ob-done-t")) || textOf(one(app, "ob-wait-t")),
     error: () => textOf(one(app, "ob-err")),
     cta: () => byClass(app, "ob-cta").pop(),
@@ -579,24 +579,24 @@ test("a reloaded brainstorm redraws every answered card with its answers, from t
   assert.equal(page.actions.filter((a) => a === "brainstorm").length, 0, "nothing was asked: the transcript was enough");
 });
 
-test("the assets list expands, asks, and a child can be picked; the pick resets the plan", async () => {
+test("the assets list folds simpler stand-ins behind a toggle; picking a row shows what it is; the pick resets the plan", async () => {
   const page = mount({ row: fullRow({ step: 8, asset_chosen: null, direction: null, subgoals: null, todos: null }) });
   await settle();
-  const rows = byClass(page.app, "ob-as-row");
-  assert.equal(rows.length, 3, "two assets and one child");
-  assert.deepEqual(byClass(page.app, "ob-as-title").map(textOf), ["Pose viewer", "Toy poses", "Dance corpus"]);
-  assert.match(textOf(rows[1]), /at your level[\s\S]*small first/);
+  assert.equal(page.title(), "What do you want to build on?");
+  assert.deepEqual(byClass(page.app, "ob-as-title").map(textOf), ["Pose viewer", "Dance corpus"], "children start folded");
+  assert.equal(textOf(one(page.app, "ob-as-toggle")), "1 simpler›");
   assert.equal(page.cta().disabled, true, "nothing picked yet");
-  byClass(page.app, "ob-as-caret")[0].fire("click");
-  assert.match(textOf(page.app), /What you can do with it · play/);
+  assert.equal(one(page.app, "ob-as-desc"), undefined, "nothing is described until it is picked");
+  one(page.app, "ob-as-toggle").fire("click");
+  assert.deepEqual(byClass(page.app, "ob-as-title").map(textOf), ["Pose viewer", "Toy poses", "Dance corpus"]);
+  assert.match(textOf(byClass(page.app, "ob-as-row")[1]), /simpler/);
+  byClass(page.app, "ob-as-row")[1].fire("click");
+  assert.equal(byClass(page.app, "ob-as-row")[1].attrs["data-on"], "1", "the child is picked");
+  assert.match(textOf(byClass(page.app, "ob-as-row")[0]), /A viewer\./, "the parent of a picked child shows its text");
+  assert.match(textOf(byClass(page.app, "ob-as-row")[1]), /ten poses[\s\S]*small first/, "the picked child shows its line and why");
   assert.equal(find(page.app, (n) => n.tagName === "a")[0].href, "https://x.org/demo");
-  byClass(page.app, "ob-as-chatbtn")[0].fire("click");
-  byClass(page.app, "ob-seed")[0].fire("click");
-  await settle();
-  assert.equal(page.bodies.find((b) => b.action === "asset_ask").key, "Pose viewer");
-  assert.match(textOf(page.app), /Start with the toy/);
-  byClass(page.app, "ob-as-head")[1].fire("click");
-  assert.equal(textOf(one(page.app, "ob-hint")), "Toy poses", "the pick is named, nothing more");
+  assert.equal(byClass(page.app, "ob-as-chatbtn").length, 0, "no per-row chat: Ask about this is the page's");
+  assert.equal(page.cta().disabled, false);
   page.cta().fire("click");
   await settle();
   assert.equal(page.bodies.find((b) => b.action === "choose_asset").key, "Pose viewer :: Toy poses");

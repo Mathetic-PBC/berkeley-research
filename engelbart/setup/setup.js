@@ -70,7 +70,7 @@
       qIdx: 0, goalPick: "", goalOther: "", goalOtherOn: false, todos: [], newTodo: "", projName: "",
       askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null,
       bs: { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false },   // brainstorm
-      as: { open: {}, picked: "", threads: {}, drafts: {}, chatOpen: {}, thinking: {} },     // assets
+      as: { open: {}, picked: "" },     // assets
       change: { open: false, text: "", thinking: false, log: [] }                             // direction / subgoals
     },
     busy: "",           // what is being generated, for the indicator
@@ -1113,26 +1113,22 @@
     }
     var lv = r.leveled, list = lv.assets || [];
     if (!as.picked && r.asset_chosen) as.picked = r.asset_chosen.key;
-    var box = el("div", "ob-step");
-    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(8, "Assets")));
-    head.appendChild(el("span", "ob-count", list.length + " found · " + list.reduce(function (n, a) { return n + (a.children || []).length; }, 0) + " added at your level"));
+    var box = el("div", "ob-step ob-as-step");
+    var head = el("div", "ob-as-header");
+    head.appendChild(el("div", "ob-count", count(8, "Assets")));
+    head.appendChild(el("h1", "ob-as-h1", "What do you want to build on?"));
+    head.appendChild(el("div", "ob-as-sub", "Pick one. Rows with a › have simpler starting points inside."));
     box.appendChild(head);
-    box.appendChild(el("div", "ob-title", "What do you want to build on?"));
-    var tools = el("div", "ob-as-tools");
-    var expand = el("button", "ob-tiny", "Expand all ⤢"); expand.type = "button";
-    on(expand, "click", function () { list.forEach(function (a) { as.open[a.title] = true; }); draw(); });
-    var collapse = el("button", "ob-tiny", "Collapse all ⌃"); collapse.type = "button";
-    on(collapse, "click", function () { as.open = {}; draw(); });
-    tools.appendChild(expand); tools.appendChild(collapse); box.appendChild(tools);
     var group = el("div", "ob-as-list");
-    list.forEach(function (a) {
-      group.appendChild(assetRow(a, null));
-      (a.children || []).forEach(function (k) { group.appendChild(assetRow(k, a)); });
+    list.forEach(function (a, i) {
+      var kids = a.children || [], childPicked = kids.some(function (k) { return keyOf(k, a) === as.picked; });
+      var open_ = !!as.open[a.title] || childPicked;
+      group.appendChild(assetRow(a, null, { first: i === 0, open: open_, childPicked: childPicked }));
+      if (open_) kids.forEach(function (k) { group.appendChild(assetRow(k, a, {})); });
     });
     box.appendChild(group);
     var picked = as.picked ? findLocal(list, as.picked) : null;
-    var acts = attr(el("div", "ob-actions"), "data-between", "1");
-    acts.appendChild(el("span", "ob-hint", picked ? picked.title : ""));
+    var acts = el("div", "ob-actions");
     acts.appendChild(cta("Continue", !picked || st.busy === "choose", function () {
       st.busy = "choose"; draw();
       api("choose_asset", { key: as.picked }).then(function (out) {
@@ -1153,79 +1149,46 @@
     return null;
   }
 
-  function assetRow(a, parent) {
-    var as = st.ui.as, key = keyOf(a, parent), open_ = !!as.open[key], picked = as.picked === key;
-    var row = attr(el("div", "ob-as-row"), "data-child", parent ? "1" : "0");
-    var head = el("div", "ob-as-head");
-    if (parent) head.appendChild(el("span", "ob-as-elbow"));
-    head.appendChild(attr(el("span", "ob-mark"), "data-on", picked ? "1" : "0"));
+  // One row. A parent folds its simpler stand-ins behind an "N simpler"
+  // toggle; picking a row opens it and shows what it is and where it lives.
+  function assetRow(a, parent, o) {
+    var as = st.ui.as, key = keyOf(a, parent), picked = as.picked === key, shown = picked || !!o.childPicked;
+    var kids = a.children || [];
+    var row = attr(attr(el("div", "ob-as-row"), "data-child", parent ? "1" : "0"), "data-first", o.first ? "1" : "0");
+    attr(row, "data-on", picked ? "1" : "0");
+    if (parent) row.appendChild(el("span", "ob-as-elbow"));
+    row.appendChild(attr(el("span", "ob-mark"), "data-on", picked ? "1" : "0"));
     var text = el("span", "ob-as-text");
     var line = el("span", "ob-as-line");
     line.appendChild(el("span", "ob-as-title", a.title));
-    if (parent) line.appendChild(el("span", "ob-as-level", "at your level"));
-    else line.appendChild(el("span", "ob-as-meta", a.type + " · " + (a.availability || "unknown")));
+    line.appendChild(el("span", "ob-as-meta", a.type || ""));
+    if (parent) line.appendChild(el("span", "ob-as-level", "simpler"));
     text.appendChild(line);
-    if (parent) {
-      if (a.one_liner || a.description) text.appendChild(el("span", "ob-as-desc", a.one_liner || a.description));
-      if (a.why) { var why = el("span", "ob-as-why"); why.appendChild(el("span", "ob-as-lead", "Why · ")); why.appendChild(el("span", "", a.why)); text.appendChild(why); }
+    if (shown) {
+      var said = a.description || a.one_liner || "";
+      if (said) text.appendChild(el("span", "ob-as-desc", said));
+      if (parent && a.why) text.appendChild(el("span", "ob-as-why", a.why));
+      var links = (a.links || []).filter(function (l) { return l && l.url; });
+      if (links.length) {
+        var lrow = el("span", "ob-as-links");
+        links.forEach(function (l) {
+          var link = el("a", "ob-as-link", String(l.kind || "link").replace(/_/g, " ") + " ↗"); link.href = l.url; link.target = "_blank"; link.rel = "noopener";
+          on(link, "click", function (e) { if (e && e.stopPropagation) e.stopPropagation(); });
+          lrow.appendChild(link);
+        });
+        text.appendChild(lrow);
+      }
     }
-    head.appendChild(text);
-    var caret = el("button", "ob-as-caret", open_ ? "⌃" : "›"); caret.type = "button";
-    on(caret, "click", function (e) { if (e && e.stopPropagation) e.stopPropagation(); as.open[key] = !open_; draw(); });
-    head.appendChild(caret);
-    on(head, "click", function () { as.picked = key; draw(); });
-    row.appendChild(head);
-    if (open_) {
-      var body = el("div", "ob-as-body");
-      body.appendChild(el("div", "ob-as-desc", a.description || a.one_liner || ""));
-      if (a.what_you_can_do_with_it) { var can = el("div", "ob-as-can"); can.appendChild(el("span", "ob-as-lead", "What you can do with it · ")); can.appendChild(el("span", "", a.what_you_can_do_with_it)); body.appendChild(can); }
-      var links = el("div", "ob-as-links");
-      (a.links || []).forEach(function (l) {
-        var link = el("a", "ob-as-link", l.kind.replace(/_/g, " ") + " ↗"); link.href = l.url; link.target = "_blank"; link.rel = "noopener";
-        on(link, "click", function (e) { if (e && e.stopPropagation) e.stopPropagation(); });
-        links.appendChild(link);
-      });
-      var thread = as.threads[key] || [];
-      var chat = el("button", "ob-tiny ob-as-chatbtn", as.chatOpen[key] ? "Hide chat ⌃" : thread.length ? "Chat · " + thread.length + " ›" : "Ask about this ›"); chat.type = "button";
-      on(chat, "click", function () { as.chatOpen[key] = !as.chatOpen[key]; draw(); });
-      links.appendChild(chat); body.appendChild(links);
-      if (as.chatOpen[key]) body.appendChild(assetChat(a, key));
-      row.appendChild(body);
+    row.appendChild(text);
+    if (!parent && kids.length) {
+      var toggle = el("button", "ob-as-toggle"); toggle.type = "button"; toggle.setAttribute("aria-label", "show simpler options");
+      toggle.appendChild(el("span", "", kids.length + " simpler"));
+      toggle.appendChild(el("span", "ob-as-caret", o.open ? "⌃" : "›"));
+      on(toggle, "click", function (e) { if (e && e.stopPropagation) e.stopPropagation(); as.open = o.open ? {} : {}; if (!o.open) as.open[a.title] = true; draw(); });
+      row.appendChild(toggle);
     }
+    on(row, "click", function () { as.picked = key; as.open = {}; as.open[parent ? parent.title : a.title] = true; draw(); });
     return row;
-  }
-
-  var STARTERS = ["What would I actually change first?", "How long to get it running?", "Why is this in the paper?"];
-  function assetChat(a, key) {
-    var as = st.ui.as, thread = as.threads[key] || [], panel = el("div", "ob-as-chat");
-    thread.forEach(function (c) {
-      var t = attr(el("div", "ob-bs-turn"), "data-who", c.role); t.appendChild(el("span", "ob-bs-who", c.role === "user" ? "you" : "claude"));
-      t.appendChild(el("div", "ob-bs-text", c.content)); panel.appendChild(t);
-    });
-    if (as.thinking[key]) { var th = el("div", "ob-bs-turn"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); panel.appendChild(th); }
-    function ask(q) {
-      if (!q || as.thinking[key]) return;
-      as.threads[key] = (as.threads[key] || []).concat([{ role: "user", content: q }]); as.drafts[key] = ""; as.thinking[key] = true; draw();
-      api("asset_ask", { key: key, question: q }).then(function (out) {
-        as.thinking[key] = false; as.threads[key] = as.threads[key].concat([{ role: "assistant", content: out.answer }]); draw();
-      }).catch(function (e) { as.thinking[key] = false; as.threads[key] = as.threads[key].concat([{ role: "assistant", content: e.message }]); draw(); });
-    }
-    var asked = thread.filter(function (c) { return c.role === "user"; }).map(function (c) { return c.content; });
-    var left = STARTERS.filter(function (q) { return asked.indexOf(q) < 0; });
-    if (left.length && !as.thinking[key]) {
-      var seeds = el("div", "ob-seeds");
-      left.forEach(function (q) { var bt = el("button", "ob-seed", q); bt.type = "button"; seeds.appendChild(on(bt, "click", function () { ask(q); })); });
-      panel.appendChild(seeds);
-    }
-    var row = el("div", "ob-ask-row"), input = el("input");
-    input.value = as.drafts[key] || ""; input.placeholder = "ask about " + a.title + "…"; input.spellcheck = false;
-    var send = el("button", "ob-pill", "Ask"); send.type = "button";
-    if (!(as.drafts[key] || "").trim()) send.setAttribute("disabled", "disabled");
-    on(input, "input", function () { as.drafts[key] = input.value; send.disabled = !input.value.trim(); });
-    on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); ask((as.drafts[key] || "").trim()); } });
-    on(send, "click", function () { ask((as.drafts[key] || "").trim()); });
-    row.appendChild(input); row.appendChild(send); panel.appendChild(row);
-    return panel;
   }
 
   // --- 9 Direction, 10 Subgoals ---------------------------------------------------
