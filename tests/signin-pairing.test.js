@@ -53,6 +53,7 @@ function pairingPage(options = {}) {
       if (!elements.has(id)) elements.set(id, node());
       return elements.get(id);
     },
+    querySelectorAll() { return []; },
   };
   const session = options.signedIn === false ? null : {
     access_token: "browser-jwt",

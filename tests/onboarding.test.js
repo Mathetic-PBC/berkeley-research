@@ -88,6 +88,8 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
       const text = body.messages[0].content.map((b) => b.text || "").join("\n");
       const reply = /prior-knowledge diagnostic/.test(text) ? model.analysis
         : /calibration question/.test(text) ? model.grade
+        : /Write ONE follow-up question/.test(text) ? (typeof model.followUp === "function" ? model.followUp(text) : model.followUp)
+        : /Rewrite each passage at the new register/.test(text) ? (typeof model.rewrite === "function" ? model.rewrite(text) : model.rewrite)
         : /Ask 3 or 4 questions/.test(text) ? model.details
         : /exactly four goals/.test(text) ? model.goals
         : /identify the concrete inputs and outputs/.test(text) ? model.assets
@@ -333,22 +335,77 @@ test("a running analysis younger than three minutes is not started twice", async
   assert.equal(again.analysis_status, "done");
 });
 
-test("answer stores the row, grades it, and asks a follow-up when the grade disagrees", async () => {
-  const db = fake({ model: { grade: { level: 25, confidence: 0.9, rationale: "recognises only" } } });
+test("answer stores the row, grades it, and asks one follow-up written from what they said", async () => {
+  const seen = [];
+  const db = fake({ model: { grade: { level: 25, confidence: 0.9, rationale: "recognises only" },
+    followUp: (text) => { seen.push(text); return { question: "F25: you said attention weights -- weights of what?", sample_response: "F25 sample" }; } } });
   const { onboarding } = await OB.open(USER, {}, db.options);
+  Object.assign(db.tables.engelbart_onboardings[0], { analysis: ANALYSIS, analysis_status: "done" });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const out = await OB.answer(USER, db.tables.engelbart_onboardings[0], [], { area_index: 0, question_level: 75,
+    self_level: 75, answer: "I think it's about attention weights" }, CREDS, db.options);
+  assert.equal(out.graded_level, 25);
+  assert.deepEqual(out.follow_up, { question_level: 25, question: "F25: you said attention weights -- weights of what?", generated: true });
+  // The prompt carried their answer, the question, and where the grade put them.
+  assert.equal(seen.length, 1);
+  assert.match(seen[0], /attention weights/);
+  assert.match(seen[0], /q75/);
+  assert.match(seen[0], /placed the answer at 25/);
+  assert.equal(cals[0].sample_response, "s75");
+  assert.equal(cals[0].graded_level, 25);
+  // The follow-up is stored unanswered, with its own question and sample, so a
+  // reload finds it; and the reply carries both rows for the page.
+  assert.equal(cals.length, 2);
+  assert.equal(cals[1].question_level, 25);
+  assert.equal(cals[1].question, "F25: you said attention weights -- weights of what?");
+  assert.equal(cals[1].sample_response, "F25 sample");
+  assert.equal(cals[1].answered_at, null);
+  assert.deepEqual(out.calibrations.map((c) => [c.question_level, Boolean(c.answered_at)]), [[75, true], [25, false]]);
+  assert.deepEqual(OB.areaLevels(ANALYSIS, cals), [25, null], "an unanswered follow-up is not a level");
+
+  // Answering the follow-up grades against ITS sample, not the ladder's, and no
+  // further follow-up comes whatever the grade.
+  const second = await OB.answer(USER, db.tables.engelbart_onboardings[0], cals,
+    { area_index: 0, question_level: 25, self_level: 75, answer: "It weights inputs" }, CREDS, db.options);
+  assert.equal(second.follow_up, undefined);
+  assert.equal(cals.length, 2, "no third row");
+  assert.equal(cals[1].question, "F25: you said attention weights -- weights of what?");
+  assert.equal(cals[1].sample_response, "F25 sample");
+  assert.ok(cals[1].answered_at);
+  const gradeCalls = db.calls.filter((c) => c.url.endsWith("/v1/messages")).map((c) => JSON.parse(c.init.body).messages[0].content.map((b) => b.text || "").join("\n"));
+  assert.match(gradeCalls[gradeCalls.length - 1], /F25 sample/, "the follow-up's own sample is what it is graded against");
+  assert.deepEqual(OB.areaLevels(ANALYSIS, cals), [25, null]);
+});
+
+test("a follow-up the model cannot write falls back to the ladder's question at the graded level", async () => {
+  const db = fake({ model: { grade: { level: 25, confidence: 0.9, rationale: "recognises only" } } });   // no model.followUp: prose comes back
+  await OB.open(USER, {}, db.options);
   Object.assign(db.tables.engelbart_onboardings[0], { analysis: ANALYSIS, analysis_status: "done" });
   const out = await OB.answer(USER, db.tables.engelbart_onboardings[0], [], { area_index: 0, question_level: 75,
     self_level: 75, answer: "I think it's about attention" }, CREDS, db.options);
-  assert.equal(out.graded_level, 25);
-  assert.deepEqual(out.follow_up, { question_level: 25, question: "q25" });
-  const cal = db.tables.engelbart_onboarding_calibrations[0];
-  assert.equal(cal.sample_response, "s75");
-  assert.equal(cal.graded_level, 25);
-  // Second question in the same area: no further follow-up, whatever the grade.
-  const second = await OB.answer(USER, db.tables.engelbart_onboardings[0], db.tables.engelbart_onboarding_calibrations,
-    { area_index: 0, question_level: 25, self_level: 75, answer: "It weights inputs" }, CREDS, db.options);
-  assert.equal(second.follow_up, undefined);
-  assert.deepEqual(OB.areaLevels(ANALYSIS, db.tables.engelbart_onboarding_calibrations), [25, null]);
+  assert.deepEqual(out.follow_up, { question_level: 25, question: "q25", generated: false });
+  const pending = db.tables.engelbart_onboarding_calibrations[1];
+  assert.equal(pending.question, "q25");
+  assert.equal(pending.sample_response, "s25");
+  assert.equal(pending.answered_at, null);
+});
+
+test("rewrite sends the screen's passages to the model at the asked register and moves the row's depth", async () => {
+  const seen = [];
+  const db = fake({ model: { rewrite: (text) => { seen.push(text); return { texts: ["A plainer first line.", "A plainer second."] }; } } });
+  const row = await ready(db, { depth: "technical" });
+  const out = await OB.rewrite(USER, row, [], { from: "technical", to: "everyday", texts: ["Attention weights the inputs.", "Softmax normalises."] }, CREDS, db.options);
+  assert.deepEqual(out, { texts: ["A plainer first line.", "A plainer second."], level: "everyday" });
+  assert.match(seen[0], /written technical/);
+  assert.match(seen[0], /Write for somebody who has not programmed/, "the new register's own rule is in the prompt");
+  assert.match(seen[0], /1\. Attention weights the inputs\.\n2\. Softmax normalises\./);
+  assert.equal(db.tables.engelbart_onboardings[0].depth, "everyday", "what comes next is written there too");
+  await assert.rejects(OB.rewrite(USER, row, [], { to: "shouty", texts: ["x"] }, CREDS, db.options), (e) => e.statusCode === 400);
+  await assert.rejects(OB.rewrite(USER, row, [], { to: "some", texts: [] }, CREDS, db.options), (e) => e.statusCode === 400);
+  // The wrong count back is a 502, never a partial swap.
+  const short = fake({ model: { rewrite: { texts: ["only one"] } } });
+  const row2 = await ready(short, {});
+  await assert.rejects(OB.rewrite(USER, row2, [], { to: "some", texts: ["a", "b"] }, CREDS, short.options), (e) => e.statusCode === 502);
 });
 
 test("assessedDepth shifts one stop on the graded mean and names the weakest area", () => {
@@ -652,6 +709,20 @@ test("leveled waits for the hunt, then re-cuts the assets with children and chec
   assert.equal((await OB.leveled(USER, row, cals, {}, null, db.options)).leveled_status, "done");
 });
 
+test("once the resources are fitted the model is asked whether they are ready, and its answer rides on the turn", async () => {
+  const asked = [];
+  const db = fake({ model: { brainstorm: (text) => { asked.push(text); return { say: "You have enough to start.", card: "none", interest: "timing", ready: true }; } } });
+  const row = await ready(db, { leveled_status: "done" });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const out = await OB.brainstorm(USER, row, cals, { text: "I want the timing side" }, CREDS, db.options);
+  assert.match(asked[0], /"ready": true \| false/);
+  assert.match(asked[0], /`none` is allowed only with `ready` true/);
+  assert.equal(out.ready, true);
+  assert.equal(db.tables.engelbart_onboarding_turns[1].card.ready, true);
+  const again = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
+  assert.equal(again.ready, true, "handing back the last card keeps its verdict");
+});
+
 test("a brainstorm turn stores both sides, carries the card, and keeps the interest current", async () => {
   const asked = [];
   const db = fake({ model: { brainstorm: (text) => { asked.push(text); return asked.length === 1
@@ -675,7 +746,13 @@ test("a brainstorm turn stores both sides, carries the card, and keeps the inter
   assert.equal(row.step, OB.STEP.brainstorm);
   const turns = db.tables.engelbart_onboarding_turns;
   assert.deepEqual(turns.map((t) => t.role), ["assistant", "user", "assistant"]);
+  assert.deepEqual(turns[1].card, { answers: { drew: "The math" } }, "the user turn keeps the answers beside the text");
   assert.equal(turns[2].card.card, "focus");
+  // Readiness is the model's call, and only asked for once the resources are fitted.
+  assert.match(asked[0], /opening turn/);
+  assert.doesNotMatch(asked[1], /"ready"/, "not asked while the resources are still being fitted");
+  assert.equal(second.ready, false);
+  assert.equal(turns[2].card.ready, false);
   const opened = await OB.open(USER, {}, db.options);
   assert.equal(opened.turns.length, 3, "the transcript comes back with the row");
   assert.equal(opened.turns[0].card.questions.items[0].id, "drew");

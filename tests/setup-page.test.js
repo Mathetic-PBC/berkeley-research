@@ -39,7 +39,7 @@ test("the stylesheet carries the reference tokens", () => {
 });
 
 test("the second half asks, grades, generates and creates", () => {
-  for (const action of ["analysis", "assets", "answer", "topics_done", "leveled", "brainstorm", "asset_ask", "choose_asset", "direction", "subgoals", "todos", "ask", "create"]) {
+  for (const action of ["analysis", "assets", "answer", "topics_done", "leveled", "brainstorm", "choose_asset", "direction", "subgoals", "todos", "ask", "create"]) {
     assert.match(js, new RegExp(`api\\("${action}"`), action);
   }
   assert.match(js, /action: "issue"/);

@@ -93,6 +93,37 @@ npm run check
 vercel dev
 ```
 
+### Browser → CLI → browser simulation
+
+The Playwright simulation treats `berkeley-research` and Engelbart as one
+cross-process system. It serves the real setup UI against deterministic local
+device/onboarding endpoints, installs the checked-out Engelbart artifact into
+an isolated temporary machine, invokes the installed Claude hook, opens its
+loopback workspace, edits a goal in the browser, and asserts that the next
+Claude hook receives that edit. It never writes to the user's Claude or
+Engelbart directories.
+
+Put `berkeley-research` and `claude-plugins` beside each other, then run:
+
+```sh
+npm ci
+npx playwright install chromium
+npm run test:e2e:round-trip
+```
+
+Use `npm run test:e2e:headed` to watch the browser path. Set
+`CLAUDE_PLUGINS_DIR` when the plugin checkout is elsewhere. Firefox and WebKit
+exercise the browser-only handoff with `npm run test:e2e:compat`; the real
+installer/hook round trip remains Chromium because native operating-system
+coverage is the variable under test there.
+
+The GitHub Actions matrix runs the installed round trip on macOS, Ubuntu, and
+Windows, plus Firefox and WebKit compatibility on Ubuntu. The workflow exists
+in both repositories: each pull request tests its own commit against the other
+repository's `main`, while each manual dispatch accepts an alternate ref for a
+coordinated two-repository change. A weekly Berkeley run catches drift after
+both default branches move.
+
 `npm run verify:proxy` checks the live LiteLLM proxy from this side of the
 boundary: it sends the dated model ids Claude Code actually uses
 (`claude-sonnet-4-5-20250929`, not `claude-sonnet-4-6`) and asserts they come

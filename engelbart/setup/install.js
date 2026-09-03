@@ -1,17 +1,16 @@
-/* Install and Done: terminal instructions one at a time, a keyboard that shows
- * which keys to press, and a row to copy each command from.
+/* Install and Done: terminal instructions one at a time, the keys to press
+ * stated as key chips, and a row to copy each command from.
  *
  *   window.EngelbartInstall.render(container, opts)
  *   window.EngelbartInstall.stop(container)
  *   window.EngelbartInstall.commands(os, code)
  *
  * render draws everything inside `container` and never touches the page
- * outside it. Rendering again into the same container replaces what was there
- * and stops its animation; stop() does only the latter, for a page that is
- * about to empty the container itself. Same CSP as setup.js: no inline style,
- * every look is a class in setup.css, state is a data-attribute toggled on a
- * node. The keyboard animates by toggling data-on on its key nodes; nothing
- * is rebuilt on a tick.
+ * outside it. Rendering again into the same container replaces what was
+ * there. stop() is kept for the page that calls it before emptying the
+ * container; nothing animates any more, so it has nothing to do. Same CSP as
+ * setup.js: no inline style, every look is a class in setup.css, state is a
+ * data-attribute toggled on a node.
  *
  * opts: variant "install" | "bart"; code and expiresInSeconds for the connect
  * command; onDone() from the final button; onNewCode() from "Get a new code";
@@ -20,7 +19,6 @@
   "use strict";
 
   var STORE = "engelbart.install";
-  var TICK = 140;   // ms per animation frame; a keystroke is one frame lit, one dark
 
   var OSES = [
     { key: "mac", label: "macOS", ask: "Which Mac?", why: "Apple menu › About This Mac names the chip.",
@@ -37,21 +35,19 @@
   // landing page and README already give: it needs no Node or bun first,
   // verifies the binary's SHA-256, then runs `engelbart install "$@"`, so
   // `sh -s -- --code … --no-open` reaches the CLI (scripts/install.sh in
-  // claude-plugins/engelbart forwards "$@"). The Done screen's
-  // `bunx engelbart-cli --code …` presumes bun, which nothing on this page
-  // installs, so that form is not used here. Windows takes the PowerShell
+  // claude-plugins/engelbart forwards "$@"). Windows takes the PowerShell
   // scriptblock form because `irm | iex` cannot forward arguments. --no-open
   // on every OS: the CLI would otherwise open its own setup page, and the
   // reader is already on it. The chip pick does not change a command; both
-  // installers detect the architecture themselves.
+  // installers detect the architecture themselves. There is no separate
+  // Claude Code command: the installer puts Claude Code in place itself when
+  // the machine has none, and updates one that is too old.
   function commands(os, code) {
     var c = code || "XXXX-XXXX-XXXX";
     if (os === "windows") return {
-      claude: "irm https://claude.ai/install.ps1 | iex",
       engelbart: "& ([scriptblock]::Create((irm https://berkeley.mathetic.com/engelbart/install.ps1))) --code " + c + " --no-open"
     };
     return {
-      claude: "curl -fsSL https://claude.ai/install.sh | bash",
       engelbart: "curl -fsSL https://berkeley.mathetic.com/engelbart/install.sh | sh -s -- --code " + c + " --no-open"
     };
   }
@@ -87,130 +83,63 @@
     row.appendChild(copy); box.appendChild(row);
   }
 
-  // --- the keyboard ------------------------------------------------------------
+  // --- the keys ------------------------------------------------------------------
   //
-  // Three letter rows and a modifier row, as divs. A frame is the set of keys
-  // lit for one tick; a sequence is the frames of one instruction, looped.
+  // What to press, stated rather than acted out: a chord is its keys as
+  // chips, side by side; a thing to type is said in words; "then" sits
+  // between the parts. A drawn keyboard lighting up letter by letter told the
+  // reader less than this line does and took longer to say it.
 
-  var ROWS = [
-    ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
-    ["a", "s", "d", "f", "g", "h", "j", "k", "l", "enter"],
-    ["shift", "z", "x", "c", "v", "b", "n", "m", "slash"]
-  ];
-  var BOTTOM = { mac: ["ctrl", "alt", "cmd", "space"], windows: ["ctrl", "win", "alt", "space"], linux: ["ctrl", "alt", "space"] };
-  var WIDE = { enter: "wide", shift: "wide", space: "space", ctrl: "mod", alt: "mod", cmd: "mod", win: "mod" };
-
-  function cap(os, key) {
-    if (key === "enter") return "⏎";
-    if (key === "shift") return "⇧";
-    if (key === "slash") return "/";
-    if (key === "space") return "";
-    if (key === "cmd") return "⌘";
-    if (key === "win") return "⊞";
-    if (key === "ctrl") return os === "mac" ? "⌃" : "Ctrl";
-    if (key === "alt") return os === "mac" ? "⌥" : "Alt";
-    return key;
-  }
-  function keyOf(ch) { return ch === "/" ? "slash" : ch === " " ? "space" : ch.toLowerCase(); }
-
-  function keyboard(os) {
-    var kbd = el("div", "ob-ins-kbd"), keys = {};
-    ROWS.concat([BOTTOM[os]]).forEach(function (row, i) {
-      var r = attr(el("div", "ob-ins-krow"), "data-i", String(i + 1));
-      row.forEach(function (k) {
-        var node = attr(attr(el("div", "ob-ins-key", cap(os, k)), "data-key", k), "data-on", "0");
-        if (WIDE[k]) attr(node, "data-w", WIDE[k]);
-        keys[k] = node; r.appendChild(node);
-      });
-      kbd.appendChild(r);
+  function keysRow(how) {
+    var row = el("div", "ob-ins-keys");
+    how.forEach(function (part, i) {
+      if (i) row.appendChild(el("span", "ob-ins-then", "then"));
+      if (part.keys) {
+        var chord = el("span", "ob-ins-chord");
+        part.keys.forEach(function (k) { chord.appendChild(el("kbd", "ob-kbd", k)); });
+        row.appendChild(chord);
+      } else {
+        row.appendChild(el("span", "ob-ins-say", part.text));
+      }
     });
-    var wrap = el("div", "ob-ins-kwrap");
-    wrap.appendChild(kbd);
-    var label = attr(el("div", "ob-ins-kcap", ""), "data-on", "0");
-    wrap.appendChild(label);
-    return { node: wrap, keys: keys, label: label };
-  }
-
-  function seq() {
-    var frames = [];
-    function push(keys, label, n) { for (var i = 0; i < n; i++) frames.push({ keys: keys, label: label }); }
-    var s = {
-      frames: frames,
-      chord: function (keys, label) { push(keys, label, 3); push([], label, 2); return s; },
-      press: function (key, label) { push([key], label, 2); push([], label, 2); return s; },
-      type: function (word, label) {
-        for (var i = 0; i < word.length; i++) { push([keyOf(word[i])], label, 1); push([], label, 1); }
-        push([], label, 1); return s;
-      },
-      pause: function () { push([], "", 6); return s; }
-    };
-    return s;
+    return row;
   }
 
   // --- the steps ---------------------------------------------------------------
 
   function openStep(os, again) {
-    var s = seq(), title = again ? "Open a new terminal" : "Open a terminal";
-    if (os === "mac") {
-      s.chord(["cmd", "space"], "⌘ Space").type("terminal", "Type Terminal").press("enter", "⏎").pause();
-      return { title: title, sub: "Press ⌘ Space, type Terminal, then press ⏎.", frames: s.frames };
-    }
-    if (os === "windows") {
-      s.press("win", "⊞").type("powershell", "Type PowerShell").press("enter", "⏎").pause();
-      return { title: title, sub: "Press ⊞, type PowerShell, then press ⏎.", frames: s.frames };
-    }
-    s.chord(["ctrl", "alt", "t"], "Ctrl Alt T").pause();
-    return { title: title, sub: "Press Ctrl Alt T.", frames: s.frames };
+    var title = again ? "Open a new terminal" : "Open a terminal";
+    if (os === "mac") return { title: title, sub: "Press ⌘ Space, type Terminal, then press ⏎.",
+      how: [{ keys: ["⌘", "Space"] }, { text: "type Terminal" }, { keys: ["⏎"] }] };
+    if (os === "windows") return { title: title, sub: "Press ⊞, type PowerShell, then press ⏎.",
+      how: [{ keys: ["⊞"] }, { text: "type PowerShell" }, { keys: ["⏎"] }] };
+    return { title: title, sub: "Press Ctrl Alt T.", how: [{ keys: ["Ctrl", "Alt", "T"] }] };
   }
-  function pasteFrames(os) {
-    var s = seq();
-    if (os === "mac") s.chord(["cmd", "v"], "⌘ V");
-    else if (os === "windows") s.chord(["ctrl", "v"], "Ctrl V");
-    else s.chord(["ctrl", "shift", "v"], "Ctrl ⇧ V");
-    return s.press("enter", "⏎").pause().frames;
+  function pasteHow(os) {
+    var paste = os === "mac" ? ["⌘", "V"] : os === "windows" ? ["Ctrl", "V"] : ["Ctrl", "⇧", "V"];
+    return [{ keys: paste }, { keys: ["⏎"] }];
   }
-  function typeFrames(word, label) { return seq().type(word, label).press("enter", "⏎").pause().frames; }
+  function typeHow(word) { return [{ text: "type " + word }, { keys: ["⏎"] }]; }
 
   function steps(st) {
     var os = st.os.key, cmds = commands(os, st.opts.code);
     if (st.opts.variant === "bart") return [
       openStep(os, true),
-      { title: "Start Claude Code", sub: "Type claude and press ⏎.", cmd: { label: "Run", text: "claude" }, frames: typeFrames("claude", "Type claude") },
-      { title: "Open Engelbart", sub: "Type /bart and press ⏎. Engelbart picks up the project you just set up.", cmd: { label: "Then", text: "/bart" }, frames: typeFrames("/bart", "Type /bart") },
-      { done: true, title: "You're set up.", sub: "Engelbart is running with your first project. Come back here any time to set up another.", button: "Done" }
+      { title: "Start Claude Code", sub: "Type claude and press ⏎.", cmd: { label: "Run", text: "claude" }, how: typeHow("claude") },
+      { title: "Trust the folder", sub: "Claude Code asks whether you trust the folder it opened in. Choose “Yes, I trust this folder” with ↓, then press ⏎.", how: [{ keys: ["↓"] }, { keys: ["⏎"] }] },
+      { title: "Open Engelbart", sub: "Type /bart and press ⏎.", cmd: { label: "Then", text: "/bart" }, how: typeHow("/bart") },
+      { done: true, title: "You're set up.", sub: "", button: "Done" }
     ];
     return [
       openStep(os, false),
-      { title: "Install Claude Code", sub: "Copy this, paste it into the terminal, and press ⏎.", cmd: { label: "Claude Code", text: cmds.claude },
-        hint: "Skip this if Claude Code is already installed.", frames: pasteFrames(os) },
-      { title: "Install Engelbart and connect this account", sub: "Paste it and press ⏎. It installs Engelbart and pairs this account with your machine — no second sign-in.",
-        cmd: { label: "Engelbart", text: cmds.engelbart }, code: true, frames: pasteFrames(os) },
-      { done: true, title: "Engelbart is connected.", sub: "Once the command has finished, your machine is paired with this account and the project is ready.", button: "I've run it" }
+      { title: "Install Engelbart and connect this account",
+        sub: "Copy the command, paste it into the terminal, and press ⏎. It installs Claude Code if this machine has none, installs Engelbart, and pairs this account with your machine — no second sign-in.",
+        cmd: { label: "Engelbart", text: cmds.engelbart }, code: true, how: pasteHow(os) },
+      { done: true, title: "Engelbart is connected.", sub: "", button: "I've run it" }
     ];
   }
 
   // --- drawing -----------------------------------------------------------------
-
-  function stopTimer(st) { if (st.timer != null) { clearInterval(st.timer); st.timer = null; } }
-
-  function animate(st, kb, frames) {
-    stopTimer(st);
-    var lit = [], i = -1;
-    function apply(frame) {
-      lit.forEach(function (k) { if (kb.keys[k]) kb.keys[k].setAttribute("data-on", "0"); });
-      lit = frame.keys;
-      lit.forEach(function (k) { if (kb.keys[k]) kb.keys[k].setAttribute("data-on", "1"); });
-      if (kb.label.textContent !== frame.label) kb.label.textContent = frame.label;
-      kb.label.setAttribute("data-on", frame.label ? "1" : "0");
-    }
-    function tick() {
-      // The page may have emptied the container without telling us.
-      if (st.container.isConnected === false) { stopTimer(st); return; }
-      i = (i + 1) % frames.length; apply(frames[i]);
-    }
-    tick();
-    st.timer = setInterval(tick, TICK);
-  }
 
   function remember(st) {
     try { window.localStorage.setItem(STORE, JSON.stringify({ os: st.os ? st.os.key : null, arch: st.arch ? st.arch.key : null })); } catch (e) {}
@@ -258,7 +187,7 @@
     var box = el("div", "ob-step ob-done");
     box.appendChild(el("span", "ob-check", "✓"));
     box.appendChild(el("div", "ob-done-t", step.title));
-    box.appendChild(el("div", "ob-done-s", step.sub));
+    if (step.sub) box.appendChild(el("div", "ob-done-s", step.sub));
     var acts = el("div", "ob-done-acts");
     acts.appendChild(on(button("ob-ghost", "Back"), "click", function () { st.i -= 1; draw(st); }));
     acts.appendChild(cta(step.button, function () { if (st.opts.onDone) st.opts.onDone(); }));
@@ -281,9 +210,7 @@
       row.appendChild(on(button("ob-ghost", "Get a new code"), "click", function () { if (st.opts.onNewCode) st.opts.onNewCode(); }));
       box.appendChild(row);
     }
-    if (step.hint) box.appendChild(el("div", "ob-hint ob-ins-hint", step.hint));
-    var kb = keyboard(st.os.key);
-    box.appendChild(kb.node);
+    if (step.how) box.appendChild(keysRow(step.how));
     var nav = el("div", "ob-nav");
     nav.appendChild(on(button("ob-arrow", "←"), "click", function () {
       if (st.i === 0) { st.phase = "arch"; } else { st.i -= 1; }
@@ -297,30 +224,22 @@
     nav.appendChild(pd);
     nav.appendChild(cta("Continue", function () { st.i += 1; draw(st); }));
     box.appendChild(nav);
-    st.frames = step.frames; st.kb = kb;
     return box;
   }
 
   function draw(st) {
-    stopTimer(st);
-    st.frames = null; st.kb = null;
     var box = st.phase === "os" ? drawOs(st) : st.phase === "arch" ? drawArch(st) : drawStep(st);
     st.container.textContent = "";
     st.container.appendChild(box);
-    if (st.frames) animate(st, st.kb, st.frames);
   }
 
   // --- the api -----------------------------------------------------------------
 
-  function stop(container) {
-    var st = container && container.__engelbartInstall;
-    if (st) stopTimer(st);
-  }
+  function stop(container) { void container; }
 
   function render(container, opts) {
     opts = opts || {};
-    stop(container);
-    var st = { container: container, opts: opts, os: null, arch: null, phase: "os", i: 0, timer: null };
+    var st = { container: container, opts: opts, os: null, arch: null, phase: "os", i: 0 };
     var os = opts.os, arch = opts.arch;
     if (!os) {
       try {
@@ -333,7 +252,7 @@
     st.phase = !st.os ? "os" : !st.arch ? "arch" : "step";
     container.__engelbartInstall = st;
     draw(st);
-    return { stop: function () { stopTimer(st); } };
+    return { stop: function () {} };
   }
 
   var api = { render: render, stop: stop, commands: commands };

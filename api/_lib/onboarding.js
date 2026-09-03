@@ -490,17 +490,23 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
   const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");
   const said = userTurnText(body, lastAssistant && lastAssistant.card);
   if (said) {
-    const made = await addTurn(user, row, "brainstorm", "", "user", said, null, options);
+    // The answers ride along with the text, so the page can redraw the card
+    // they answered with their choices marked instead of a flattened line.
+    const made = await addTurn(user, row, "brainstorm", "", "user", said, userTurnCard(body), options);
     turns.push(made);
   } else if (turns.length && !(body && body.again)) {
     // Nothing new to say and a conversation already open: the last card
     // stands, so hand it back rather than ask the model to repeat itself.
     return { ...publicReply(lastAssistant), leveled_status: row.leveled_status, interest: row.interest || "" };
   }
+  // Whether they are ready to plan is the model's call, and it is only asked
+  // once the fitted resources exist: a plan before them would be premature
+  // whatever the conversation says.
+  const readyAsked = row.leveled_status === "done";
   const reply = await OM.brainstorm({ reader: readerOf(row, calibrations), paper: paperOf(row),
-    assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })) },
-    credentials, options);
-  const card = { card: reply.card, questions: reply.questions, focus: reply.focus };
+    assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })),
+    readyAsked }, credentials, options);
+  const card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: readyAsked && reply.ready === true };
   const made = await addTurn(user, row, "brainstorm", "", "assistant", assistantTurnText(reply), card, options);
   const values = { step: Math.max(Number(row.step) || 0, STEP.brainstorm) };
   if (reply.interest) values.interest = reply.interest;
@@ -511,7 +517,24 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
 function publicReply(turn) {
   const card = turn && turn.card ? turn.card : { card: "none" };
   return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split("\n(")[0] : "",
-    card: card.card || "none", questions: card.questions, focus: card.focus };
+    card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true };
+}
+
+// What the reader answered with, kept beside the user turn: the answers by
+// question id, the focus pick and note, and any typed text.
+function userTurnCard(body) {
+  const out = {};
+  if (body && body.answers && typeof body.answers === "object") {
+    out.answers = {};
+    for (const [k, v] of Object.entries(body.answers)) {
+      const key = one(k, 40); if (!key) continue;
+      out.answers[key] = Array.isArray(v) ? v.map((x) => one(x, 160)).filter(Boolean).slice(0, 12) : long(v, 1000);
+    }
+  }
+  const pick = one(body && body.pick, 160); if (pick) out.pick = pick;
+  const note = long(body && body.note, 1000); if (note) out.note = note;
+  const text = long(body && body.text, 2000); if (text) out.text = text;
+  return Object.keys(out).length ? out : null;
 }
 
 // --- assets: ask, choose ------------------------------------------------------
@@ -620,9 +643,20 @@ async function answer(user, row, calibrations, body, credentials, options = {}) 
   const said = long(body.answer, 2000);
   if (!OM.LEVELS.includes(level) || !OM.LEVELS.includes(self)) throw fail("That level is not on the ladder", 400);
   if (!said) throw fail("Write an answer first", 400);
-  const found = questionAt(row.analysis, areaIndex, level);
-  if (!found) throw fail("That question is not in this analysis", 400);
+  const area = row.analysis && Array.isArray(row.analysis.areas) ? row.analysis.areas[areaIndex] : null;
+  if (!area) throw fail("That area is not in this analysis", 400);
   const prior = calibrations.filter((c) => Number(c.area_index) === areaIndex);
+  const existing = prior.find((c) => Number(c.question_level) === level);
+  // The question being answered is the ladder's, unless a follow-up was
+  // written for this level from their first answer: that row already holds
+  // its own question and sample, and those are what the grade is against.
+  const ladder = questionAt(row.analysis, areaIndex, level);
+  const source = existing && existing.question && !existing.answered_at
+    ? { question: existing.question, sample_response: existing.sample_response || "" }
+    : existing && existing.question && ladder && existing.question !== ladder.question.question
+      ? { question: existing.question, sample_response: existing.sample_response || "" }
+      : ladder ? ladder.question : null;
+  if (!source) throw fail("That question is not in this analysis", 400);
   // Two questions per area is the whole diagnostic: the reader's own, and at
   // most one follow-up. Re-answering either is allowed; a third is not, so the
   // page cannot walk an area up level by level.
@@ -630,44 +664,62 @@ async function answer(user, row, calibrations, body, credentials, options = {}) 
   if (answered.length >= 2 && !answered.some((c) => Number(c.question_level) === level)) {
     throw fail("That area has been asked enough", 400);
   }
-  const existing = prior.find((c) => Number(c.question_level) === level);
-  const values = { area: found.area.area, parent_field: found.area.parent_field, self_level: self,
-    question: found.question.question, sample_response: found.question.sample_response,
+  const values = { area: area.area, parent_field: area.parent_field, self_level: self,
+    question: source.question, sample_response: source.sample_response,
     answer: said, answered_at: new Date().toISOString(), graded_level: null, grade_confidence: null, grade_rationale: "" };
   let cal;
   if (existing) {
     const rows = await patchRows(CALIBRATIONS, `${eq("id", existing.id)}`, values, options);
     cal = Object.assign(existing, wroteOne(rows));
   } else {
-    // Upsert on the table's own unique key: a caller array that has gone stale
-    // must not turn a re-answer into a 409, which the page would show as the
-    // gateway's "credit exhausted" rather than as the answer landing.
-    const rows = await insertRows(CALIBRATIONS, [{ onboarding_id: row.id, user_id: user.id, area_index: areaIndex,
-      question_level: level, ...values }], { ...options,
-      query: "on_conflict=onboarding_id,area_index,question_level",
-      prefer: "resolution=merge-duplicates,return=representation" });
-    cal = wroteOne(rows);
-    // By id, not by identity: the row came back over the wire, so it is never
-    // the same object the caller already holds for a re-answered question.
-    const at = calibrations.findIndex((c) => c.id === cal.id);
-    if (at < 0) calibrations.push(cal); else calibrations[at] = cal;
+    cal = await upsertCalibration(user, row, calibrations, areaIndex, level, values, options);
   }
-  const graded = await OM.grade({ area: found.area.area, question: found.question.question, level,
-    sample: found.question.sample_response, answer: said }, credentials, options);
+  const graded = await OM.grade({ area: area.area, question: source.question, level,
+    sample: source.sample_response, answer: said }, credentials, options);
   if (graded) {
     const rows = await patchRows(CALIBRATIONS, `${eq("id", cal.id)}`, { graded_level: graded.level,
       grade_confidence: graded.confidence, grade_rationale: graded.rationale }, options);
     Object.assign(cal, wroteOne(rows));
   }
-  const out = { graded_level: cal.graded_level, grade_confidence: cal.grade_confidence, grade_rationale: cal.grade_rationale };
+  const out = { graded_level: cal.graded_level, grade_confidence: cal.grade_confidence, grade_rationale: cal.grade_rationale,
+    calibrations: [publicRow(cal)] };
   // One follow-up, at the level the grade found, when it disagrees with the
-  // self-rating and this was the area's first question.
+  // self-rating and this was the area's first question. It is written from
+  // what they said, and it is stored unanswered so a reload, or a walk to
+  // another area and back, finds the same question waiting.
   const first = prior.length === 0 || (prior.length === 1 && prior[0].id === cal.id);
   if (first && graded && Math.abs(graded.level - self) >= 25 && graded.level !== level) {
-    const next = questionAt(row.analysis, areaIndex, graded.level);
-    if (next) out.follow_up = { question_level: graded.level, question: next.question.question };
+    const made = await OM.followUp({ reader: readerOf(row, calibrations), area: area.area, parent_field: area.parent_field || "",
+      question: source.question, level, self_level: self, answer: said, graded_level: graded.level,
+      graded_rationale: graded.rationale, sample: source.sample_response }, credentials, options);
+    const fallback = questionAt(row.analysis, areaIndex, graded.level);
+    const next = made || (fallback ? fallback.question : null);
+    if (next) {
+      const pending = await upsertCalibration(user, row, calibrations, areaIndex, graded.level, {
+        area: area.area, parent_field: area.parent_field, self_level: self,
+        question: next.question, sample_response: next.sample_response || "",
+        answer: "", answered_at: null, graded_level: null, grade_confidence: null, grade_rationale: "" }, options);
+      out.follow_up = { question_level: graded.level, question: next.question, generated: Boolean(made) };
+      out.calibrations.push(publicRow(pending));
+    }
   }
   return out;
+}
+
+// Upsert on the table's own unique key: a caller array that has gone stale
+// must not turn a re-answer into a 409, which the page would show as the
+// gateway's "credit exhausted" rather than as the answer landing.
+async function upsertCalibration(user, row, calibrations, areaIndex, level, values, options) {
+  const rows = await insertRows(CALIBRATIONS, [{ onboarding_id: row.id, user_id: user.id, area_index: areaIndex,
+    question_level: level, ...values }], { ...options,
+    query: "on_conflict=onboarding_id,area_index,question_level",
+    prefer: "resolution=merge-duplicates,return=representation" });
+  const cal = wroteOne(rows);
+  // By id, not by identity: the row came back over the wire, so it is never
+  // the same object the caller already holds for a re-answered question.
+  const at = calibrations.findIndex((c) => c.id === cal.id);
+  if (at < 0) calibrations.push(cal); else calibrations[at] = cal;
+  return cal;
 }
 
 // Each area's level: the most recently GRADED answer in it. Only when nothing
@@ -790,6 +842,23 @@ async function ask(user, row, calibrations, body, credentials, options = {}) {
   return { answer: made.answer, level: reader.depth };
 }
 
+// The screen at another register. The passages come from the page, the
+// rewritten ones go back in the same order, and the reader's chosen depth
+// follows: what comes next is generated at the register they just asked for.
+const REWRITE_MAX = 40;
+async function rewrite(user, row, calibrations, body, credentials, options = {}) {
+  requireOpen(row);
+  const to = String(body && body.to);
+  if (!DEPTH_KEYS.includes(to)) throw fail("That register is not on the slider", 400);
+  const texts = (Array.isArray(body && body.texts) ? body.texts : []).map((t) => long(t, 2400)).filter(Boolean).slice(0, REWRITE_MAX);
+  if (!texts.length) throw fail("Nothing on the screen to rewrite", 400);
+  const from = DEPTH_KEYS.includes(String(body && body.from)) ? String(body.from) : (row.depth || "everyday");
+  const reader = readerOf(row, calibrations);
+  const made = await OM.rewrite({ reader, from, to, texts }, credentials, options);
+  if (row.depth !== to) await patch(row, { depth: to }, options);
+  return { texts: made.texts, level: to };
+}
+
 // --- create -------------------------------------------------------------------
 
 function toPayload(row, calibrations) {
@@ -866,7 +935,7 @@ async function create(user, row, calibrations, body, options = {}) {
 
 module.exports = {
   STEP, STEP_FIELDS, RUNNING_STALE_MS, MAX_PDF_BYTES,
-  open, reset, step, sources, analysis, answer, details, goals, todos, ask, create,
+  open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
   assets: assetsAction, topicsDone, leveled: leveledAction, brainstorm: brainstormAction, assetAsk, chooseAsset,
   direction: directionAction, subgoals: subgoalsAction,
   areaLevels, knowledgeOf, assessedDepth, readerOf, toPayload, analysisRunning, publicRow,

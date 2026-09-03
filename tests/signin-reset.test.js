@@ -46,6 +46,7 @@ function signinPage(options = {}) {
     body: { classList: classList() },
     documentElement: { removeAttribute() {}, setAttribute() {} },
     getElementById(id) { if (!elements.has(id)) elements.set(id, node()); return elements.get(id); },
+    querySelectorAll() { return []; },
   };
   const session = options.session || null;
   const history = { replaced: [] };
@@ -178,7 +179,11 @@ test("the account panel has no accent rail and no tinted callouts", () => {
   const panel = page.slice(page.indexOf('id="download-panel"'), page.indexOf("</section>", page.indexOf('id="download-panel"')));
   assert.doesNotMatch(panel, /class="callout"/);
   assert.match(panel, /class="cap"/);
-  assert.match(panel, /id="copy-key" class="cmd-copy"/);
   assert.match(panel, /id="setup-cmd" class="cmd-text"/);
-  assert.match(panel, /href="\/engelbart\/setup"/);
+  assert.match(panel, /class="go" href="\/engelbart\/setup"/, "one full-width pill leads to setup");
+  assert.match(panel, /engelbart-key --disconnect/, "how to go back to your own account");
+  assert.match(panel, /engelbart auth/, "how to come back to the credit");
+  assert.match(panel, /eval "\$\(engelbart env\)"/, "how to use the credit in one terminal");
+  assert.match(panel, /unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL/);
+  assert.doesNotMatch(panel, /Hudson and David/);
 });

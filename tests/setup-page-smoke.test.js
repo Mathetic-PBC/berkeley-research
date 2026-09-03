@@ -31,10 +31,17 @@ function makeEl(tag) {
     fire(name, event) { (node.listeners[name] || []).slice().forEach((fn) => fn({ preventDefault() {}, ...event })); },
     focus() { node.focused = true; },
     getBoundingClientRect() { return { left: 0, top: 0, width: 400, height: 56 }; },
+    click() { node.fire("click", { target: node }); },
+    querySelectorAll(selector) {
+      assert.equal(selector, ".ob-cta", "the stub only knows the primary-button lookup");
+      return byClass(node, "ob-cta");
+    },
     querySelector(selector) {
-      assert.equal(selector, "[autofocus]", "the stub only knows the autofocus lookup");
+      // The stub knows one attribute-presence lookup, "[name]".
+      const m = /^\[([a-z-]+)\]$/.exec(selector);
+      assert.ok(m, `the stub only knows [attribute] lookups, not ${selector}`);
       let hit = null;
-      (function walk(n) { if (hit) return; if (n.hasAttribute && n.hasAttribute("autofocus")) { hit = n; return; } (n.children || []).forEach(walk); })(node);
+      (function walk(n) { if (hit) return; if (n.hasAttribute && n.hasAttribute(m[1])) { hit = n; return; } (n.children || []).forEach(walk); })(node);
       return hit;
     },
   };
@@ -124,7 +131,7 @@ function mount(options = {}) {
     }
     if (body && replies[body.action]) return replies[body.action](body);
     if (url === "/api/engelbart-onboarding") {
-      if (body.action === "open") return answer({ onboarding: row, calibrations: [], turns, profile_reused: Boolean(options.profileReused) });
+      if (body.action === "open") return answer({ onboarding: row, calibrations: options.calibrations || [], turns, profile_reused: Boolean(options.profileReused) });
       if (body.action === "reset") { row = { step: 0, status: "open", analysis_status: "none" }; return answer({ onboarding: row, calibrations: [], profile_reused: false }); }
       if (body.action === "step") { row = { ...row, ...body.fields, step: body.step }; return answer({ onboarding: row }); }
       if (body.action === "sources") return answer({ ok: true, analysis_status: "none" });
@@ -133,9 +140,9 @@ function mount(options = {}) {
       if (body.action === "answer") return answer({ graded_level: 50, grade_confidence: 0.8, grade_rationale: "fine" });
       if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 7 }; return answer({ assessment: ASSESSMENT }); }
       if (body.action === "leveled") return answer({ leveled_status: "done", leveled: LEVELED, assets_status: "done" });
-      if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick
-        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status }
-        : { turn_id: "t1", say: "What drew you to this paper?", card: "questions", leveled_status: row.leveled_status,
+      if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick || body.again
+        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status, ready: row.leveled_status === "done" }
+        : { turn_id: "t1", say: "", card: "questions", leveled_status: row.leveled_status,
             questions: { eyebrow: "first", items: [{ id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math", why: "w" }] }] } });
       if (body.action === "asset_ask") return answer({ answer: "Start with the toy.", turn_id: "a1" });
       if (body.action === "choose_asset") { row = { ...row, asset_chosen: { key: body.key, title: body.key.split(" :: ").pop() }, step: 9 }; return answer({ asset_chosen: row.asset_chosen }); }
@@ -143,6 +150,7 @@ function mount(options = {}) {
       if (body.action === "subgoals") { row = { ...row, subgoals: SUBGOALS }; return answer({ subgoals: SUBGOALS }); }
       if (body.action === "todos") return answer({ todos: ["do a", "do b"], name: "zebra-runner" });
       if (body.action === "ask") return answer({ answer: "Because.", level: "some" });
+      if (body.action === "rewrite") { row = { ...row, depth: body.to }; return answer({ texts: body.texts.map((t) => "★ " + t), level: body.to }); }
       if (body.action === "create") return answer({ ok: true, pending_setup_id: "p" });
     }
     if (url === "/api/engelbart-device") return answer({ code: "ABCD-EFGH-IJKL", expiresInSeconds: 900 });
@@ -168,15 +176,18 @@ function mount(options = {}) {
   // Timers that do not hold the process open: a test may end on a step whose
   // keyboard is still animating, or whose poll has not fired yet.
   const loose = (fn, ms) => { const t = setInterval(fn, ms); if (t.unref) t.unref(); return t; };
+  const doc = makeEl("document");
+  doc.getElementById = (id) => (id === "app" ? app : (find(app, (n) => n.id === id || n.attrs.id === id)[0] || null));
+  doc.createElement = makeEl;
   const sandbox = { window: win, fetch: fetchStub, setTimeout, clearTimeout, setInterval: loose, clearInterval, console, URL,
-    navigator: {}, document: { getElementById: () => app, createElement: makeEl } };
+    navigator: {}, document: doc };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(INSTALL, sandbox, { filename: "engelbart/setup/install.js" });
   vm.runInNewContext(SRC, sandbox, { filename: "engelbart/setup/setup.js" });
 
-  return { app, actions, bodies, win,
+  return { app, actions, bodies, win, doc,
     row: () => row,
-    title: () => textOf(one(app, "ob-title")) || textOf(one(app, "ob-question")) || textOf(one(app, "ob-goal-title"))
+    title: () => textOf(one(app, "ob-title")) || textOf(one(app, "ob-as-h1")) || textOf(one(app, "ob-question")) || textOf(one(app, "ob-goal-title"))
       || textOf(one(app, "ob-done-t")) || textOf(one(app, "ob-wait-t")),
     error: () => textOf(one(app, "ob-err")),
     cta: () => byClass(app, "ob-cta").pop(),
@@ -189,8 +200,8 @@ function mount(options = {}) {
 test("every step draws from the record, and none of them throws", async () => {
   const titles = ["What is your name?", "What year are you?", "What is your major?",
     "How technical should explanations be?", "Which paper are you building on?", "Which computer are you on?",
-    "How familiar are you with what the paper leans on?", "What in this paper is worth building on?",
-    "What do you want to build on?", "Pose to angles", "Pose to angles", "Pose to angles"];
+    "How familiar are you with the paper's concepts?", "What do you want to build?",
+    "What do you want to build on?", "Pose to angles", "Pose to angles", "One pose drawn"];
   for (let step = 0; step < titles.length; step += 1) {
     const page = mount({ row: fullRow({ step }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] });
     await settle();
@@ -198,7 +209,7 @@ test("every step draws from the record, and none of them throws", async () => {
   }
   const done = mount({ row: fullRow({ step: 12, status: "created" }) });
   await settle();
-  assert.match(textOf(done.app), /Open a new Claude chat on your machine/);
+  assert.doesNotMatch(textOf(done.app), /Open a new Claude chat|written for/, "the done screen carries no summary sentence");
 });
 
 test("the walk from Name to Install writes every step as it goes, and fires the reading and the hunt", async () => {
@@ -243,16 +254,86 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
   assert.equal(page.row().year, "Second year");
   assert.equal(page.row().depth, "technical");
   assert.equal(page.row().step, 5);
-  // Through the module: macOS, Apple Silicon, three steps, then done.
+  // Through the module: macOS, Apple Silicon, two steps, then done.
   byClass(page.app, "ob-opt")[0].fire("click");
   byClass(page.app, "ob-opt")[0].fire("click");
-  page.cta().fire("click"); page.cta().fire("click");
+  page.cta().fire("click");
   assert.match(textOf(page.app), /--code ABCD-EFGH-IJKL --no-open/, "the connect command carries the issued code");
+  assert.doesNotMatch(textOf(page.app), /claude\.ai\/install/, "no separate Claude Code command: the installer brings it");
   page.cta().fire("click");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "How familiar are you with what the paper leans on?");
+  assert.equal(page.title(), "Two things you can do on every screen", "the tour sits between Install and Topics");
   assert.equal(page.row().step, 6);
+  assert.ok(one(page.app, "ob-tour-hl") && one(page.app, "ob-tour-regen"), "both demos are drawn");
+  assert.ok(one(one(page.app, "ob-tour-regdemo"), "ob-slider"), "the second demo is the real control's slider");
+  assert.equal(byClass(page.app, "ob-ghost").filter((b) => textOf(b) === "Skip").length, 0, "nothing to skip: one Continue");
+  page.cta().fire("click");
+  assert.equal(page.title(), "How familiar are you with the paper's concepts?");
+});
+
+// ⏎ is Continue. A reader who has just clicked an option should not have to
+// find the button; a reader typing in a box keeps the box's own ⏎.
+test("Enter presses the step's button unless a text box has it", async () => {
+  const page = mount({ row: fullRow({ step: 0, name: "Ada" }) });
+  await settle();
+  assert.equal(page.title(), "What is your name?");
+  page.doc.fire("keydown", { key: "Enter", target: byClass(page.app, "ob-step")[0] });
+  await settle();
+  assert.equal(page.row().step, 1, "⏎ with focus outside a text box pressed Continue");
+  assert.equal(page.title(), "What year are you?");
+
+  const major = mount({ row: fullRow({ step: 2, major: "" }) });
+  await settle();
+  const before = major.actions.length;
+  major.doc.fire("keydown", { key: "Enter", target: major.input() });
+  await settle();
+  assert.equal(major.actions.length, before, "⏎ inside a text box is left to the box");
+  major.doc.fire("keydown", { key: "Enter", shiftKey: true, target: byClass(major.app, "ob-step")[0] });
+  await settle();
+  assert.equal(major.actions.length, before, "a modified ⏎ is not Continue");
+  major.doc.fire("keydown", { key: "Enter", target: byClass(major.app, "ob-step")[0] });
+  await settle();
+  assert.equal(major.actions.length, before, "a disabled Continue stays unpressed");
+});
+
+// The register control: on every step from the paper on, the same slider as
+// the Explanations step; move it, Regenerate, and the screen is rewritten.
+test("the register control rewrites what is on the screen and moves the profile's depth", async () => {
+  const early = mount({ row: fullRow({ step: 1 }) });
+  await settle();
+  assert.equal(one(early.app, "ob-reg"), undefined, "not before the paper");
+  const page = mount({ row: fullRow({ step: 6, depth: "some" }) });
+  await settle();
+  let reg = one(page.app, "ob-reg");
+  assert.ok(reg, "the control is on the topics step");
+  assert.equal(textOf(one(reg, "ob-reg-word")), "Some detail", "folded, it is the one word: the current register");
+  assert.equal(byClass(reg, "ob-slider").length, 0, "and nothing else");
+  one(reg, "ob-reg-word").fire("click");
+  reg = one(page.app, "ob-reg");
+  assert.ok(one(reg, "ob-slider"), "the word opens the slider");
+  one(reg, "ob-reg-x").fire("click");
+  assert.equal(byClass(one(page.app, "ob-reg"), "ob-slider").length, 0, "the × closes it");
+  one(one(page.app, "ob-reg"), "ob-reg-word").fire("click");
+  reg = one(page.app, "ob-reg");
+  assert.equal(byClass(reg, "ob-reg-go").length, 0, "no Regenerate until the slider moves");
+  const question = textOf(one(page.app, "ob-q"));
+  byClass(reg, "ob-stop")[3].fire("click");                    // Expert
+  const go = one(one(page.app, "ob-reg"), "ob-reg-go");
+  assert.ok(go, "Regenerate appears once the register differs");
+  go.fire("click");
+  await settle();
+  const sent = page.bodies.find((b) => b.action === "rewrite");
+  assert.equal(sent.from, "some");
+  assert.equal(sent.to, "expert");
+  assert.ok(sent.texts.includes(question), "the question on the screen was among the passages");
+  assert.equal(textOf(one(page.app, "ob-q")), "★ " + question, "and it is shown rewritten");
+  assert.equal(page.row().depth, "expert");
+  assert.equal(byClass(one(page.app, "ob-reg"), "ob-slider").length, 0, "it folds again once done");
+  assert.equal(textOf(one(one(page.app, "ob-reg"), "ob-reg-word")), "Expert");
+  byClass(page.app, "ob-pdot")[1].fire("click");
+  byClass(page.app, "ob-pdot")[0].fire("click");
+  assert.equal(textOf(one(page.app, "ob-q")), "★ " + question, "the rewrite survives redraws on the step");
 });
 
 // The two halves of the paper step: accepting it is awaited, reading it is not.
@@ -336,7 +417,7 @@ test("the slider paints itself while it is dragged and only commits on release",
   await settle();
   assert.equal(one(page.app, "ob-thumb").style.left, "75.00%", "and snaps to the stop");
   assert.equal(one(page.app, "ob-track").attrs["data-drag"], "0");
-  assert.equal(textOf(one(page.app, "ob-hint")), "You can change this later.");
+  assert.equal(textOf(one(page.app, "ob-hint")), "", "no hint once they have moved it");
   page.cta().fire("click");
   await settle();
   assert.equal(page.row().depth, "technical");
@@ -363,20 +444,24 @@ test("topics are answered one area at a time, a disagreeing grade asks once more
   const page = mount({
     row: fullRow({ step: 6, assessment: null, leveled_status: "none", leveled: null, todos: null, goal_chosen: "" }),
     replies: { answer: () => { calls += 1; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
-      calls === 1 ? { graded_level: 25, grade_rationale: "recognises only", follow_up: { question_level: 25, question: "A question at 25" } }
-                 : { graded_level: 50 }) }); } },
+      calls === 1 ? { graded_level: 25, grade_rationale: "recognises only", follow_up: { question_level: 25, question: "You said weights: weights of what?", generated: true },
+                     calibrations: [{ id: "c1", area_index: 0, question_level: 0, answered_at: "2026-09-03T00:00:00Z", graded_level: 25 },
+                       { id: "c2", area_index: 0, question_level: 25, question: "You said weights: weights of what?", sample_response: "SAMPLE-F", answered_at: null, self_level: 0 }] }
+                 : { graded_level: 50, calibrations: [{ id: "c" + calls, area_index: calls === 2 ? 0 : 1, question_level: calls === 2 ? 25 : 0, answered_at: "2026-09-03T00:01:00Z", graded_level: 50 }] }) }); } },
   });
   await settle();
-  assert.equal(page.title(), "How familiar are you with what the paper leans on?");
+  assert.equal(page.title(), "How familiar are you with the paper's concepts?");
   assert.equal(textOf(one(page.app, "ob-q")), "A question at 0");
   assert.doesNotMatch(page.app.textContent, /SAMPLE-/, "sample answers stay unseen");
-  const answerBox = () => find(page.app, (n) => n.tagName === "input" && n.placeholder === "one sentence is enough…")[0];
+  const answerBox = () => find(page.app, (n) => n.tagName === "textarea" && n.placeholder === "one sentence is enough…")[0];
   answerBox().value = "attention weights"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
-  assert.equal(textOf(one(page.app, "ob-q")), "A question at 25", "the follow-up is asked at the graded level");
+  assert.equal(textOf(one(page.app, "ob-q")), "You said weights: weights of what?", "the follow-up is the generated question, not the ladder's");
   assert.equal(one(page.app, "ob-grade"), undefined, "and the grade itself is never shown");
   assert.doesNotMatch(textOf(page.app), /can follow it/);
+  assert.doesNotMatch(page.app.textContent, /SAMPLE-/, "the follow-up's sample stays unseen too");
+  assert.equal(one(page.app, "ob-slider").attrs["data-locked"], "1", "the slider is locked while the follow-up waits");
   answerBox().value = "it weights inputs"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
@@ -385,81 +470,178 @@ test("topics are answered one area at a time, a disagreeing grade asks once more
   answerBox().value = "tensors"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "What in this paper is worth building on?", "the last area compiles the assessment and opens the brainstorm");
+  assert.equal(page.title(), "What do you want to build?", "the last area compiles the assessment and opens the brainstorm");
   assert.deepEqual(page.actions.slice(-4), ["answer", "topics_done", "leveled", "brainstorm"]);
   assert.equal(page.bodies.find((b) => b.action === "leveled").run, true);
 });
 
-test("moving the slider on a follow-up asks the ladder's own question at that level instead", async () => {
+test("a follow-up is a stored row: it survives a reload, the slider cannot move it, and the next area is untouched", async () => {
   const page = mount({
     row: fullRow({ step: 6, assessment: null }),
+    calibrations: [{ id: "c1", area_index: 0, question_level: 50, answered_at: "2026-09-03T00:00:00Z", graded_level: 25, self_level: 50 },
+      { id: "c2", area_index: 0, question_level: 25, question: "From what you said: which part is learned?", answered_at: null, self_level: 50 }],
     replies: { answer: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
-      { graded_level: 25, follow_up: { question_level: 25, question: "A question at 25" } }) }) },
+      { graded_level: 25, calibrations: [{ id: "c2", area_index: 0, question_level: 25, question: "From what you said: which part is learned?", answered_at: "2026-09-03T00:02:00Z", graded_level: 25 }] }) }) },
   });
   await settle();
-  const answerBox = () => find(page.app, (n) => n.tagName === "input" && n.placeholder === "one sentence is enough…")[0];
-  answerBox().value = "attention weights"; answerBox().fire("input");
-  page.cta().fire("click");
-  await settle();
-  assert.equal(textOf(one(page.app, "ob-q")), "A question at 25");
+  assert.equal(textOf(one(page.app, "ob-q")), "From what you said: which part is learned?", "the waiting follow-up is what a reload shows");
+  assert.match(textOf(one(page.app, "ob-q-label")), /One more/);
+  const slider = one(page.app, "ob-slider");
+  assert.equal(slider.attrs["data-locked"], "1");
   byClass(page.app, "ob-track")[0].fire("pointerdown", { clientX: 300, pointerId: 1 });
   page.win.fire("pointerup", {});
   await settle();
-  assert.equal(textOf(one(page.app, "ob-q")), "A question at 75", "the follow-up is dropped for the level they moved to");
-  assert.doesNotMatch(textOf(page.app), /One more/);
+  assert.equal(textOf(one(page.app, "ob-q")), "From what you said: which part is learned?", "the slider does not swap the question");
+  // Walking to the next area and back finds the same follow-up waiting.
+  byClass(page.app, "ob-pdot")[1].fire("click");
+  assert.equal(textOf(one(page.app, "ob-area-name")), "B");
+  assert.equal(one(page.app, "ob-slider").attrs["data-locked"], undefined, "the next area's slider is free");
+  byClass(page.app, "ob-pdot")[0].fire("click");
+  assert.equal(textOf(one(page.app, "ob-q")), "From what you said: which part is learned?");
+  const answerBox = find(page.app, (n) => n.tagName === "textarea" && n.placeholder === "one sentence is enough…")[0];
+  answerBox.value = "the weights"; answerBox.fire("input");
+  page.cta().fire("click");
+  await settle();
+  const sent = page.bodies.filter((b) => b.action === "answer").pop();
+  assert.deepEqual([sent.area_index, sent.question_level, sent.self_level], [0, 25, 50], "answered at the follow-up's level, with the rating that produced it");
+  assert.equal(textOf(one(page.app, "ob-area-name")), "B", "and the next area is up");
 });
 
-test("the brainstorm opens with the model's card, sends answers, and offers the plan once the resources are fitted", async () => {
+test("the brainstorm opens on the card, keeps answered cards as cards, and offers the plan only when the model says ready", async () => {
   const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
   await settle();
-  assert.equal(page.title(), "What in this paper is worth building on?");
+  assert.equal(page.title(), "What do you want to build?");
   assert.equal(page.actions.filter((a) => a === "brainstorm").length, 1, "the opening turn is asked for once");
   assert.equal(page.bodies.find((b) => b.action === "brainstorm").text, undefined);
-  assert.match(textOf(page.app), /What drew you to this paper\?/);
+  assert.equal(byClass(page.app, "ob-bs-turn").length, 0, "no prose before the opening card");
+  assert.match(textOf(page.app), /What drew you\?/);
+  assert.equal(find(page.app, (n) => n.tagName === "textarea").length, 0, "no free-text composer: the card is the conversation");
   assert.equal(one(page.app, "ob-bs-offer"), undefined, "no plan offer while the resources are being fitted");
   byClass(page.app, "ob-goal")[1].fire("click");
+  assert.equal(byClass(page.app, "ob-goal")[1].attrs["data-on"], "1", "the pick is marked");
   page.cta().fire("click");
   await settle();
   const sent = page.bodies.filter((b) => b.action === "brainstorm")[1];
   assert.deepEqual(sent.answers, { drew: "The math" });
-  assert.match(textOf(page.app), /What drew you\? The math/, "their answer is on the thread");
+  // The answered card stays a card, with the answer marked; not a flattened line.
+  const done = byClass(page.app, "ob-bs-card").filter((c) => c.attrs["data-done"] === "1");
+  assert.equal(done.length, 1);
+  assert.equal(byClass(done[0], "ob-goal").find((g) => g.attrs["data-on"] === "1").textContent, "The mathw");
+  assert.equal(byClass(done[0], "ob-cta").length, 0, "an answered card has no buttons");
+  assert.doesNotMatch(textOf(page.app), /What drew you\? The math/, "the answer is not repeated as prose");
   assert.match(textOf(page.app), /Angles it is/);
-  // The fitting finishes: the next redraw carries the offer.
+  assert.equal(one(page.app, "ob-bs-offer"), undefined, "the model was not asked about readiness yet");
+  assert.equal(textOf(page.cta()), "Go on›", "a prose-only turn gets a way to continue");
+  // The fitting finishes; the next turn carries the model's verdict.
   page.row().leveled_status = "done"; page.row().leveled = LEVELED;
-  const composer = find(page.app, (n) => n.tagName === "textarea")[0];
-  composer.value = "I like the timing side"; composer.fire("input");
-  find(page.app, (n) => n.tagName === "button" && textOf(n) === "Send")[0].fire("click");
+  page.cta().fire("click");
   await settle();
-  assert.ok(one(page.app, "ob-bs-offer"), "ready to plan is asked after the turn");
+  assert.equal(page.bodies.filter((b) => b.action === "brainstorm").pop().again, true);
+  assert.ok(one(page.app, "ob-bs-offer"), "ready to plan is offered when the model said ready");
   byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Keep brainstorming").fire("click");
   assert.equal(one(page.app, "ob-bs-offer"), undefined);
-  composer.value = "more"; composer.fire("input");
-  find(page.app, (n) => n.tagName === "button" && textOf(n) === "Send")[0].fire("click");
+  page.cta().fire("click");
   await settle();
-  assert.ok(one(page.app, "ob-bs-offer"), "and asked again after the next turn");
+  assert.ok(one(page.app, "ob-bs-offer"), "and offered again after the next turn");
   page.cta().fire("click");
   await settle();
   assert.equal(page.title(), "What do you want to build on?");
 });
 
-test("the assets list expands, asks, and a child can be picked; the pick resets the plan", async () => {
+test("the main column keeps its scroll across redraws, a sent turn scrolls to the thinking row, and Skip goes to the resources once they are ready", async () => {
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
+  await settle();
+  one(page.app, "ob-main").scrollTop = 300;
+  byClass(page.app, "ob-goal")[0].fire("click");                       // redraws in place
+  assert.equal(one(page.app, "ob-main").scrollTop, 300, "the pane did not jump back to the top");
+  assert.equal(textOf(byClass(page.app, "ob-ghost").find((b) => /Skip/.test(textOf(b)))), "Skip to resources");
+  byClass(page.app, "ob-ghost").find((b) => /Skip/.test(textOf(b))).fire("click");
+  await settle();
+  assert.equal(page.title(), "What do you want to build on?", "skipping with the resources ready is choosing to plan");
+  assert.equal(page.bodies.filter((b) => b.action === "brainstorm").length, 1, "no extra turn was asked for");
+
+  const early = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
+  await settle();
+  assert.equal(textOf(byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b)))), "Skip");
+  byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b))).fire("click");
+  assert.ok(one(early.app, "ob-bs-turn") && find(early.app, (n) => n.attrs["data-thinking"] === "1")[0], "the thinking row is marked for the scroll");
+  await settle();
+  assert.equal(early.bodies.filter((b) => b.action === "brainstorm").pop().text, "(skipped those)");
+});
+
+test("clicking a block offers Ask about this in the gutter, and the button opens the ask panel on that text", async () => {
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
+  await settle();
+  const option = byClass(page.app, "ob-goal")[1];
+  page.doc.fire("click", { target: option });                          // capture: the document sees it first
+  option.fire("click", { target: option });                            // then the option's own handler redraws
+  await settle();
+  const btn = one(page.app, "ob-askbtn");
+  assert.ok(btn, "a gutter button appeared");
+  assert.equal(btn.attrs["data-gutter"], "1");
+  assert.equal(byClass(page.app, "ob-goal")[1].attrs["data-on"], "1", "the click still picked the option");
+  btn.fire("click");
+  page.doc.fire("click", { target: btn });
+  await settle();
+  assert.ok(one(page.app, "ob-ask"), "the ask panel opened");
+  assert.equal(textOf(one(page.app, "ob-ask-quote")), "“The math w”", "the block's words, spaced, not its glyphs");
+  // Any step of the flow can be asked about, the name step included.
+  const early = mount({ row: fullRow({ step: 0, name: "" }) });
+  await settle();
+  early.doc.fire("click", { target: one(early.app, "ob-title") });
+  await settle();
+  assert.ok(one(early.app, "ob-askbtn"), "the first step offers Ask about this too");
+  // A click on empty space puts the button away.
+  const fresh = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
+  await settle();
+  fresh.doc.fire("click", { target: byClass(fresh.app, "ob-goal")[0] });
+  await settle();
+  assert.ok(one(fresh.app, "ob-askbtn"));
+  fresh.doc.fire("click", { target: one(fresh.app, "ob-main") });
+  await settle();
+  assert.equal(one(fresh.app, "ob-askbtn"), undefined);
+});
+
+test("a reloaded brainstorm redraws every answered card with its answers, from the stored user turns", async () => {
+  const page = mount({
+    row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }),
+    turns: [
+      { id: "t1", role: "assistant", content: "", card: { card: "questions", questions: { eyebrow: "first", items: [
+        { id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math" }] },
+        { id: "why", type: "free", title: "Why?" }] } } },
+      { id: "u1", role: "user", content: "What drew you? The math\nWhy? I like angles", card: { answers: { drew: "The math", why: "I like angles" } } },
+      { id: "t2", role: "assistant", content: "Angles it is.", card: { card: "focus", focus: { title: "Which?", options: [{ label: "Angles" }, { label: "Timing" }] }, ready: false } },
+    ],
+  });
+  await settle();
+  const cards = byClass(page.app, "ob-bs-card");
+  assert.equal(cards.length, 2);
+  assert.equal(cards[0].attrs["data-done"], "1");
+  assert.equal(byClass(cards[0], "ob-goal").find((g) => g.attrs["data-on"] === "1").textContent, "The math");
+  assert.equal(textOf(one(cards[0], "ob-bs-said")), "I like angles", "a typed answer is shown in place");
+  assert.equal(cards[1].attrs["data-done"], "0", "the last card is live");
+  assert.equal(one(page.app, "ob-bs-offer"), undefined, "ready was false");
+  assert.equal(page.actions.filter((a) => a === "brainstorm").length, 0, "nothing was asked: the transcript was enough");
+});
+
+test("the assets list folds simpler stand-ins behind a toggle; picking a row shows what it is; the pick resets the plan", async () => {
   const page = mount({ row: fullRow({ step: 8, asset_chosen: null, direction: null, subgoals: null, todos: null }) });
   await settle();
-  const rows = byClass(page.app, "ob-as-row");
-  assert.equal(rows.length, 3, "two assets and one child");
-  assert.deepEqual(byClass(page.app, "ob-as-title").map(textOf), ["Pose viewer", "Toy poses", "Dance corpus"]);
-  assert.match(textOf(rows[1]), /at your level[\s\S]*small first/);
+  assert.equal(page.title(), "What do you want to build on?");
+  assert.deepEqual(byClass(page.app, "ob-as-title").map(textOf), ["Pose viewer", "Dance corpus"], "children start folded");
+  assert.equal(textOf(one(page.app, "ob-as-toggle")), "1 simpler›");
   assert.equal(page.cta().disabled, true, "nothing picked yet");
-  byClass(page.app, "ob-as-caret")[0].fire("click");
-  assert.match(textOf(page.app), /What you can do with it · play/);
+  assert.equal(one(page.app, "ob-as-desc"), undefined, "nothing is described until it is picked");
+  one(page.app, "ob-as-toggle").fire("click");
+  assert.deepEqual(byClass(page.app, "ob-as-title").map(textOf), ["Pose viewer", "Toy poses", "Dance corpus"]);
+  assert.match(textOf(byClass(page.app, "ob-as-row")[1]), /simpler/);
+  byClass(page.app, "ob-as-row")[1].fire("click");
+  assert.equal(byClass(page.app, "ob-as-row")[1].attrs["data-on"], "1", "the child is picked");
+  assert.match(textOf(byClass(page.app, "ob-as-row")[0]), /A viewer\./, "the parent of a picked child shows its text");
+  assert.match(textOf(byClass(page.app, "ob-as-row")[1]), /ten poses[\s\S]*small first/, "the picked child shows its line and why");
   assert.equal(find(page.app, (n) => n.tagName === "a")[0].href, "https://x.org/demo");
-  byClass(page.app, "ob-as-chatbtn")[0].fire("click");
-  byClass(page.app, "ob-seed")[0].fire("click");
-  await settle();
-  assert.equal(page.bodies.find((b) => b.action === "asset_ask").key, "Pose viewer");
-  assert.match(textOf(page.app), /Start with the toy/);
-  byClass(page.app, "ob-as-head")[1].fire("click");
-  assert.match(textOf(one(page.app, "ob-hint")), /building on · Toy poses/);
+  assert.equal(byClass(page.app, "ob-as-chatbtn").length, 0, "no per-row chat: Ask about this is the page's");
+  assert.equal(page.cta().disabled, false);
   page.cta().fire("click");
   await settle();
   assert.equal(page.bodies.find((b) => b.action === "choose_asset").key, "Pose viewer :: Toy poses");
@@ -485,9 +667,10 @@ test("direction and subgoals are one proposal each; a change request revises in 
   assert.match(textOf(page.app), /todos are written for this one/);
   page.cta().fire("click");
   await settle();
-  const rows = find(page.app, (n) => n.tagName === "input" && n.placeholder !== "add a todo…" && n.placeholder !== "project name…");
+  const rows = find(page.app, (n) => n.tagName === "textarea" && n.parentNode && String(n.parentNode.className).includes("ob-trow"));
   assert.equal(rows.length, 2);
-  assert.match(textOf(page.app), /First piece[\s\S]*One pose drawn/);
+  assert.match(textOf(page.app), /One pose drawn/);
+  assert.doesNotMatch(textOf(page.app), /First piece|The other two pieces/);
   const nameBox = find(page.app, (n) => n.placeholder === "project name…")[0];
   assert.equal(nameBox.value, "zebra-runner");
   const create = one(page.app, "ob-pill");
@@ -503,6 +686,8 @@ test("direction and subgoals are one proposal each; a change request revises in 
   byClass(page.app, "ob-opt")[0].fire("click");
   page.cta().fire("click");
   assert.match(textOf(page.app), /claude/);
+  page.cta().fire("click");
+  assert.match(textOf(page.app), /Trust the folder/, "Claude Code's first-run question sits between claude and /bart");
   page.cta().fire("click");
   assert.match(textOf(page.app), /\/bart/, "and the last screen walks them to /bart");
 });

@@ -1145,8 +1145,32 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 600; }
    thing, one bordered row per thing to copy, and no accent rail or tinted box
    around any of it. Same paper, same ink; only the furniture changed. */
 .account { text-align: left; }
-.account h2 { margin: 0 0 8px; font-family: var(--serif); font-size: 30px; font-weight: 500; }
-.account #credit-status { margin: 0; font-family: var(--sans); font-size: 15px; color: var(--ink-soft); }
+.account h2 { margin: 0 0 22px; font-family: var(--serif); font-size: 34px; font-weight: 500; }
+/* One thing to do, said once, full width: the pill the mockup leads with. */
+.account .go {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 22px;
+  padding: 22px 40px 22px 44px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 2.4px;
+  line-height: 1;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.account .go:hover { background: var(--ink-soft); color: var(--paper); }
+.account .go-arrow { font-size: 22px; font-weight: 400; letter-spacing: 0; line-height: 0; }
+.account .rule { margin: 44px 0 0; border: 0; border-top: 1px solid var(--line); }
+.account .switching { margin-top: 12px; }
+.account .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.account #credit-status { margin: 0; font-family: var(--sans); font-size: 17px; color: var(--ink-soft); }
 .account #credit-status[data-kind="success"] { color: var(--ink-soft); }
 .account .meter { height: 3px; margin: 10px 0 0; background: var(--line); }
 .account .meter-fill { background: var(--ink); }
@@ -1214,7 +1238,8 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 600; }
   cursor: pointer;
 }
 .account .cmd-copy:hover { border-color: var(--ink); color: var(--ink); }
-.account .account-note { margin: 8px 0 0; color: var(--ink-soft); font-size: 14px; line-height: 1.6; text-wrap: pretty; }
+.account .account-note { margin: 12px 0 0; color: var(--ink-soft); font-size: 16px; line-height: 1.6; text-wrap: pretty; }
+.account .cmd + .account-note { margin-top: 16px; }
 .account .account-note a { text-decoration: underline; text-underline-offset: 3px; }
 .account .sign { margin-top: 30px; }
 

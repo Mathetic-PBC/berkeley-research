@@ -91,9 +91,10 @@ New table `engelbart_onboarding_turns`: every conversational turn
   follow-up asks the ladder question at that level instead.
 - Brainstorm (7): a chat column with cards; after each assistant turn, once
   `leveled` is done, an "Are you ready to start planning?" card.
-- Assets (8): the mockup — rows with mark, type · availability, expand for
-  description / what you can do / links / per-asset chat; children rows
-  "at your level" with a why; pick one.
+- Assets (8): a centered header; rows with mark, title and type; a parent
+  folds its stand-ins behind an "N simpler" toggle; picking a row shows its
+  description, why (for a stand-in) and links; no per-asset chat — the page's
+  Ask about this covers it; pick one.
 - Direction (9), Subgoals (10): the proposal, "Looks good ›", and a
   "Change something" unfold with a chat box.
 - Todos (11): rows for the first subgoal, editable; name; Create.

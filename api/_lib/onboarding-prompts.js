@@ -181,9 +181,9 @@ For EACH selected area, produce exactly five independently answerable calibratio
 100 — CAN REASON WITH IT
 "I could spot mistakes, compare approaches, and explain when an idea would or wouldn't work."
 
-Questions are about the AREA -- the field and the concepts you selected -- never about this paper. Do not ask the student to recall, summarise, or review anything specific to the paper: its method, results, figures, terminology, or claims. The student may not have read it. A 75- or 100-level question may describe a realistic situation of the kind this project involves, but it must be answerable by someone who knows the area and has never seen the paper.
+Questions are about the AREA -- the field and the concepts you selected -- never about this paper. Do not ask the student to recall, summarise, or review anything specific to the paper: its method, results, figures, terminology, or claims. The student may not have read it. A 75- or 100-level question may use domain-specific language that is similar to what a PhD student or professor would use and could be plausibly understood by an advanced and well-versed undergraduate student. This does not mean the questions need to be longer as the level increases, though.
 
-Vocabulary rises one step per level. Level 0 uses no jargon at all: an undergraduate from any field must be able to read the question and say something in reply. Level 25 may name the one or two most common terms of the area, in plain words. Levels 50 and above may use the area's own terms.
+Vocabulary rises one step per level. Level 0 uses no jargon at all: an undergraduate from any field must be able to read the question and say something in reply. Level 25 may name the one or two most common terms of the area, in plain words. Levels 50 and above may use the area's own terms, but keep in mind that the amount of concepts should primarily be based on the level.
 
 The student's chosen technical depth (above) governs every computing or programming term in every question: at "Everyday", avoid the term or explain it inside the question; at "Some detail", ordinary terms (file, function, server, dataset) stand alone and narrower ones get a few words; at "Technical" and "Expert", precise terms stand alone.
 
@@ -199,11 +199,11 @@ Levels should progress from CONCEPTUAL FAMILIARITY to APPLIED REASONING:
 
 - 100 — REASONING: Can they diagnose failures, compare approaches, evaluate tradeoffs, or explain when an approach would or would not work?
 
-Levels 0–50 primarily measure familiarity and understanding; 75–100 measure productive reasoning with that knowledge.
+Levels 0–50 primarily measure familiarity and understanding; 75–100 measure productive reasoning with that knowledge. However, the goal for all of this is to gauge the student's familiarity with this specific content, NOT their general problem solving ability or aptitude.
 
 Difficulty should come from deeper understanding and reasoning, not obscure terminology, trivia, tedious mathematics, or memorization.
 
-Whenever possible, ground 75- and 100-level questions in realistic situations of the KIND this project involves, described in the area's general terms rather than the paper's specifics. Lower levels may be more direct when needed to determine whether the student possesses the relevant concepts.
+75- and 100-level questions should be described using the paper's specific terms (since the student claims to be an expert). Lower levels may be more direct when needed to determine whether the student possesses the relevant concepts.
 
 Questions should usually be answerable in 1–4 sentences and should not depend on incidental paper details.
 
@@ -315,7 +315,7 @@ Before outputting, silently verify:
 
 - no question depends on having read the paper, and level 0 has no jargon;
 
-- 75 requires genuine application;
+- 75 requires genuine knowledge of the domain and application;
 - 100 requires evaluation, comparison, diagnosis, or adaptation;
 
 - samples reflect the intended capability;
@@ -348,6 +348,34 @@ Judge the answer's substance, not its length or polish. An answer that shows the
 
 ${JSON_ONLY}
 {"level": 0 | 25 | 50 | 75 | 100, "confidence": 0.0-1.0, "rationale": "one sentence, at most 200 characters"}`;
+}
+
+// The one follow-up in an area, written from what the reader actually said.
+// Inputs: reader (for readerBlock), area, parent_field, question (the ladder
+// question they answered), level (its level), self_level, answer (theirs),
+// graded_level (where the grader placed them), graded_rationale, sample (the
+// answered question's sample response).
+function followUpPrompt({ reader, area, parent_field, question, level, self_level, answer, graded_level, graded_rationale, sample }) {
+  const at = rung(graded_level), was = rung(level), self = rung(self_level);
+  const ladder = LADDER.map((r) => `${r.level} -- ${r.label}: ${r.desc}`).join("\n");
+  return [
+    ...readerBlock(reader), "",
+    `A student is being calibrated on "${area}"${parent_field ? ` (${parent_field})` : ""}. They rated themselves "${self ? self.label : self_level}" (${self_level}) and were asked the level-${level} question:`,
+    `"""`, question, `"""`,
+    "A sample answer at that level:",
+    `"""`, sample || "(none)", `"""`,
+    "They answered:",
+    `"""`, answer, `"""`,
+    `The grader placed the answer at ${graded_level} -- ${at ? at.label : ""}${graded_rationale ? `: ${graded_rationale}` : "."}`,
+    "",
+    "The levels:", ladder, "",
+    `Write ONE follow-up question at level ${graded_level} that builds on what they actually said. Use their own words and examples where they gave any: probe the specific gap their answer showed if they were placed lower than they rated themselves, or the specific strength if they were placed higher. It must be a new question, not the ladder's question at that level and not a rephrasing of the one they answered; it must be about the AREA, never about the paper; and it should be answerable in one to three sentences by someone at level ${graded_level}${at ? ` (${at.desc.toLowerCase()})` : ""}.`,
+    "Vocabulary follows the level: at 0 no jargon at all; at 25 only the one or two most common terms of the area, in plain words; from 50 up the area's own terms. The reader's technical depth above governs every computing term.",
+    "Also write a sample response that shows what a correct answer at that level looks like; it is used only to grade them and is never shown.",
+    "",
+    JSON_ONLY,
+    '{"question": "the follow-up question", "sample_response": "a level-' + graded_level + ' answer, one to three sentences"}',
+  ].join("\n");
 }
 
 // The project-scoping questions of the Details step. Inputs: reader (for
@@ -427,6 +455,26 @@ function askPrompt({ reader, paper, quote, question, resources }) {
   ].join("\n");
 }
 
+// Rewriting what is on the screen at another register. Inputs: reader, from
+// and to (DEPTHS keys), texts (the passages, in page order).
+function rewritePrompt({ reader, from, to, texts }) {
+  const was = depthOf(from), now = depthOf(to);
+  const list = (Array.isArray(texts) ? texts : []).map((t, i) => `${i + 1}. ${String(t)}`).join("\n");
+  return [
+    ...readerBlock({ ...(reader || {}), depth: to }), "",
+    `Below are ${texts.length} passages shown to the reader on one screen of a setup page. They were written ${was ? was.phrase : from}. The reader has asked for them ${now ? now.phrase : to}.`,
+    now ? `The new register: ${now.rule}` : "",
+    "",
+    "Rewrite each passage at the new register. Keep what it says and roughly how long it is; a question stays a question, an option stays an option, a title stays a title. Keep every name, number, URL and quoted term as it is. Do not add, drop, merge or reorder passages. Where a passage is already at the new register, return it unchanged.",
+    "",
+    "The passages:",
+    list,
+    "",
+    JSON_ONLY,
+    `{"texts": [${texts.map(() => '"..."').join(", ")}]}  -- exactly ${texts.length} strings, in the same order`,
+  ].filter((line) => line !== "").join("\n");
+}
+
 // The paper as a shared, cacheable prefix. Both calls that read the whole
 // paper -- the diagnostic and the asset hunt -- begin with these same two
 // blocks, so the second pays for the cached tokens rather than the paper.
@@ -441,6 +489,8 @@ const ASSET_TYPES = ["dataset", "task", "codebook", "paradigm", "model", "simula
 function assetsPrompt() {
   return `Read the paper above and identify the concrete inputs and outputs of the work: the things it rests on or produces that a person could get hold of and manipulate digitally, or at least extend. Look specifically for: datasets; tasks and apparatus; codebooks; experimental paradigms; mathematical and computational models; simulations; analysis pipelines; surveys, instruments and coding schemes; domain-specific libraries; source code; trained models; live demos. Prefer things that exist as files, repositories, services or well-specified procedures over ideas. Where the paper's own artifact is unavailable, a standard public equivalent of the same thing (the dataset it was trained on, the library it wraps) counts, and say that it is one.
 
+Every item must be a specific building block of THIS paper: something the authors made, collected, adapted, or depend on in a way particular to the work. Never list general-purpose tools or platforms the paper merely used -- a programming language, a general LLM or its API (ChatGPT, GPT-4o, Claude), a mainstream framework, a spreadsheet, a survey platform, a statistics package. If the paper's contribution is a way of using such a tool, the item is that way of using it (the prompt set, the pipeline, the evaluation harness), named as the authors name it, not the tool.
+
 For each one, hunt down where it actually lives. Search the web aggressively: project pages, GitHub, Hugging Face, Zenodo, OSF, Dataverse, lab pages, package registries, the paper's own references and supplementary material. Prefer the canonical home over a mirror. Give up to six links per asset, each with its kind. When nothing can be found, say so with availability "unavailable" rather than inventing a URL; a plausible-looking link that does not exist is worse than none.
 
 For each asset write:
@@ -452,7 +502,7 @@ For each asset write:
 - what_you_can_do_with_it: one sentence on what a person could do with it: run, query, extend, re-analyse, modify
 - availability: "usable" | "partial" | "unavailable" | "unknown"
 
-Order by how central each is to the paper's contribution. At most 12.
+Order by how central each is to the paper's contribution. At most five; fewer when the paper rests on fewer. Five specific things beat twelve that include the obvious.
 
 ${JSON_ONLY}
 {"assets": [{"title": "", "description": "", "one_liner": "", "type": "", "links": [{"kind": "", "url": ""}], "what_you_can_do_with_it": "", "availability": ""}]}`;
@@ -486,7 +536,8 @@ function levelPrompt({ reader, assessment, assets, interest }) {
     JSON.stringify({ assets }, null, 0),
     "",
     "First decide where the locus of problem solving would lie for this reader in a first project on this paper, and which knowledge is sticky -- the part they must actually hold in their head to make decisions -- versus the part an AI coding assistant will carry for them (they need to know what a library does and what it returns, not its syntax). Someone representing dance poses for math education needs geometry and a working notion of what pose detection returns, not computer vision.",
-    "Then, for each asset, judge from the grades above whether this reader can pick it up as it is. Where they cannot, add up to three `children`: simpler, standard, well-documented stand-ins at their level that teach the same idea or skill -- a toy dataset before the real one (MNIST before a custom image corpus), a hosted demo before the library, a notebook before the codebase, a spreadsheet before the pipeline. Search the web for real ones. Each child has the same shape as an asset plus a `why`: one sentence, to the reader, on why this is the right on-ramp for them, naming the sticky idea it teaches. Do not invent links.",
+    "They will build with Claude Code, an AI coding assistant that writes, runs and debugs the code with them. So the question for each asset is not whether they can program against it but whether they can direct the work on it: understand what it is, judge whether an output is right, and decide what to change. Code, a UI, a repository, a dataset with a clear schema are usually within reach whatever the grades say, because the assistant carries the syntax and the plumbing. What the assistant cannot carry is the sticky part: a mathematical model they cannot read, a simulation whose parameters mean nothing to them, a coding scheme that presumes theory they lack, an analysis whose validity they cannot judge.",
+    "Then, for each asset, decide whether this reader can pick it up as it is, on that basis -- the domain of the asset and the grades above together, not the grades alone. Most assets need no stand-in; add `children` only when it is absolutely necessary: when the sticky part of an asset is one the grades show they do not have, so that even with the assistant they could not tell right from wrong. Then add one to three stand-ins that teach exactly that idea: simpler, standard, well-documented, and specific to the idea (a worked instance of the same model with two parameters before the paper's with twenty; a small labelled sample of the same kind of data before the corpus), never a generic tutorial, language course or tool. Search the web for real ones. Each child has the same shape as an asset plus a `why`: one sentence, to the reader, naming the sticky idea it teaches and why they need it before the paper's own. An HCI paper with a UI and a repository will usually get none; a paper resting on a complex mathematical simulation may need one for a reader graded low on that area. Do not invent links.",
     "Finally rewrite every asset's `description`, `one_liner` and `what_you_can_do_with_it` at the reader's register (the rule at the top). Keep every original asset, its `title`, `type` and `links`.",
     "",
     JSON_ONLY,
@@ -512,7 +563,8 @@ function transcriptBlock(turns, cap = 24) {
 // focus, none), pointed at extending this paper. Inputs: reader, paper,
 // assessment, brief (assets_brief), turns (the transcript so far, the
 // reader's latest turn last), leveledReady (whether the plan can start).
-function brainstormPrompt({ reader, paper, assessment, brief, turns }) {
+function brainstormPrompt({ reader, paper, assessment, brief, turns, readyAsked }) {
+  const opening = !(Array.isArray(turns) && turns.length);
   return [
     ...readerBlock(reader), ...assessmentBlock(assessment), "",
     `They are about to start a first project that builds on "${paper.title}" -- ${paper.one_liner}`,
@@ -520,16 +572,24 @@ function brainstormPrompt({ reader, paper, assessment, brief, turns }) {
     ...transcriptBlock(turns),
     "",
     "You are brainstorming with them about what to build. Many people arrive with a vague sense -- something between computer science and education, electrical engineering and music -- and some with a narrow one. Your job is to find, with them, the piece of this paper worth extending or reproducing in a small first project that would hold their attention, and to learn what they already know along the way. Ask about their familiarity with the things above, follow up on what they say, explore sideways, and reflect back what you hear. Use the graded levels above: do not ask what the grades already answered.",
+    "They will build the project with Claude Code, an AI coding assistant that writes, runs and debugs the code with them. Their programming ability is therefore not a constraint and not a question: never ask what languages they know, whether they have used an API, or whether they can code. Ask instead about the ideas they would have to hold themselves -- what they want to make, for whom, what they would judge a result by, which of the things above they want to work with -- and about the domain knowledge those decisions need.",
     "",
     "Reply with ONE JSON object and nothing else:",
-    '{"say": "<what you say to them, plain prose, two to five sentences>",',
+    '{"say": "<what you say to them, plain prose, at most three sentences; empty when the card says it all>",',
     ' "card": "questions" | "focus" | "none",',
     ' "questions": {"eyebrow": "<two or three words>", "items": [{"id": "<short slug>", "type": "mcq" | "select_all" | "free" | "open", "title": "<the question>", "subtitle": "<optional>", "options": [{"label": "<the choice>", "why": "<optional: what it buys them>"}], "placeholder": "<for free and open>"}]},',
     ' "focus": {"title": "<what you are asking them to choose between>", "options": [{"label": "<one reading of what they could build>", "why": "<why this one>"}]},',
-    ' "interest": "<one sentence: what they seem drawn to so far, in the third person; empty if you cannot tell yet>"}',
+    ' "interest": "<one sentence: what they seem drawn to so far, in the third person; empty if you cannot tell yet>"'
+      + (readyAsked ? ',\n "ready": true | false' : "") + "}",
     "",
-    "Only the key for the card you name is read. `questions` is for one to three questions whose answers change what you would suggest -- mcq (one answer), select_all (say so in the subtitle), free (one line), open (a paragraph); never questions you could assume the answer to. `focus` is for when what they want could be read two or three ways and which one decides everything after it; two to four options with a why each. `none` is for a turn that only needs prose. Do not propose goals, todos, or a plan; that comes later. Keep `say` short. Write at the register above.",
-  ].join("\n");
+    "Only the key for the card you name is read. `questions` is for one to three questions whose answers change what you would suggest -- mcq (one answer), select_all (say so in the subtitle), free (one line), open (a paragraph); never questions you could assume the answer to. `focus` is for when what they want could be read two or three ways and which one decides everything after it; two to four options with a why each. The card is the whole conversation: there is no free-text box beside it, so every turn carries a card that gives them something to answer or pick"
+      + (readyAsked ? "; `none` is allowed only with `ready` true." : "."),
+    opening ? "This is the opening turn: `say` is empty and the card opens the conversation. Do not introduce the paper or yourself; ask." : "",
+    "Do not propose goals, todos, or a plan; that comes later. Write at the register above.",
+    readyAsked
+      ? "`ready` says whether you have learned enough to plan with them: what draws them, one concrete direction they lean toward, and the rough level they can work at. Set it true only then; false keeps the conversation going. It is not a question to them."
+      : "",
+  ].filter((line) => line !== "").join("\n");
 }
 
 // A question about one asset. Inputs: reader, paper, asset (the leveled
@@ -628,6 +688,6 @@ function resourcesBlock(resources) {
 module.exports = {
   DEPTHS, FAMILIARITY, LADDER, JSON_ONLY, ASSET_TYPES,
   depthOf, rung, readerBlock, assessmentBlock, briefBlock, transcriptBlock,
-  analyzePrompt, gradePrompt, detailsPrompt, goalsPrompt, todosPrompt, askPrompt,
+  analyzePrompt, gradePrompt, followUpPrompt, rewritePrompt, detailsPrompt, goalsPrompt, todosPrompt, askPrompt,
   PAPER_PREFIX, assetsPrompt, levelPrompt, brainstormPrompt, assetAskPrompt, directionPrompt, subgoalsPrompt, resourcesBlock,
 };
