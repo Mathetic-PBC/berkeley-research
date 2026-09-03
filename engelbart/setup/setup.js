@@ -401,6 +401,26 @@
       }
     }
     var focus = content.querySelector("[autofocus]"); if (focus) focus.focus();
+    // A redraw rebuilds the text the reader highlighted, which drops the
+    // browser's selection. While they are asking about it, select it again so
+    // the highlight stays on what the question is about.
+    if (st.ui.askOpen && st.ui.askQuote) reselect(content, st.ui.askQuote);
+  }
+
+  function reselect(root, quote) {
+    if (!window.getSelection || !document.createRange || !root.childNodes) return;
+    var want = String(quote).replace(/\s+/g, " ").trim(); if (!want) return;
+    var hit = null, offset = -1;
+    (function walk(n) {
+      if (hit) return;
+      if (n.nodeType === 3) { var i = String(n.nodeValue).indexOf(want); if (i >= 0) { hit = n; offset = i; } return; }
+      var kids = n.childNodes || []; for (var k = 0; k < kids.length && !hit; k++) walk(kids[k]);
+    })(root);
+    if (!hit) return;
+    try {
+      var range = document.createRange(); range.setStart(hit, offset); range.setEnd(hit, offset + want.length);
+      var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    } catch (e) { /* a selection is a nicety */ }
   }
 
   function stepBox(content, count, title) {
@@ -1444,8 +1464,9 @@
       var b = attr(el("button", "ob-askbtn", "Ask about this"), "data-askbtn", "1"); b.type = "button";
       attr(b, "data-gutter", "1"); b.style.top = st.ui.askBtn.y + "px";
       on(b, "click", function () {
-        st.ui.askQuote = st.ui.askBtn.text; st.ui.askOpen = true; st.ui.askBtn = null; st.ui.askText = "";
-        var s = window.getSelection ? window.getSelection() : null; if (s && s.removeAllRanges) s.removeAllRanges(); draw();
+        // The highlight stays: it is what the question is about, and the
+        // redraw puts it back (see draw).
+        st.ui.askQuote = st.ui.askBtn.text; st.ui.askOpen = true; st.ui.askBtn = null; st.ui.askText = ""; draw();
       });
       content.appendChild(b);
     }
