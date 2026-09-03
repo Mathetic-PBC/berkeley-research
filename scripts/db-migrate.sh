@@ -5,8 +5,9 @@
 #
 # Asks once for the Postgres connection string (Supabase dashboard -> Connect
 # -> Session pooler, port 5432), keeps it in .env.db (git-ignored, mode 600),
-# installs psql through Homebrew if this machine has none, and runs the three
-# migration files in order. Re-running is safe: every statement is
+# installs psql through Homebrew if this machine has none, and runs the four
+# migration files in order (the hc profile one first: the live project had
+# never received it, which is what left hc_profiles without tech_level). Re-running is safe: every statement is
 # "if not exists" / "create or replace".
 set -eu
 cd "$(dirname "$0")/.."
@@ -37,8 +38,9 @@ HC=../claude-plugins
 for file in \
   supabase/migrations/20260902100000_engelbart_invite_gate_restored.sql \
   supabase/migrations/20260902110000_engelbart_onboarding.sql \
+  "$HC/supabase/migrations/20260831190000_hc_reader_profile.sql" \
   "$HC/supabase/migrations/20260902120000_hc_reader_knowledge.sql"; do
   echo "== $file"
   "$PSQL" "$url" -v ON_ERROR_STOP=1 -q -f "$file"
 done
-echo "all three migrations applied"
+echo "all four migrations applied"
