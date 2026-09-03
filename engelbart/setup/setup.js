@@ -360,13 +360,16 @@
   // A redraw within a step must not look like a new page: the entry animation
   // is for arriving, and every click, pick and slider release redraws. The
   // stylesheet reads this flag and holds the animation while it is set.
-  var drawn = { screen: "", step: -1 };
+  var drawn = { screen: "", step: -1 }, lastMain = null, draws = 0;
 
   var lastContent = null;
 
   function draw() {
     var still = drawn.screen === st.screen && drawn.step === st.step;
-    drawn = { screen: st.screen, step: st.step };
+    drawn = { screen: st.screen, step: st.step }; draws += 1;
+    // The main column is the scroll container and it is rebuilt on every
+    // redraw, so its position has to be carried over by hand.
+    var keep = still && lastMain ? lastMain.scrollTop : 0;
     if (lastContent && window.EngelbartInstall) window.EngelbartInstall.stop(lastContent);
     app.setAttribute("data-still", still ? "1" : "0");
     app.setAttribute("data-test", st.test ? "1" : "0");
@@ -385,6 +388,18 @@
     body.appendChild(content);
     if (typeof askPanel === "function") askPanel(body);
     main.appendChild(body); app.appendChild(main);
+    lastMain = main; main.scrollTop = keep;
+    // Something on the page asked to be brought into view: shown a little
+    // below the top of the pane, with the lines before it still readable,
+    // rather than at the bottom edge where a new turn would otherwise land.
+    if (st.ui.scrollTo) {
+      var target = st.ui.scrollTo === "thinking" ? content.querySelector("[data-thinking]") : content.querySelector("[data-latest]");
+      st.ui.scrollTo = null;
+      if (target && target.getBoundingClientRect && main.getBoundingClientRect) {
+        var d = target.getBoundingClientRect().top - main.getBoundingClientRect().top - 160;
+        if (d > 0) main.scrollTop = keep + d;
+      }
+    }
     var focus = content.querySelector("[autofocus]"); if (focus) focus.focus();
   }
 
@@ -865,13 +880,13 @@
       });
     }
     if (said.length) st.turns.push({ role: "user", content: said.join("\n"), card: userCard(body), local: true });
-    draw();
+    st.ui.scrollTo = "thinking"; draw();
     api("brainstorm", body).then(function (out) {
       bs.thinking = false; bs.answers = {}; bs.pick = ""; bs.note = ""; bs.text = "";
       st.turns.push({ id: out.turn_id, role: "assistant", content: out.say, card: { card: out.card, questions: out.questions, focus: out.focus, ready: out.ready === true } });
       if (out.interest) st.row.interest = out.interest;
       if (out.leveled_status) st.row.leveled_status = out.leveled_status === "done" ? "done" : st.row.leveled_status;
-      draw();
+      st.ui.scrollTo = "latest"; draw();
     }).catch(function (e) { bs.thinking = false; fail(e); });
   }
   function userCard(body) {
@@ -939,19 +954,20 @@
         }
         return;
       }
-      var say = sayOf(t);
+      var say = sayOf(t), latest = i === st.turns.length - 1;
       if (say.trim()) {
         var row = attr(el("div", "ob-bs-turn"), "data-who", "assistant");
+        if (latest) attr(row, "data-latest", "1");
         row.appendChild(el("span", "ob-bs-who", "claude"));
         var body = el("div", "ob-bs-text");
         say.split("\n").forEach(function (line) { if (line.trim()) body.appendChild(el("p", "", line)); });
         row.appendChild(body); thread.appendChild(row);
       }
-      var next = st.turns[i + 1], live = i === st.turns.length - 1 && !bs.thinking;
-      if (live) drawCard(thread, t.card || { card: "none" }, null);
+      var next = st.turns[i + 1], live = latest && !bs.thinking;
+      if (live) { var before = thread.children.length; drawCard(thread, t.card || { card: "none" }, null); if (!say.trim() && thread.children[before]) attr(thread.children[before], "data-latest", "1"); }
       else if (next && next.role === "user") drawCard(thread, t.card || { card: "none" }, next.card || legacyGiven(t.card, next.content));
     });
-    if (bs.thinking) { var th = el("div", "ob-bs-turn"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); thread.appendChild(th); }
+    if (bs.thinking) { var th = attr(el("div", "ob-bs-turn"), "data-thinking", "1"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); thread.appendChild(th); }
     box.appendChild(thread);
     var last = lastCard();
     // The plan is offered when the model, asked only once the resources were
@@ -1019,8 +1035,14 @@
         else if (given.text && !given.answers) qcard.appendChild(el("div", "ob-bs-said", given.text));
       } else {
         var acts = attr(el("div", "ob-actions"), "data-between", "1");
-        var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
-        acts.appendChild(on(skip, "click", function () { sendTurn({ text: "(skipped those)" }); }));
+        // Skipping once the resources are ready means "enough brainstorming":
+        // it goes on to choosing what to build on. Before that, it asks again.
+        var fitted = st.row.leveled_status === "done";
+        var skip = el("button", "ob-ghost", fitted ? "Skip to resources" : "Skip"); skip.type = "button";
+        acts.appendChild(on(skip, "click", function () {
+          if (fitted) { save(8, {}).then(function () { go(8); }).catch(fail); return; }
+          sendTurn({ text: "(skipped those)" });
+        }));
         sendBtn = cta("Send answers", !ready(), function () { sendTurn({ answers: bs.answers }); });
         acts.appendChild(sendBtn); qcard.appendChild(acts);
       }
@@ -1404,21 +1426,55 @@
   });
 
   var QUICK = ["What does this mean?", "Why does this matter?", "Give me an example", "Is this too much for a first project?"];
+  function askable() { return st.step >= 6 && st.step <= 11; }
   if (document.addEventListener) document.addEventListener("mouseup", function (e) {
     if (e.target && e.target.closest && e.target.closest("[data-askbtn]")) return;
     setTimeout(function () {
       var sel = window.getSelection ? window.getSelection() : null, t = sel ? sel.toString().trim() : "", c = document.getElementById("content");
-      if (!t || t.length < 3 || !c || !sel.rangeCount || !c.contains(sel.anchorNode) || st.step < 6 || st.step > 11) { if (st.ui.askBtn) { st.ui.askBtn = null; draw(); } return; }
+      if (!t || t.length < 3 || !c || !sel.rangeCount || !c.contains(sel.anchorNode) || !askable()) { if (st.ui.askBtn && !st.ui.askBtn.gutter) { st.ui.askBtn = null; draw(); } return; }
       var r = sel.getRangeAt(0).getBoundingClientRect(), cr = c.getBoundingClientRect();
       st.ui.askBtn = { text: t.slice(0, 240), x: r.left - cr.left + r.width / 2, y: r.top - cr.top }; draw();
     }, 0);
   });
 
+  // Anything clicked can be asked about: the nearest block of text under the
+  // click gets an "Ask about this" button in the left margin, aligned to it.
+  // Captured before the click reaches the element, because the element's own
+  // handler redraws the page and the node would be gone by the bubble.
+  var ASK_BLOCKS = ["ob-goal", "ob-opt", "ob-question", "ob-q", "ob-bs-text", "ob-title", "ob-sub", "ob-as-row", "ob-goal-title", "ob-dir-body", "ob-sg-row", "ob-todo", "ob-area-role", "ob-paper-sum", "ob-bs-said", "ob-ask-item"];
+  function classes(node) { return String((node && node.className) || "").split(/\s+/); }
+  function askBlock(node) {
+    var c = document.getElementById("content");
+    for (var n = node; n && n !== c; n = n.parentNode) {
+      var tag = String(n.tagName || "").toLowerCase();
+      if (tag === "button" || tag === "input" || tag === "textarea" || tag === "a") return null;
+      var cs = classes(n); if (cs.indexOf("ob-askbtn") >= 0 || cs.indexOf("ob-ask") >= 0) return null;
+      if (ASK_BLOCKS.some(function (k) { return cs.indexOf(k) >= 0; })) return n;
+    }
+    return null;
+  }
+  if (document.addEventListener) document.addEventListener("click", function (e) {
+    var c = document.getElementById("content"), t = e.target;
+    if (!c || !askable() || st.ui.askOpen) return;
+    var inside = false; for (var n = t; n; n = n.parentNode) if (n === c) { inside = true; break; }
+    var block = inside ? askBlock(t) : null;
+    if (!block) {
+      if (st.ui.askBtn && st.ui.askBtn.gutter && !(t && classes(t).indexOf("ob-askbtn") >= 0)) { st.ui.askBtn = null; var w0 = draws; setTimeout(function () { if (draws === w0) draw(); }, 0); }
+      return;
+    }
+    var text = str(block.textContent).replace(/\s+/g, " ").trim(); if (text.length < 3) return;
+    var r = block.getBoundingClientRect(), cr = c.getBoundingClientRect();
+    st.ui.askBtn = { text: text.slice(0, 240), gutter: true, y: r.top - cr.top + r.height / 2 };
+    // The element's own handler usually redraws; when nothing does, draw here.
+    var was = draws; setTimeout(function () { if (draws === was) draw(); }, 0);
+  }, true);
+
   function askPanel(body) {
     var content = body.children[0];
     if (st.ui.askBtn && !st.ui.askOpen && content) {
       var b = attr(el("button", "ob-askbtn", "Ask about this"), "data-askbtn", "1"); b.type = "button";
-      b.style.left = st.ui.askBtn.x + "px"; b.style.top = st.ui.askBtn.y + "px";
+      if (st.ui.askBtn.gutter) attr(b, "data-gutter", "1"); else b.style.left = st.ui.askBtn.x + "px";
+      b.style.top = st.ui.askBtn.y + "px";
       on(b, "click", function () {
         st.ui.askQuote = st.ui.askBtn.text; st.ui.askOpen = true; st.ui.askBtn = null; st.ui.askText = "";
         var s = window.getSelection ? window.getSelection() : null; if (s && s.removeAllRanges) s.removeAllRanges(); draw();

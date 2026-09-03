@@ -37,9 +37,11 @@ function makeEl(tag) {
       return byClass(node, "ob-cta");
     },
     querySelector(selector) {
-      assert.equal(selector, "[autofocus]", "the stub only knows the autofocus lookup");
+      // The stub knows one attribute-presence lookup, "[name]".
+      const m = /^\[([a-z-]+)\]$/.exec(selector);
+      assert.ok(m, `the stub only knows [attribute] lookups, not ${selector}`);
       let hit = null;
-      (function walk(n) { if (hit) return; if (n.hasAttribute && n.hasAttribute("autofocus")) { hit = n; return; } (n.children || []).forEach(walk); })(node);
+      (function walk(n) { if (hit) return; if (n.hasAttribute && n.hasAttribute(m[1])) { hit = n; return; } (n.children || []).forEach(walk); })(node);
       return hit;
     },
   };
@@ -499,6 +501,54 @@ test("the brainstorm opens on the card, keeps answered cards as cards, and offer
   page.cta().fire("click");
   await settle();
   assert.equal(page.title(), "What do you want to build on?");
+});
+
+test("the main column keeps its scroll across redraws, a sent turn scrolls to the thinking row, and Skip goes to the resources once they are ready", async () => {
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
+  await settle();
+  one(page.app, "ob-main").scrollTop = 300;
+  byClass(page.app, "ob-goal")[0].fire("click");                       // redraws in place
+  assert.equal(one(page.app, "ob-main").scrollTop, 300, "the pane did not jump back to the top");
+  assert.equal(textOf(byClass(page.app, "ob-ghost").find((b) => /Skip/.test(textOf(b)))), "Skip to resources");
+  byClass(page.app, "ob-ghost").find((b) => /Skip/.test(textOf(b))).fire("click");
+  await settle();
+  assert.equal(page.title(), "What do you want to build on?", "skipping with the resources ready is choosing to plan");
+  assert.equal(page.bodies.filter((b) => b.action === "brainstorm").length, 1, "no extra turn was asked for");
+
+  const early = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
+  await settle();
+  assert.equal(textOf(byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b)))), "Skip");
+  byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b))).fire("click");
+  assert.ok(one(early.app, "ob-bs-turn") && find(early.app, (n) => n.attrs["data-thinking"] === "1")[0], "the thinking row is marked for the scroll");
+  await settle();
+  assert.equal(early.bodies.filter((b) => b.action === "brainstorm").pop().text, "(skipped those)");
+});
+
+test("clicking a block offers Ask about this in the gutter, and the button opens the ask panel on that text", async () => {
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
+  await settle();
+  const option = byClass(page.app, "ob-goal")[1];
+  page.doc.fire("click", { target: option });                          // capture: the document sees it first
+  option.fire("click", { target: option });                            // then the option's own handler redraws
+  await settle();
+  const btn = one(page.app, "ob-askbtn");
+  assert.ok(btn, "a gutter button appeared");
+  assert.equal(btn.attrs["data-gutter"], "1");
+  assert.equal(byClass(page.app, "ob-goal")[1].attrs["data-on"], "1", "the click still picked the option");
+  btn.fire("click");
+  page.doc.fire("click", { target: btn });
+  await settle();
+  assert.ok(one(page.app, "ob-ask"), "the ask panel opened");
+  assert.match(textOf(one(page.app, "ob-ask-quote")), /The math/);
+  // A click on empty space puts the button away.
+  const fresh = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
+  await settle();
+  fresh.doc.fire("click", { target: byClass(fresh.app, "ob-goal")[0] });
+  await settle();
+  assert.ok(one(fresh.app, "ob-askbtn"));
+  fresh.doc.fire("click", { target: one(fresh.app, "ob-main") });
+  await settle();
+  assert.equal(one(fresh.app, "ob-askbtn"), undefined);
 });
 
 test("a reloaded brainstorm redraws every answered card with its answers, from the stored user turns", async () => {
