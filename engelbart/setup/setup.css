@@ -204,7 +204,7 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 
 
 /* frame */
-.ob{height:100vh;display:flex;background:var(--bg);color:var(--ink);font-family:var(--font-sans)}
+.ob{position:relative;height:100vh;display:flex;background:var(--bg);color:var(--ink);font-family:var(--font-sans)}
 .ob-rail{width:var(--rail-width);flex:none;background:var(--panel2);border-right:1px solid var(--bd);display:flex;flex-direction:column;padding:36px var(--space-8);overflow-y:auto}
 .ob-brand{font:var(--text-brand);letter-spacing:var(--track-brand)}
 .ob-caption{margin-top:10px;font:var(--text-12);color:var(--fnt)}
@@ -465,6 +465,42 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob[data-still="1"] .ob-as-body{animation:none}
 
 /* --- direction and subgoals: one proposal, and the box that changes it --- */
+/* --- the tour between Install and Topics --- */
+.ob-tour-demo{position:relative;margin-top:22px;padding:18px 20px 16px;background:var(--tint);border:1px solid var(--bd);border-radius:var(--radius-lg)}
+.ob-tour-line{margin:10px 0 0;font:15px/1.7 var(--font-sans);color:var(--ink)}
+.ob-tour-hl{color:inherit;background:linear-gradient(var(--acchov),var(--acchov)) no-repeat 0 0/0% 100%;border-radius:2px;animation:tourSweep 6s ease-in-out infinite}
+.ob-tour-ask{position:absolute;right:100%;margin-right:14px;top:44px;font:var(--text-12);color:var(--ink);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--bd2);white-space:nowrap;opacity:0;animation:tourAsk 6s ease-in-out infinite}
+@keyframes tourSweep{0%,8%{background-size:0% 100%}30%,80%{background-size:100% 100%}92%,100%{background-size:0% 100%}}
+@keyframes tourAsk{0%,32%{opacity:0;transform:translateY(3px)}42%,78%{opacity:1;transform:none}90%,100%{opacity:0}}
+.ob-tour-reg{position:relative;margin-top:12px;height:34px}
+.ob-tour-bars{position:absolute;left:0;right:110px;top:0;height:16px;display:flex;gap:4px}
+.ob-tour-bar{flex:1;border-radius:3px;background:var(--bd);position:relative;overflow:hidden}
+.ob-tour-bar::after{content:"";position:absolute;inset:0;background:var(--acc);transform-origin:left;transform:scaleX(0)}
+.ob-tour-bar[data-i="0"]::after,.ob-tour-bar[data-i="1"]::after{transform:scaleX(1)}
+.ob-tour-bar[data-i="2"]::after{animation:tourFill 6s ease-in-out infinite}
+.ob-tour-thumb{position:absolute;top:19px;width:11px;height:11px;border-radius:50%;background:var(--panel);border:2px solid var(--acc);box-sizing:border-box;left:calc((100% - 110px) * .5);transform:translateX(-50%);animation:tourThumb 6s ease-in-out infinite}
+.ob-tour-regen{position:absolute;right:0;top:4px;padding:5px 10px;font:var(--text-microcap);letter-spacing:1.2px;text-transform:uppercase;border-radius:var(--radius-pill);color:var(--onacc);background:var(--ink);opacity:0;animation:tourRegen 6s ease-in-out infinite}
+@keyframes tourFill{0%,30%{transform:scaleX(0)}45%,85%{transform:scaleX(1)}95%,100%{transform:scaleX(0)}}
+@keyframes tourThumb{0%,30%{left:calc((100% - 110px) * .5)}45%,85%{left:calc((100% - 110px) * .75)}95%,100%{left:calc((100% - 110px) * .5)}}
+@keyframes tourRegen{0%,48%{opacity:0}58%,85%{opacity:1}95%,100%{opacity:0}}
+/* --- the register control, top right on every step --- */
+.ob-reg{position:absolute;top:14px;right:24px;z-index:6;width:236px;padding:10px 12px 8px;background:var(--panel);border:1px solid var(--bd);border-radius:var(--radius-md);display:flex;flex-direction:column;gap:6px}
+.ob-reg-cap{font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--fnt)}
+.ob-reg .ob-slider{gap:6px}
+.ob-reg .ob-slider-name{font:500 12.5px/1.3 var(--font-sans);color:var(--ink)}
+.ob-reg .ob-slider-desc{display:none}
+.ob-reg .ob-track{height:26px}
+.ob-reg .ob-bars{height:16px;gap:4px}
+.ob-reg .ob-bar{border-radius:3px}
+.ob-reg .ob-line,.ob-reg .ob-line-on{top:20px}
+.ob-reg .ob-thumb{top:14px;width:11px;height:11px}
+.ob-reg .ob-stops{gap:4px}
+.ob-reg .ob-stop{font:400 10px/1.3 var(--font-sans)}
+.ob-reg-acts{min-height:22px;display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.ob-reg-go{padding:5px 10px;font:var(--text-microcap);letter-spacing:1.2px}
+.ob-reg[data-busy="1"] .ob-track{pointer-events:none;opacity:.6}
+@media(max-width:1080px){.ob-reg{display:none}}
+.ob-tdel{color:var(--del)}
 .ob-as-header{display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
 .ob-as-h1{margin:0;width:100%;font:500 34px/1.2 var(--font-sans);letter-spacing:-0.4px;text-wrap:pretty;color:var(--ink)}
 .ob-as-sub{font:var(--text-13);color:var(--mut)}

@@ -11,7 +11,7 @@ const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("
 const { verifyUser } = require("./_lib/supabase");
 
 const MODEL_ACTIONS = new Set(["sources", "analysis", "assets", "leveled", "answer", "brainstorm", "asset_ask",
-  "direction", "subgoals", "details", "goals", "todos", "ask"]);
+  "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"]);
 // The three background readers are polled for free; only starting or
 // retrying one bills the key.
 const POLLED = new Set(["analysis", "assets", "leveled"]);
@@ -102,6 +102,7 @@ async function dispatch(user, body, d = {}) {
   if (action === "goals") return OB.goals(user, row, calibrations, body, credentials, options);
   if (action === "todos") return OB.todos(user, row, calibrations, body, credentials, options);
   if (action === "ask") return OB.ask(user, row, calibrations, body, credentials, options);
+  if (action === "rewrite") return OB.rewrite(user, row, calibrations, body, credentials, options);
   if (action === "create") return OB.create(user, row, calibrations, body, options);
   const error = new Error("Unknown Engelbart onboarding action");
   error.statusCode = 400;

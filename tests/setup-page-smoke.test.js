@@ -150,6 +150,7 @@ function mount(options = {}) {
       if (body.action === "subgoals") { row = { ...row, subgoals: SUBGOALS }; return answer({ subgoals: SUBGOALS }); }
       if (body.action === "todos") return answer({ todos: ["do a", "do b"], name: "zebra-runner" });
       if (body.action === "ask") return answer({ answer: "Because.", level: "some" });
+      if (body.action === "rewrite") { row = { ...row, depth: body.to }; return answer({ texts: body.texts.map((t) => "★ " + t), level: body.to }); }
       if (body.action === "create") return answer({ ok: true, pending_setup_id: "p" });
     }
     if (url === "/api/engelbart-device") return answer({ code: "ABCD-EFGH-IJKL", expiresInSeconds: 900 });
@@ -262,8 +263,11 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
   page.cta().fire("click");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "How familiar are you with the paper's concepts?");
+  assert.equal(page.title(), "Two things you can do on every screen", "the tour sits between Install and Topics");
   assert.equal(page.row().step, 6);
+  assert.ok(one(page.app, "ob-tour-hl") && one(page.app, "ob-tour-regen"), "both demos are drawn");
+  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Skip").fire("click");
+  assert.equal(page.title(), "How familiar are you with the paper's concepts?");
 });
 
 // ⏎ is Continue. A reader who has just clicked an option should not have to
@@ -289,6 +293,34 @@ test("Enter presses the step's button unless a text box has it", async () => {
   major.doc.fire("keydown", { key: "Enter", target: byClass(major.app, "ob-step")[0] });
   await settle();
   assert.equal(major.actions.length, before, "a disabled Continue stays unpressed");
+});
+
+// The register control: on every step from the paper on, the same slider as
+// the Explanations step; move it, Regenerate, and the screen is rewritten.
+test("the register control rewrites what is on the screen and moves the profile's depth", async () => {
+  const early = mount({ row: fullRow({ step: 1 }) });
+  await settle();
+  assert.equal(one(early.app, "ob-reg"), undefined, "not before the paper");
+  const page = mount({ row: fullRow({ step: 6, depth: "some" }) });
+  await settle();
+  const reg = one(page.app, "ob-reg");
+  assert.ok(reg, "the control is on the topics step");
+  assert.equal(byClass(reg, "ob-reg-go").length, 0, "no Regenerate until the slider moves");
+  const question = textOf(one(page.app, "ob-q"));
+  byClass(reg, "ob-stop")[3].fire("click");                    // Expert
+  const go = one(one(page.app, "ob-reg"), "ob-reg-go");
+  assert.ok(go, "Regenerate appears once the register differs");
+  go.fire("click");
+  await settle();
+  const sent = page.bodies.find((b) => b.action === "rewrite");
+  assert.equal(sent.from, "some");
+  assert.equal(sent.to, "expert");
+  assert.ok(sent.texts.includes(question), "the question on the screen was among the passages");
+  assert.equal(textOf(one(page.app, "ob-q")), "★ " + question, "and it is shown rewritten");
+  assert.equal(page.row().depth, "expert");
+  byClass(page.app, "ob-pdot")[1].fire("click");
+  byClass(page.app, "ob-pdot")[0].fire("click");
+  assert.equal(textOf(one(page.app, "ob-q")), "★ " + question, "the rewrite survives redraws on the step");
 });
 
 // The two halves of the paper step: accepting it is awaited, reading it is not.

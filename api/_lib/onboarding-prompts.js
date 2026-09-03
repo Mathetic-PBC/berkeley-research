@@ -455,6 +455,26 @@ function askPrompt({ reader, paper, quote, question, resources }) {
   ].join("\n");
 }
 
+// Rewriting what is on the screen at another register. Inputs: reader, from
+// and to (DEPTHS keys), texts (the passages, in page order).
+function rewritePrompt({ reader, from, to, texts }) {
+  const was = depthOf(from), now = depthOf(to);
+  const list = (Array.isArray(texts) ? texts : []).map((t, i) => `${i + 1}. ${String(t)}`).join("\n");
+  return [
+    ...readerBlock({ ...(reader || {}), depth: to }), "",
+    `Below are ${texts.length} passages shown to the reader on one screen of a setup page. They were written ${was ? was.phrase : from}. The reader has asked for them ${now ? now.phrase : to}.`,
+    now ? `The new register: ${now.rule}` : "",
+    "",
+    "Rewrite each passage at the new register. Keep what it says and roughly how long it is; a question stays a question, an option stays an option, a title stays a title. Keep every name, number, URL and quoted term as it is. Do not add, drop, merge or reorder passages. Where a passage is already at the new register, return it unchanged.",
+    "",
+    "The passages:",
+    list,
+    "",
+    JSON_ONLY,
+    `{"texts": [${texts.map(() => '"..."').join(", ")}]}  -- exactly ${texts.length} strings, in the same order`,
+  ].filter((line) => line !== "").join("\n");
+}
+
 // The paper as a shared, cacheable prefix. Both calls that read the whole
 // paper -- the diagnostic and the asset hunt -- begin with these same two
 // blocks, so the second pays for the cached tokens rather than the paper.
@@ -668,6 +688,6 @@ function resourcesBlock(resources) {
 module.exports = {
   DEPTHS, FAMILIARITY, LADDER, JSON_ONLY, ASSET_TYPES,
   depthOf, rung, readerBlock, assessmentBlock, briefBlock, transcriptBlock,
-  analyzePrompt, gradePrompt, followUpPrompt, detailsPrompt, goalsPrompt, todosPrompt, askPrompt,
+  analyzePrompt, gradePrompt, followUpPrompt, rewritePrompt, detailsPrompt, goalsPrompt, todosPrompt, askPrompt,
   PAPER_PREFIX, assetsPrompt, levelPrompt, brainstormPrompt, assetAskPrompt, directionPrompt, subgoalsPrompt, resourcesBlock,
 };

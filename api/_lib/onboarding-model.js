@@ -252,6 +252,24 @@ const goals = (input, c, o) => generate(P.goalsPrompt(input), normalizeGoals, c,
 const todos = (input, c, o) => generate(P.todosPrompt(input), normalizeTodos, c, o, "todos");
 const ask = (input, c, o) => generate(P.askPrompt(input), normalizeAsk, c, o, "answer");
 
+// The screen's passages at another register: Haiku, one call, the same count
+// back. A reply of the wrong shape or count is a 502, never a partial swap.
+function normalizeRewrite(raw, count) {
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.texts) || raw.texts.length !== count) return null;
+  const texts = raw.texts.map((t) => (typeof t === "string" ? long(t, 2400) : ""));
+  return texts.every(Boolean) ? { texts } : null;
+}
+async function rewrite(input, credentials, options = {}) {
+  const raw = await callModel({ content: [text(P.rewritePrompt(input))], family: "haiku", maxTokens: 6000 }, credentials, options);
+  const out = normalizeRewrite(raw, input.texts.length);
+  if (!out) {
+    const error = new Error("The rewrite did not come back in a usable shape");
+    error.statusCode = 502;
+    throw error;
+  }
+  return out;
+}
+
 // --- the paper as a cached prefix -----------------------------------------------
 
 // The two blocks every whole-paper call begins with. Identical bytes in
@@ -433,8 +451,8 @@ const subgoals = (input, c, o) => generate(P.subgoalsPrompt(input), normalizeSub
 module.exports = {
   LEVELS, MAX_PAGE_TEXT,
   callModel, pickModel, extractJson,
-  analyze, grade, followUp, details, goals, todos, ask, assets, levelAssets, brainstorm, assetAsk, direction, subgoals,
+  analyze, grade, followUp, rewrite, details, goals, todos, ask, assets, levelAssets, brainstorm, assetAsk, direction, subgoals,
   paperPrefix, briefOf,
-  normalizeAnalysis, normalizeGrade, normalizeFollowUp, normalizeDetails, normalizeGoals, normalizeTodos, normalizeAsk,
+  normalizeAnalysis, normalizeGrade, normalizeFollowUp, normalizeRewrite, normalizeDetails, normalizeGoals, normalizeTodos, normalizeAsk,
   normalizeAssets, normalizeLeveled, normalizeBrainstorm, normalizeDirection, normalizeSubgoals,
 };

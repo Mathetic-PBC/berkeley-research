@@ -842,6 +842,23 @@ async function ask(user, row, calibrations, body, credentials, options = {}) {
   return { answer: made.answer, level: reader.depth };
 }
 
+// The screen at another register. The passages come from the page, the
+// rewritten ones go back in the same order, and the reader's chosen depth
+// follows: what comes next is generated at the register they just asked for.
+const REWRITE_MAX = 40;
+async function rewrite(user, row, calibrations, body, credentials, options = {}) {
+  requireOpen(row);
+  const to = String(body && body.to);
+  if (!DEPTH_KEYS.includes(to)) throw fail("That register is not on the slider", 400);
+  const texts = (Array.isArray(body && body.texts) ? body.texts : []).map((t) => long(t, 2400)).filter(Boolean).slice(0, REWRITE_MAX);
+  if (!texts.length) throw fail("Nothing on the screen to rewrite", 400);
+  const from = DEPTH_KEYS.includes(String(body && body.from)) ? String(body.from) : (row.depth || "everyday");
+  const reader = readerOf(row, calibrations);
+  const made = await OM.rewrite({ reader, from, to, texts }, credentials, options);
+  if (row.depth !== to) await patch(row, { depth: to }, options);
+  return { texts: made.texts, level: to };
+}
+
 // --- create -------------------------------------------------------------------
 
 function toPayload(row, calibrations) {
@@ -918,7 +935,7 @@ async function create(user, row, calibrations, body, options = {}) {
 
 module.exports = {
   STEP, STEP_FIELDS, RUNNING_STALE_MS, MAX_PDF_BYTES,
-  open, reset, step, sources, analysis, answer, details, goals, todos, ask, create,
+  open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
   assets: assetsAction, topicsDone, leveled: leveledAction, brainstorm: brainstormAction, assetAsk, chooseAsset,
   direction: directionAction, subgoals: subgoalsAction,
   areaLevels, knowledgeOf, assessedDepth, readerOf, toPayload, analysisRunning, publicRow,

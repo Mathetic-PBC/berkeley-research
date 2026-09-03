@@ -89,6 +89,7 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
       const reply = /prior-knowledge diagnostic/.test(text) ? model.analysis
         : /calibration question/.test(text) ? model.grade
         : /Write ONE follow-up question/.test(text) ? (typeof model.followUp === "function" ? model.followUp(text) : model.followUp)
+        : /Rewrite each passage at the new register/.test(text) ? (typeof model.rewrite === "function" ? model.rewrite(text) : model.rewrite)
         : /Ask 3 or 4 questions/.test(text) ? model.details
         : /exactly four goals/.test(text) ? model.goals
         : /identify the concrete inputs and outputs/.test(text) ? model.assets
@@ -387,6 +388,24 @@ test("a follow-up the model cannot write falls back to the ladder's question at 
   assert.equal(pending.question, "q25");
   assert.equal(pending.sample_response, "s25");
   assert.equal(pending.answered_at, null);
+});
+
+test("rewrite sends the screen's passages to the model at the asked register and moves the row's depth", async () => {
+  const seen = [];
+  const db = fake({ model: { rewrite: (text) => { seen.push(text); return { texts: ["A plainer first line.", "A plainer second."] }; } } });
+  const row = await ready(db, { depth: "technical" });
+  const out = await OB.rewrite(USER, row, [], { from: "technical", to: "everyday", texts: ["Attention weights the inputs.", "Softmax normalises."] }, CREDS, db.options);
+  assert.deepEqual(out, { texts: ["A plainer first line.", "A plainer second."], level: "everyday" });
+  assert.match(seen[0], /written technical/);
+  assert.match(seen[0], /Write for somebody who has not programmed/, "the new register's own rule is in the prompt");
+  assert.match(seen[0], /1\. Attention weights the inputs\.\n2\. Softmax normalises\./);
+  assert.equal(db.tables.engelbart_onboardings[0].depth, "everyday", "what comes next is written there too");
+  await assert.rejects(OB.rewrite(USER, row, [], { to: "shouty", texts: ["x"] }, CREDS, db.options), (e) => e.statusCode === 400);
+  await assert.rejects(OB.rewrite(USER, row, [], { to: "some", texts: [] }, CREDS, db.options), (e) => e.statusCode === 400);
+  // The wrong count back is a 502, never a partial swap.
+  const short = fake({ model: { rewrite: { texts: ["only one"] } } });
+  const row2 = await ready(short, {});
+  await assert.rejects(OB.rewrite(USER, row2, [], { to: "some", texts: ["a", "b"] }, CREDS, short.options), (e) => e.statusCode === 502);
 });
 
 test("assessedDepth shifts one stop on the graded mean and names the weakest area", () => {

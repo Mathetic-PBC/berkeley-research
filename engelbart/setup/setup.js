@@ -71,6 +71,9 @@
       askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null,
       bs: { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false },   // brainstorm
       as: { open: {}, picked: "" },     // assets
+      reg: { pos: null, busy: false, rewrites: {} },   // the register control: pending slider position, in-flight, rewritten text by step
+      todoConfirm: -1,                  // the todo row whose × was pressed once
+      tour: false,                      // the one-time tour between Install and Topics
       change: { open: false, text: "", thinking: false, log: [] }                             // direction / subgoals
     },
     busy: "",           // what is being generated, for the indicator
@@ -137,6 +140,7 @@
   function go(n) {
     st.step = n;
     st.error = "";
+    st.ui.todoConfirm = -1; st.ui.reg.pos = null;
     if (st.ui.askOpen) st.ui.askOpen = false;
     st.ui.askBtn = null;
     draw();
@@ -385,9 +389,13 @@
       drawDirection, drawSubgoals, drawTodos, drawDone];
     drawers[Math.min(st.step, drawers.length - 1)](content);
     if (st.error) content.appendChild(el("div", "ob-err", st.error));
+    applyRewrites(content);
     body.appendChild(content);
     if (typeof askPanel === "function") askPanel(body);
     main.appendChild(body); app.appendChild(main);
+    // From the paper on: the steps before it ask about the reader and have
+    // nothing generated to rewrite, and the Explanations step is the slider.
+    if (st.step >= 4 && st.step <= 11) app.appendChild(registerView());
     lastMain = main; main.scrollTop = keep;
     // Something on the page asked to be brought into view: shown a little
     // below the top of the pane, with the lines before it still readable,
@@ -421,6 +429,83 @@
       var range = document.createRange(); range.setStart(hit, offset); range.setEnd(hit, offset + want.length);
       var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
     } catch (e) { /* a selection is a nicety */ }
+  }
+
+  // --- the register control ---------------------------------------------------
+  //
+  // Top right on every step: the same four-stop slider as the Explanations
+  // step. Move it and press Regenerate, and what is on the screen is rewritten
+  // at that register -- one Haiku call with the passages as they stand -- and
+  // the profile's depth follows, so what comes next is written there too.
+
+  var PROSE = ["ob-title", "ob-sub", "ob-q", "ob-question", "ob-area-role", "ob-area-name", "ob-paper-sum", "ob-goal-label", "ob-goal-why",
+    "ob-goal-title", "ob-dir-body", "ob-dir-why", "ob-dir-first", "ob-sg-label", "ob-sg-desc", "ob-sg-why", "ob-as-h1", "ob-as-sub", "ob-as-title",
+    "ob-as-desc", "ob-as-why", "ob-bs-said", "ob-slider-name", "ob-slider-desc", "ob-cap", "ob-q-label", "ob-wait-t", "ob-done-t", "ob-done-s", "ob-hint"];
+  function proseNodes(root) {
+    var out = [];
+    (function walk(n) {
+      if (!n || !n.children) return;
+      var cs = String(n.className || "").split(/\s+/);
+      var hit = PROSE.some(function (k) { return cs.indexOf(k) >= 0; });
+      if (cs.indexOf("ob-bs-text") >= 0) { for (var i = 0; i < n.children.length; i++) if (String(n.children[i].tagName).toLowerCase() === "p") out.push(n.children[i]); return; }
+      if (hit) {
+        // A prose node with children (a "Why · " label and its text) yields
+        // its text leaves; the label itself is furniture and stays.
+        if (n.children.length === 0) { out.push(n); return; }
+        (function leaves(m) {
+          for (var i = 0; i < m.children.length; i++) {
+            var c = m.children[i], cc = String(c.className || "").split(/\s+/), tag = String(c.tagName || "").toLowerCase();
+            if (tag === "button" || tag === "input" || tag === "textarea" || cc.indexOf("ob-as-lead") >= 0 || cc.indexOf("ob-tiny") >= 0) continue;
+            if (c.children && c.children.length) leaves(c); else out.push(c);
+          }
+        })(n);
+        return;
+      }
+      for (var j = 0; j < n.children.length; j++) walk(n.children[j]);
+    })(root);
+    return out.filter(function (n) { return str(n.textContent).trim().length >= 12; });
+  }
+  function regDepth() { return st.row && st.row.depth ? st.row.depth : "everyday"; }
+  function regIndex(key) { var i = DEPTHS.map(function (d) { return d.key; }).indexOf(key); return i < 0 ? 0 : i; }
+  function registerView() {
+    var reg = st.ui.reg, cur = regDepth(), pos = reg.pos != null ? reg.pos : (regIndex(cur) + 1) / DEPTHS.length;
+    var next = DEPTHS[snap(pos, DEPTHS.length)].key, changed = next !== cur;
+    var box = attr(el("div", "ob-reg"), "data-busy", reg.busy ? "1" : "0");
+    box.appendChild(el("div", "ob-reg-cap", "Explanations"));
+    box.appendChild(slider({ stops: DEPTHS, pos: pos, grid: true, onCommit: function (p) { reg.pos = p; draw(); } }));
+    var acts = el("div", "ob-reg-acts");
+    if (reg.busy) { acts.appendChild(dots()); acts.appendChild(el("span", "ob-hint", "Rewriting")); }
+    else if (changed) {
+      var go_ = el("button", "ob-pill ob-reg-go", "Regenerate"); go_.type = "button";
+      on(go_, "click", regenerate); acts.appendChild(go_);
+    }
+    box.appendChild(acts);
+    return box;
+  }
+  function regenerate() {
+    var reg = st.ui.reg, cur = regDepth(), to = DEPTHS[snap(reg.pos, DEPTHS.length)].key;
+    if (reg.busy || to === cur) return;
+    var content = document.getElementById("content"); if (!content) return;
+    var nodes = proseNodes(content), texts = [], seen = {};
+    nodes.forEach(function (n) { var t = str(n.textContent).replace(/\s+/g, " ").trim(); if (!seen[t]) { seen[t] = true; texts.push(t); } });
+    texts = texts.slice(0, 40);
+    reg.busy = true; st.error = ""; draw();
+    api("rewrite", { from: cur, to: to, texts: texts }).then(function (out) {
+      reg.busy = false; reg.pos = null;
+      var map = reg.rewrites[st.step] || (reg.rewrites[st.step] = {});
+      texts.forEach(function (t, i) { var r = str(out.texts && out.texts[i]).trim(); if (r && r !== t) map[t] = r; });
+      st.row.depth = out.level || to;
+      draw();
+    }).catch(function (e) { reg.busy = false; fail(e); });
+  }
+  // After each draw the screen is rebuilt from the record, which is still at
+  // the register it was written in; the rewrites are laid back over it.
+  function applyRewrites(content) {
+    var map = st.ui.reg.rewrites[st.step]; if (!map) return;
+    proseNodes(content).forEach(function (n) {
+      var t = str(n.textContent).replace(/\s+/g, " ").trim();
+      if (map[t]) n.textContent = map[t];
+    });
   }
 
   function stepBox(content, count, title) {
@@ -682,7 +767,7 @@
     }
     if (!window.EngelbartInstall) { stepBox(content, count(5), "Install Engelbart on your machine"); return; }
     window.EngelbartInstall.render(content, { variant: "install", code: st.ui.made.code, expiresInSeconds: st.ui.made.expiresInSeconds,
-      onDone: function () { save(6, {}).then(function () { go(6); }).catch(fail); },
+      onDone: function () { save(6, {}).then(function () { st.ui.tour = true; go(6); }).catch(fail); },
       onNewCode: function () { st.ui.made = null; draw(); } });
   }
 
@@ -725,8 +810,41 @@
   // A follow-up row: written for this area, its own question, not answered yet.
   function pendingFollow(i) { return st.cals.filter(function (c) { return Number(c.area_index) === i && !c.answered_at && c.question; })[0] || null; }
 
+  // Between Install and Topics, once: the two things the rest of the page can
+  // do. A short animation, then Continue or Skip.
+  function drawTour(content) {
+    var box = el("div", "ob-step ob-tour");
+    box.appendChild(el("div", "ob-count", "Before the questions"));
+    box.appendChild(el("div", "ob-title", "Two things you can do on every screen"));
+    var demo1 = el("div", "ob-tour-demo"); demo1.appendChild(el("div", "ob-cap", "Ask about anything"));
+    var line = el("p", "ob-tour-line");
+    line.appendChild(el("span", "", "Highlight any words, like "));
+    line.appendChild(el("mark", "ob-tour-hl", "a term you have not met"));
+    line.appendChild(el("span", "", ", and a link appears in the margin."));
+    var ask = el("span", "ob-tour-ask", "Ask about this");
+    demo1.appendChild(ask); demo1.appendChild(line);
+    demo1.appendChild(el("div", "ob-sub", "The answer comes back at your level, and you can ask for it simpler or deeper."));
+    box.appendChild(demo1);
+    var demo2 = el("div", "ob-tour-demo"); demo2.appendChild(el("div", "ob-cap", "Change how technical the page is"));
+    var reg = el("div", "ob-tour-reg");
+    var bars = el("div", "ob-tour-bars");
+    for (var i = 0; i < 4; i++) bars.appendChild(attr(el("span", "ob-tour-bar"), "data-i", String(i)));
+    reg.appendChild(bars); reg.appendChild(el("span", "ob-tour-thumb"));
+    reg.appendChild(el("span", "ob-tour-regen", "Regenerate"));
+    demo2.appendChild(reg);
+    demo2.appendChild(el("div", "ob-sub", "The slider in the top right rewrites what is on the screen at the level you drag it to."));
+    box.appendChild(demo2);
+    var acts = attr(el("div", "ob-actions"), "data-between", "1");
+    var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
+    acts.appendChild(on(skip, "click", function () { st.ui.tour = false; draw(); }));
+    acts.appendChild(cta("Continue", false, function () { st.ui.tour = false; draw(); }));
+    box.appendChild(acts);
+    content.appendChild(box);
+  }
+
   function drawTopics(content) {
     var r = st.row;
+    if (st.ui.tour) { drawTour(content); return; }
     if (r.analysis_status === "none" && r.paper_id) {
       // The tab closed between the paper step's sources and its run.
       startReading({ run: true });
@@ -1329,8 +1447,17 @@
       on(input, "input", function () { todos[i] = input.value; grow(); create.disabled = off(); });
       on(input, "keydown", function (e) { if (e.key === "Enter") e.preventDefault(); });
       setTimeout(grow, 0); row.appendChild(input);
-      var x = el("button", "x", "×"); x.type = "button";
-      row.appendChild(on(x, "click", function () { todos.splice(i, 1); draw(); })); rows.appendChild(row);
+      // Deleting takes two presses: the × asks, and only "Delete" removes.
+      if (st.ui.todoConfirm === i) {
+        var sure = el("button", "ob-tiny ob-tdel", "Delete"); sure.type = "button";
+        row.appendChild(on(sure, "click", function () { todos.splice(i, 1); st.ui.todoConfirm = -1; draw(); }));
+        var keep = el("button", "ob-tiny", "Keep"); keep.type = "button";
+        row.appendChild(on(keep, "click", function () { st.ui.todoConfirm = -1; draw(); }));
+      } else {
+        var x = el("button", "x", "×"); x.type = "button"; x.setAttribute("aria-label", "delete this todo");
+        row.appendChild(on(x, "click", function () { st.ui.todoConfirm = i; draw(); }));
+      }
+      rows.appendChild(row);
     });
     if (canAdd) {
       var add = el("div", "ob-trow"); add.appendChild(el("span", "dash", "–"));
