@@ -11,6 +11,19 @@ const ARCH_LABEL = Object.freeze({
   linux: { arm64: "ARM64", x64: "x64" },
   win32: { arm64: "ARM", x64: "x64" },
 });
+const BROWSER_RESUME_BANNER = [
+  "██████╗     █████╗     ██████╗    ████████╗",
+  "██╔══██╗   ██╔══██╗   ██╔══██╗   ╚══██╔══╝",
+  "██████╔╝   ███████║   ██████╔╝      ██║",
+  "██╔══██╗   ██╔══██║   ██╔══██╗      ██║",
+  "██████╔╝   ██║  ██║   ██║  ██║      ██║",
+  "╚═════╝    ╚═╝  ╚═╝   ╚═╝  ╚═╝      ╚═╝",
+  "",
+  "╔══════════════════════════════════════╗",
+  "║   RETURN TO YOUR BROWSER TO RESUME   ║",
+  "╚══════════════════════════════════════╝",
+  "",
+].join("\n");
 
 test("browser → CLI → /bart browser → Claude context", async ({ page }) => {
   test.setTimeout(240_000);
@@ -39,7 +52,8 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     expect(shownCommand).toContain("--no-open");
 
     const installed = await machine.install(SETUP_CODE);
-    expect(installed.stdout).toContain("Connected as sim@example.com. Go back to your browser tab");
+    expect(installed.stdout).toBe(BROWSER_RESUME_BANNER);
+    expect(installed.stderr).toBe("");
     expect(stack.codeRedeemed).toBe(true);
 
     await page.getByRole("button", { name: "Continue" }).click();
@@ -59,6 +73,10 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     expect(opened.answer.reason).toContain('created "Browser CLI Round Trip" from your web setup');
 
     await page.goto(opened.url, { waitUntil: "domcontentloaded" });
+    // The production handoff intentionally opens the restored legacy goals
+    // workspace, not the September 3 full-screen Goals Workspace/tour.
+    await expect(page.locator(".hc-rail-right")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Welcome to Engelbart", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Prove browser and Claude share one plan", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
     await page.getByText("Pair an isolated machine", { exact: true }).first().click();
     await expect(page.getByText("Redeem the setup code with the checked-out CLI", { exact: true }).first()).toBeVisible();

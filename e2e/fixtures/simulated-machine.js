@@ -130,8 +130,14 @@ class SimulatedMachine {
     fs.mkdirSync(this.workspace, { recursive: true });
     fs.mkdirSync(this.claudeConfig, { recursive: true });
     writeFakeClaude(this.fakeBin);
+    const inheritedEnv = { ...process.env };
+    // Playwright sets FORCE_COLOR while developer shells can export NO_COLOR;
+    // Node warns about that pair before the CLI starts, which would make the
+    // simulated terminal noisier than either installer under test.
+    delete inheritedEnv.FORCE_COLOR;
+    delete inheritedEnv.NO_COLOR;
     this.env = {
-      ...process.env,
+      ...inheritedEnv,
       CI: "1",
       CLAUDE_CONFIG_DIR: this.claudeConfig,
       CLAUDE_VAULT_DIR: this.vault,
