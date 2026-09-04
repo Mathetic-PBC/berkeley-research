@@ -21,16 +21,54 @@ function windowsLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-function writeFakeClaude(bin) {
+function csharpLiteral(value) {
+  return JSON.stringify(String(value)).replace(/\\u2028|\\u2029/g, "");
+}
+
+function shellLiteral(value) {
+  return `'${String(value).replace(/'/g, `'"'"'`)}'`;
+}
+
+function hostPathWithoutClaude() {
+  const names = process.platform === "win32"
+    ? ["claude.exe", "claude.cmd", "claude.bat", "claude.ps1"]
+    : ["claude"];
+  return String(process.env.PATH || "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .filter((entry) => !names.some((name) => fs.existsSync(path.join(entry, name))))
+    .join(path.delimiter);
+}
+
+// A stateful executable, not a one-answer stub. The cross-platform test can
+// start with a stale Claude, run the real Engelbart update decision, and then
+// prove a second install observes the repaired version instead of updating or
+// reinstalling it again. Every invocation is kept inside the fake machine.
+function writeFakeClaude(bin, options = {}) {
   fs.mkdirSync(bin, { recursive: true });
+  const versionFile = path.join(bin, "claude-version.txt");
+  const logFile = path.join(bin, "claude-invocations.log");
+  const initialVersion = options.version || "2.1.175";
+  const updateVersion = options.updateVersion || "";
+  const updateExit = Number.isInteger(options.updateExit) ? options.updateExit : 0;
+  fs.writeFileSync(versionFile, `${initialVersion}\n`);
   if (process.platform === "win32") {
     const source = path.join(bin, "FakeClaude.cs");
     const executable = path.join(bin, "claude.exe");
     fs.writeFileSync(source, [
       "using System;",
+      "using System.IO;",
       "public static class FakeClaude {",
       "  public static int Main(string[] args) {",
-      "    Console.WriteLine(\"2.1.175 (Claude Code)\");",
+      `    File.AppendAllText(${csharpLiteral(logFile)}, String.Join(" ", args) + Environment.NewLine);`,
+      "    if (args.Length > 0 && args[0] == \"--version\") {",
+      `      Console.WriteLine(File.ReadAllText(${csharpLiteral(versionFile)}).Trim() + " (Claude Code)");`,
+      "      return 0;",
+      "    }",
+      "    if (args.Length > 0 && args[0] == \"update\") {",
+      ...(updateVersion ? [`      File.WriteAllText(${csharpLiteral(versionFile)}, ${csharpLiteral(`${updateVersion}\n`)});`] : []),
+      `      return ${updateExit};`,
+      "    }",
       "    return 0;",
       "  }",
       "}",
@@ -43,12 +81,25 @@ function writeFakeClaude(bin) {
     if (built.status !== 0 || !fs.existsSync(executable)) {
       throw new Error(`could not build the simulated Claude executable: ${built.stderr || built.stdout}`);
     }
-    return executable;
+    return { executable, logFile, versionFile };
   }
   const executable = path.join(bin, "claude");
-  fs.writeFileSync(executable, "#!/bin/sh\nprintf '%s\\n' '2.1.175 (Claude Code)'\n", { mode: 0o700 });
+  fs.writeFileSync(executable, [
+    "#!/bin/sh",
+    `printf '%s\\n' "$*" >> ${shellLiteral(logFile)}`,
+    "if [ \"${1:-}\" = \"--version\" ]; then",
+    `  printf '%s (Claude Code)\\n' "$(cat ${shellLiteral(versionFile)})"`,
+    "  exit 0",
+    "fi",
+    "if [ \"${1:-}\" = \"update\" ]; then",
+    ...(updateVersion ? [`  printf '%s\\n' ${shellLiteral(updateVersion)} > ${shellLiteral(versionFile)}`] : []),
+    `  exit ${updateExit}`,
+    "fi",
+    "exit 0",
+    "",
+  ].join("\n"), { mode: 0o700 });
   fs.chmodSync(executable, 0o700);
-  return executable;
+  return { executable, logFile, versionFile };
 }
 
 function run(command, args, options = {}) {
@@ -118,37 +169,57 @@ async function portClosed(url, timeoutMs = 8000) {
 }
 
 class SimulatedMachine {
-  constructor(apiBase) {
+  constructor(apiBase, options = {}) {
     this.pluginsRoot = claudePluginsRoot();
     this.root = fs.mkdtempSync(path.join(os.tmpdir(), "engelbart-e2e-"));
     this.managed = path.join(this.root, "managed");
     this.hcHome = path.join(this.root, "home");
+    this.userHome = path.join(this.root, "user-home");
     this.vault = path.join(this.root, "vault");
     this.claudeConfig = path.join(this.root, "claude-config");
     this.fakeBin = path.join(this.root, "fake-bin");
     this.workspace = path.join(this.root, "workspace");
     fs.mkdirSync(this.workspace, { recursive: true });
     fs.mkdirSync(this.claudeConfig, { recursive: true });
-    writeFakeClaude(this.fakeBin);
+    fs.mkdirSync(this.userHome, { recursive: true });
+    this.fakeClaude = writeFakeClaude(this.fakeBin, options.claude || {});
     this.env = {
       ...process.env,
-      CI: "1",
+      // This fixture models a person's machine even when Playwright itself is
+      // running in CI. Leaving CI=1 would bypass the Claude install/update
+      // lifecycle and make the simulation green without exercising it.
+      CI: "",
       CLAUDE_CONFIG_DIR: this.claudeConfig,
       CLAUDE_VAULT_DIR: this.vault,
       ENGELBART_API_BASE: apiBase,
       HC_CHAT_PROVIDER: "mock",
       HC_CHAT_UI_IDLE_SECONDS: "0",
       HC_HOME: this.hcHome,
+      // os.homedir() is part of the installer's lookup for the native Claude
+      // launcher. Both spellings must point inside the fake machine or a test
+      // can discover and execute the developer's real ~/.local/bin/claude.
+      HOME: this.userHome,
       HUMAN_COMPACT_HOME: this.managed,
       HUMAN_COMPACT_PYTHON: process.platform === "win32" ? "python" : (process.env.HUMAN_COMPACT_PYTHON || "python3"),
-      PATH: [path.join(this.managed, "bin"), this.fakeBin, process.env.PATH || ""].join(path.delimiter),
+      // Keep system compilers and Python, but never leave a developer's real
+      // Claude as a fallback behind the fake executable.
+      PATH: [path.join(this.managed, "bin"), this.fakeBin, hostPathWithoutClaude()].join(path.delimiter),
       PYTHONUNBUFFERED: "1",
+      USERPROFILE: this.userHome,
     };
   }
 
   async install(code) {
+    return this.installWithArgs(["--code", code, "--no-open"]);
+  }
+
+  async installLocal() {
+    return this.installWithArgs(["--local-only", "--non-interactive", "--no-open"]);
+  }
+
+  async installWithArgs(args) {
     const cli = path.join(this.pluginsRoot, "engelbart", "bin", "engelbart.js");
-    const result = await run(process.execPath, [cli, "install", "--code", code, "--no-open"], {
+    const result = await run(process.execPath, [cli, "install", ...args], {
       cwd: this.workspace,
       env: this.env,
     });
@@ -160,6 +231,15 @@ class SimulatedMachine {
       ? path.join(manifest.runtime, "Scripts", "hc.exe")
       : path.join(this.managed, "bin", "hc");
     return result;
+  }
+
+  claudeInvocations() {
+    try {
+      return fs.readFileSync(this.fakeClaude.logFile, "utf8").trim().split(/\r?\n/).filter(Boolean);
+    } catch (error) {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    }
   }
 
   hookPath() {
