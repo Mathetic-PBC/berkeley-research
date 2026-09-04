@@ -460,6 +460,20 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-bs-skipped{margin-top:12px}
 .ob-bs+.ob-actions{margin-top:16px;justify-content:flex-end}
 .ob-bs+.ob-hint{margin-top:10px}
+.ob-working{margin-top:18px;padding:15px 16px;border:1px solid var(--bd);border-left:3px solid var(--acc);border-radius:var(--radius-md);background:var(--panel2)}
+.ob-working-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ob-working-mode{font:var(--text-microcap);letter-spacing:1.2px;text-transform:uppercase;color:var(--acc)}
+.ob-working-title{margin-top:8px;font:var(--text-card-title);color:var(--ink)}
+.ob-working-summary{margin-top:5px;font:var(--text-13);color:var(--mut);text-wrap:pretty}
+.ob-working-group{margin-top:11px}
+.ob-working-label{font:var(--text-microcap);letter-spacing:1.1px;text-transform:uppercase;color:var(--fnt)}
+.ob-working-row{margin-top:3px;font:var(--text-11-5);color:var(--mut);text-wrap:pretty}
+.ob-working-alt .ob-working-row{color:var(--fnt)}
+.ob-ready-shade{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(17,17,17,.42)}
+.ob-ready-dialog{width:min(470px,calc(100vw - 48px));box-sizing:border-box;padding:22px 24px;background:var(--panel);border:1px solid var(--bd2);border-radius:var(--radius-lg);box-shadow:0 20px 60px rgba(0,0,0,.18)}
+.ob-ready-title{margin-top:9px;font:500 24px/1.25 var(--font-sans);letter-spacing:-.2px;color:var(--ink);text-wrap:pretty}
+.ob-ready-copy{margin-top:10px;font:var(--text-13);color:var(--mut);text-wrap:pretty}
+.ob-ready-dialog .ob-actions{margin-top:22px}
 
 /* --- assets: the list, a row, its body, the chat --- */
 .ob[data-still="1"] .ob-as-body{animation:none}

@@ -388,6 +388,7 @@ async function levelAssets(input, credentials, options = {}) {
 // --- brainstorm, direction, subgoals -------------------------------------------
 
 const QUESTION_TYPES = ["mcq", "select_all", "free", "open"];
+const BRAINSTORM_MODES = ["explore", "discriminate", "deepen", "commit"];
 
 function normalizeOptions(value) {
   return (Array.isArray(value) ? value : []).map((o) => {
@@ -396,10 +397,27 @@ function normalizeOptions(value) {
   }).filter(Boolean).slice(0, 6);
 }
 
+function normalizeWorkingDirection(value) {
+  if (!value || typeof value !== "object") return null;
+  const title = one(value.title, 120);
+  const summary = long(value.summary, 600);
+  const why = (Array.isArray(value.why) ? value.why : []).map((v) => one(v, 240)).filter(Boolean).slice(0, 5);
+  const unclear = (Array.isArray(value.unclear) ? value.unclear : []).map((v) => one(v, 240)).filter(Boolean).slice(0, 5);
+  const alternatives = (Array.isArray(value.alternatives) ? value.alternatives : []).map((v) => {
+    if (!v || typeof v !== "object") return null;
+    const label = one(v.label, 160);
+    return label ? { label, reason: one(v.reason, 240) } : null;
+  }).filter(Boolean).slice(0, 5);
+  if (!title && !summary && !why.length && !unclear.length && !alternatives.length) return null;
+  return { title, summary, why, unclear, alternatives };
+}
+
 function normalizeBrainstorm(raw) {
   if (!raw || typeof raw !== "object") return null;
   const say = long(raw.say, 1500);
-  const out = { say, card: "none", interest: one(raw.interest, 240), ready: raw.ready === true };
+  const out = { say, card: "none", interest: one(raw.interest, 240), ready: raw.ready === true,
+    mode: BRAINSTORM_MODES.includes(raw.mode) ? raw.mode : "explore",
+    working_direction: normalizeWorkingDirection(raw.working_direction) };
   if (raw.card === "questions" && raw.questions && typeof raw.questions === "object") {
     const items = (Array.isArray(raw.questions.items) ? raw.questions.items : []).map((q, i) => {
       if (!q || typeof q !== "object") return null;
@@ -454,5 +472,5 @@ module.exports = {
   analyze, grade, followUp, rewrite, details, goals, todos, ask, assets, levelAssets, brainstorm, assetAsk, direction, subgoals,
   paperPrefix, briefOf,
   normalizeAnalysis, normalizeGrade, normalizeFollowUp, normalizeRewrite, normalizeDetails, normalizeGoals, normalizeTodos, normalizeAsk,
-  normalizeAssets, normalizeLeveled, normalizeBrainstorm, normalizeDirection, normalizeSubgoals,
+  normalizeAssets, normalizeLeveled, normalizeBrainstorm, normalizeWorkingDirection, normalizeDirection, normalizeSubgoals,
 };

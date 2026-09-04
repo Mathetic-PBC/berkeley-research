@@ -503,10 +503,15 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
   // once the fitted resources exist: a plan before them would be premature
   // whatever the conversation says.
   const readyAsked = row.leveled_status === "done";
+  const previousWorking = lastAssistant && lastAssistant.card && lastAssistant.card.working_direction || null;
+  const previousMode = lastAssistant && lastAssistant.card && lastAssistant.card.mode || "explore";
   const reply = await OM.brainstorm({ reader: readerOf(row, calibrations), paper: paperOf(row),
     assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })),
-    readyAsked }, credentials, options);
-  const card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: readyAsked && reply.ready === true };
+    readyAsked, mode: previousMode, workingDirection: previousWorking }, credentials, options);
+  const workingDirection = reply.working_direction || previousWorking;
+  const mode = reply.mode || previousMode;
+  const card = { card: reply.card, questions: reply.questions, focus: reply.focus,
+    ready: readyAsked && reply.ready === true, mode, working_direction: workingDirection };
   const made = await addTurn(user, row, "brainstorm", "", "assistant", assistantTurnText(reply), card, options);
   const values = { step: Math.max(Number(row.step) || 0, STEP.brainstorm) };
   if (reply.interest) values.interest = reply.interest;
@@ -517,7 +522,8 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
 function publicReply(turn) {
   const card = turn && turn.card ? turn.card : { card: "none" };
   return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split("\n(")[0] : "",
-    card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true };
+    card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true,
+    mode: card.mode || "explore", working_direction: card.working_direction || null };
 }
 
 // What the reader answered with, kept beside the user turn: the answers by
@@ -586,9 +592,11 @@ async function directionAction(user, row, calibrations, body, credentials, optio
   const feedback = long(body && body.revise, 1000);
   if (row.direction && !feedback && !(body && body.regenerate)) return { direction: row.direction };
   const turns = await turnsOf(row, "brainstorm", "", options);
+  const lastBrainstorm = [...turns].reverse().find((t) => t.role === "assistant" && t.card && t.card.working_direction);
   const made = await OM.direction({ reader: readerOf(row, calibrations), paper: paperOf(row), interest: row.interest || "",
     assessment: row.assessment, turns: turns.map((t) => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
     leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
+    workingDirection: lastBrainstorm && lastBrainstorm.card.working_direction,
     previous: feedback ? row.direction : null, feedback }, credentials, options);
   if (feedback) await addTurn(user, row, "direction", "", "user", feedback, null, options);
   await addTurn(user, row, "direction", "", "assistant", `${made.title} -- ${made.what_you_would_make}`, made, options);

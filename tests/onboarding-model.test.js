@@ -211,7 +211,10 @@ test("assets are bounded, links must be http(s), children only one level deep an
 });
 
 test("a brainstorm turn is prose plus at most one card; a direction needs a title; subgoals come in threes", () => {
-  const q = OM.normalizeBrainstorm({ say: "Hi", card: "questions", interest: "poses",
+  const q = OM.normalizeBrainstorm({ say: "Hi", card: "questions", interest: "poses", mode: "deepen",
+    working_direction: { title: "Pose comparison", summary: "Compare a learner pose with a target.",
+      why: ["The student keeps returning to feedback."], unclear: ["Live or uploaded input?"],
+      alternatives: [{ label: "Train pose detection", reason: "Infrastructure-heavy." }] },
     questions: { eyebrow: "first", items: [
       { id: "a", type: "mcq", title: "Worked with pose data?", options: ["Never", { label: "Some", why: "w" }] },
       { id: "b", type: "select_all", title: "one option only", options: ["x"] },
@@ -222,6 +225,10 @@ test("a brainstorm turn is prose plus at most one card; a direction needs a titl
   assert.equal(q.questions.items[1].type, "free", "a choice with one option becomes a line");
   assert.equal(q.questions.items[2].id, "q3");
   assert.equal(q.interest, "poses");
+  assert.equal(q.mode, "deepen");
+  assert.equal(q.working_direction.title, "Pose comparison");
+  assert.deepEqual(q.working_direction.unclear, ["Live or uploaded input?"]);
+  assert.deepEqual(q.working_direction.alternatives, [{ label: "Train pose detection", reason: "Infrastructure-heavy." }]);
   const f = OM.normalizeBrainstorm({ say: "", card: "focus", focus: { title: "Which?", options: [{ label: "A" }, { label: "B" }] } });
   assert.equal(f.card, "focus");
   assert.equal(OM.normalizeBrainstorm({ say: "", card: "focus", focus: { options: [{ label: "A" }] } }), null);
@@ -230,6 +237,28 @@ test("a brainstorm turn is prose plus at most one card; a direction needs a titl
   assert.deepEqual(OM.normalizeDirection({ title: "Pose to angles", uses: ["A", 3, ""], what_you_would_make: "w" }).uses, ["A"]);
   assert.equal(OM.normalizeSubgoals({ subgoals: [{ label: "a" }, { label: "b" }] }), null);
   assert.equal(OM.normalizeSubgoals({ subgoals: [{ label: "a" }, { label: "b" }, { label: "c" }, { label: "d" }] }).subgoals.length, 3);
+});
+
+test("brainstorming progressively converges and planning crystallizes the visible direction", () => {
+  const reader = { depth: "some" };
+  const paper = { title: "Dance Learning", one_liner: "Represents movement for learners." };
+  const workingDirection = { title: "Pose comparison", summary: "A learner compares one pose against a target.",
+    why: ["Representation is the student's chosen problem."], unclear: ["Which geometric differences should be shown?"], alternatives: [] };
+  const prompt = P.brainstormPrompt({ reader, paper, assessment: {}, brief: [], turns: [{ role: "user", content: "I care about feedback" }],
+    readyAsked: true, mode: "deepen", workingDirection });
+  assert.match(prompt, /Explore -> Discriminate -> Deepen -> Commit/);
+  assert.match(prompt, /stop introducing unrelated directions/);
+  assert.match(prompt, /behavioral scenarios/);
+  assert.match(prompt, /New paper assets normally sharpen the live direction/);
+  assert.match(prompt, /locus of problem solving/);
+  assert.match(prompt, /The working direction currently visible to them/);
+  assert.match(prompt, /Pose comparison/);
+
+  const direction = P.directionPrompt({ reader, paper, interest: "feedback", assessment: {}, turns: [], asset: {}, leveled: {},
+    workingDirection, previous: null, feedback: "" });
+  assert.match(direction, /Choose ONE direction by crystallizing/);
+  assert.match(direction, /Do not introduce a new project at planning time/);
+  assert.match(direction, /Pose comparison/);
 });
 
 test("the asset hunt shares the paper prefix with analyze, asks for web search, and falls back without it", async () => {

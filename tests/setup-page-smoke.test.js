@@ -141,8 +141,11 @@ function mount(options = {}) {
       if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 7 }; return answer({ assessment: ASSESSMENT }); }
       if (body.action === "leveled") return answer({ leveled_status: "done", leveled: LEVELED, assets_status: "done" });
       if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick || body.again
-        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status, ready: row.leveled_status === "done" }
-        : { turn_id: "t1", say: "", card: "questions", leveled_status: row.leveled_status,
+        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status,
+            ready: row.leveled_status === "done", mode: row.leveled_status === "done" ? "commit" : "deepen",
+            working_direction: { title: "Pose comparison", summary: "Compare a learner pose to a target.", why: ["Geometry is the locus."],
+              unclear: row.leveled_status === "done" ? [] : ["Which errors matter?"], alternatives: [{ label: "Timing", reason: "Set aside." }] } }
+        : { turn_id: "t1", say: "", card: "questions", leveled_status: row.leveled_status, mode: "explore",
             questions: { eyebrow: "first", items: [{ id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math", why: "w" }] }] } });
       if (body.action === "asset_ask") return answer({ answer: "Start with the toy.", turn_id: "a1" });
       if (body.action === "choose_asset") { row = { ...row, asset_chosen: { key: body.key, title: body.key.split(" :: ").pop() }, step: 9 }; return answer({ asset_chosen: row.asset_chosen }); }
@@ -507,7 +510,7 @@ test("a follow-up is a stored row: it survives a reload, the slider cannot move 
   assert.equal(textOf(one(page.app, "ob-area-name")), "B", "and the next area is up");
 });
 
-test("the brainstorm opens on the card, keeps answered cards as cards, and offers the plan only when the model says ready", async () => {
+test("the brainstorm keeps answered cards, exposes its working direction, and interrupts once when assets are ready", async () => {
   const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
   await settle();
   assert.equal(page.title(), "What do you want to build?");
@@ -530,6 +533,8 @@ test("the brainstorm opens on the card, keeps answered cards as cards, and offer
   assert.equal(byClass(done[0], "ob-cta").length, 0, "an answered card has no buttons");
   assert.doesNotMatch(textOf(page.app), /What drew you\? The math/, "the answer is not repeated as prose");
   assert.match(textOf(page.app), /Angles it is/);
+  assert.match(textOf(one(page.app, "ob-working")), /working directiondeepenPose comparison/);
+  assert.match(textOf(one(page.app, "ob-working")), /Still unclear· Which errors matter/);
   assert.equal(one(page.app, "ob-bs-offer"), undefined, "the model was not asked about readiness yet");
   assert.equal(textOf(page.cta()), "Go on›", "a prose-only turn gets a way to continue");
   // The fitting finishes; the next turn carries the model's verdict.
@@ -537,12 +542,17 @@ test("the brainstorm opens on the card, keeps answered cards as cards, and offer
   page.cta().fire("click");
   await settle();
   assert.equal(page.bodies.filter((b) => b.action === "brainstorm").pop().again, true);
-  assert.ok(one(page.app, "ob-bs-offer"), "ready to plan is offered when the model said ready");
-  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Keep brainstorming").fire("click");
-  assert.equal(one(page.app, "ob-bs-offer"), undefined);
+  const dialog = one(page.app, "ob-ready-dialog");
+  assert.ok(dialog, "assets becoming ready opens a decision rather than adding a passive button");
+  assert.match(textOf(dialog), /Your project materials are ready/);
+  assert.deepEqual(byClass(dialog, "ob-ghost").map(textOf), ["Continue brainstorming"]);
+  assert.deepEqual(byClass(dialog, "ob-cta").map(textOf), ["Continue›"]);
+  byClass(dialog, "ob-ghost")[0].fire("click");
+  assert.equal(one(page.app, "ob-ready-dialog"), undefined);
   page.cta().fire("click");
   await settle();
-  assert.ok(one(page.app, "ob-bs-offer"), "and offered again after the next turn");
+  assert.ok(one(page.app, "ob-bs-offer"), "planning remains available after another commit-stage turn");
+  assert.match(textOf(one(page.app, "ob-bs-offer")), /Start planning this direction/);
   page.cta().fire("click");
   await settle();
   assert.equal(page.title(), "What do you want to build on?");

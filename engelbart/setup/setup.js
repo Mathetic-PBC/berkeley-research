@@ -69,7 +69,8 @@
       fIdx: 0, fam: {}, fAnswers: {},
       qIdx: 0, goalPick: "", goalOther: "", goalOtherOn: false, todos: [], newTodo: "", projName: "",
       askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null,
-      bs: { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false },   // brainstorm
+      bs: { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false,
+        assetsChoiceSeen: false },   // brainstorm and its one-time resources-ready decision
       as: { open: {}, picked: "" },     // assets
       reg: { open: false, pos: null, busy: false, rewrites: {} },   // the register control: unfolded, pending slider position, in-flight, rewritten text by step
       todoConfirm: -1,                  // the todo row whose × was pressed once
@@ -172,7 +173,8 @@
     st.ui.fam = {}; st.ui.fAnswers = {}; st.ui.fIdx = 0; st.ui.qIdx = 0;
     st.ui.goalPick = ""; st.ui.goalOther = ""; st.ui.goalOtherOn = false; st.ui.todos = []; st.ui.newTodo = ""; st.ui.projName = "";
     st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.draft = "";
-    st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false };
+    st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false,
+      assetsChoiceSeen: false };
     st.ui.as = { open: {}, picked: "", threads: {}, drafts: {}, chatOpen: {}, thinking: {} };
     st.ui.change = { open: false, text: "", thinking: false, log: [] };
     st.turns = [];
@@ -1032,7 +1034,9 @@
     st.ui.scrollTo = "thinking"; draw();
     api("brainstorm", body).then(function (out) {
       bs.thinking = false; bs.answers = {}; bs.pick = ""; bs.note = ""; bs.text = "";
-      st.turns.push({ id: out.turn_id, role: "assistant", content: out.say, card: { card: out.card, questions: out.questions, focus: out.focus, ready: out.ready === true } });
+      st.turns.push({ id: out.turn_id, role: "assistant", content: out.say, card: { card: out.card,
+        questions: out.questions, focus: out.focus, ready: out.ready === true,
+        mode: out.mode || "explore", working_direction: out.working_direction || null } });
       if (out.interest) st.row.interest = out.interest;
       if (out.leveled_status) st.row.leveled_status = out.leveled_status === "done" ? "done" : st.row.leveled_status;
       st.ui.scrollTo = "latest"; draw();
@@ -1072,6 +1076,50 @@
     return null;
   }
 
+  function latestWorkingDirection() {
+    for (var i = st.turns.length - 1; i >= 0; i--) {
+      var card = st.turns[i] && st.turns[i].role === "assistant" && st.turns[i].card;
+      if (card && card.working_direction && card.working_direction.title) {
+        return { direction: card.working_direction, mode: card.mode || "explore" };
+      }
+    }
+    return null;
+  }
+
+  // The conversation edits this object in public. Ideas that were set aside
+  // move out of the chat's psychological foreground, while the live direction
+  // gets more specific as questions narrow from routes to scenarios.
+  function drawWorkingDirection(box) {
+    var held = latestWorkingDirection();
+    if (!held) return;
+    var d = held.direction;
+    var card = attr(el("section", "ob-working"), "data-mode", held.mode);
+    var head = el("div", "ob-working-head");
+    head.appendChild(el("span", "ob-cap", "working direction"));
+    head.appendChild(el("span", "ob-working-mode", held.mode));
+    card.appendChild(head);
+    card.appendChild(el("div", "ob-working-title", d.title));
+    if (d.summary) card.appendChild(el("div", "ob-working-summary", d.summary));
+    function list(label, rows, cls) {
+      if (!Array.isArray(rows) || !rows.length) return;
+      var group = el("div", "ob-working-group " + cls);
+      group.appendChild(el("div", "ob-working-label", label));
+      rows.forEach(function (row) { group.appendChild(el("div", "ob-working-row", "· " + row)); });
+      card.appendChild(group);
+    }
+    list("Why this direction", d.why, "ob-working-why");
+    list("Still unclear", d.unclear, "ob-working-unclear");
+    if (Array.isArray(d.alternatives) && d.alternatives.length) {
+      var alternatives = el("div", "ob-working-group ob-working-alt");
+      alternatives.appendChild(el("div", "ob-working-label", "Set aside"));
+      d.alternatives.forEach(function (a) {
+        alternatives.appendChild(el("div", "ob-working-row", "· " + a.label + (a.reason ? " — " + a.reason : "")));
+      });
+      card.appendChild(alternatives);
+    }
+    box.appendChild(card);
+  }
+
   function drawBrainstorm(content) {
     var r = st.row, bs = st.ui.bs;
     if (r.analysis_status !== "done" || !r.assessment) {
@@ -1085,6 +1133,7 @@
     var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(7, "Brainstorm")));
     head.appendChild(el("span", "ob-count", r.leveled_status === "done" ? "resources ready" : "fitting resources to you")); box.appendChild(head);
     box.appendChild(el("div", "ob-title", "What do you want to build?"));
+    drawWorkingDirection(box);
     var thread = el("div", "ob-bs");
     // Each assistant turn: its prose (if any), then its card. A card that has
     // been answered is drawn again with the answers marked, from the user
@@ -1119,9 +1168,9 @@
     if (bs.thinking) { var th = attr(el("div", "ob-bs-turn"), "data-thinking", "1"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); thread.appendChild(th); }
     box.appendChild(thread);
     var last = lastCard();
-    // The plan is offered when the model, asked only once the resources were
-    // fitted, said they are ready -- not on a timer and not by this page.
-    if (!bs.thinking && last && last.ready && r.leveled_status === "done" && !bs.planAsked) drawPlanOffer(box);
+    // After the one-time resources-ready decision, planning stays available as
+    // an affordance rather than interrupting every later brainstorm turn.
+    if (!bs.thinking && last && last.ready && r.leveled_status === "done" && bs.assetsChoiceSeen && !bs.planAsked) drawPlanOffer(box);
     else if (!bs.thinking && last && last.card === "none") {
       var go_ = el("div", "ob-actions"); go_.appendChild(cta("Go on", false, function () { sendTurn({ again: true }); })); box.appendChild(go_);
     }
@@ -1137,6 +1186,7 @@
       bad.appendChild(retry); box.appendChild(bad);
     }
     content.appendChild(box);
+    if (r.leveled_status === "done" && !bs.assetsChoiceSeen) drawAssetsReadyChoice(content);
   }
 
   // Engelbart's question shapes: mcq, select_all, free, open; and focus.
@@ -1223,15 +1273,40 @@
     }
   }
 
-  // Offered when the model has said they are ready.
+  // Once per tab, at the moment the tailored assets are available. This is a
+  // real choice rather than a quiet button under a long conversation: proceed
+  // to the assets, or deliberately remain in Deepen.
+  function drawAssetsReadyChoice(content) {
+    var shade = attr(el("div", "ob-ready-shade"), "role", "presentation");
+    var dialog = attr(attr(el("div", "ob-ready-dialog"), "role", "dialog"), "aria-modal", "true");
+    dialog.appendChild(el("div", "ob-cap", "assets ready"));
+    dialog.appendChild(el("div", "ob-ready-title", "Your project materials are ready."));
+    var held = latestWorkingDirection();
+    dialog.appendChild(el("div", "ob-ready-copy", held
+      ? "Continue with “" + held.direction.title + "”, or stay here and make the direction more precise."
+      : "Continue to the project materials, or stay here and keep shaping what you want to build."));
+    var acts = attr(el("div", "ob-actions"), "data-between", "1");
+    var keep = el("button", "ob-ghost", "Continue brainstorming"); keep.type = "button";
+    acts.appendChild(on(keep, "click", function () {
+      st.ui.bs.assetsChoiceSeen = true; st.ui.bs.planAsked = true; draw();
+    }));
+    acts.appendChild(cta("Continue", false, function () {
+      st.ui.bs.assetsChoiceSeen = true;
+      save(8, {}).then(function () { go(8); }).catch(fail);
+    }));
+    dialog.appendChild(acts); shade.appendChild(dialog); content.appendChild(shade);
+  }
+
+  // Offered later when the model says the visible working direction is ready
+  // to crystallize. It is no longer the first notice that the assets landed.
   function drawPlanOffer(box) {
     var card = el("div", "ob-bs-card ob-bs-offer");
     card.appendChild(el("div", "ob-cap", "ready when you are"));
-    card.appendChild(el("div", "ob-question", "Ready to start planning your project?"));
+    card.appendChild(el("div", "ob-question", "Start planning this direction?"));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
-    var later = el("button", "ob-ghost", "Keep brainstorming"); later.type = "button";
+    var later = el("button", "ob-ghost", "Continue brainstorming"); later.type = "button";
     acts.appendChild(on(later, "click", function () { st.ui.bs.planAsked = true; draw(); }));
-    acts.appendChild(cta("Yes, let's plan", false, function () { save(8, {}).then(function () { go(8); }).catch(fail); }));
+    acts.appendChild(cta("Start planning", false, function () { save(8, {}).then(function () { go(8); }).catch(fail); }));
     card.appendChild(acts); box.appendChild(card);
   }
 

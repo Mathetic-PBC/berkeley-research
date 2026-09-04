@@ -563,34 +563,49 @@ function transcriptBlock(turns, cap = 24) {
 }
 
 // One brainstorm turn. Engelbart's brainstorm card grammar (questions,
-// focus, none), pointed at extending this paper. Inputs: reader, paper,
-// assessment, brief (assets_brief), turns (the transcript so far, the
-// reader's latest turn last), leveledReady (whether the plan can start).
-function brainstormPrompt({ reader, paper, assessment, brief, turns, readyAsked }) {
+// focus, none), pointed at extending this paper. The working direction is the
+// durable object the conversation edits; the prose is how the two of them edit
+// it. Inputs: reader, paper, assessment, brief (assets_brief), turns (the
+// transcript so far, the reader's latest turn last), readyAsked (whether the
+// plan can start), mode and workingDirection (the last turn's project model).
+function brainstormPrompt({ reader, paper, assessment, brief, turns, readyAsked, mode, workingDirection }) {
   const opening = !(Array.isArray(turns) && turns.length);
+  const current = workingDirection && workingDirection.title
+    ? ["", `Current convergence mode: ${mode || "explore"}`, "The working direction currently visible to them:",
+      JSON.stringify(workingDirection, null, 0)]
+    : [];
   return [
     ...readerBlock(reader), ...assessmentBlock(assessment), "",
     `They are about to start a first project that builds on "${paper.title}" -- ${paper.one_liner}`,
     ...briefBlock(brief),
+    ...current,
     ...transcriptBlock(turns),
     "",
-    "You are brainstorming with them about what to build. Many people arrive with a vague sense -- something between computer science and education, electrical engineering and music -- and some with a narrow one. Your job is to find, with them, the piece of this paper worth extending or reproducing in a small first project that would hold their attention, and to learn what they already know along the way. Ask about their familiarity with the things above, follow up on what they say, explore sideways, and reflect back what you hear. Use the graded levels above: do not ask what the grades already answered.",
+    "You are brainstorming with them by progressively converging on what to build, not maximizing the number of ideas. Work implicitly through Explore -> Discriminate -> Deepen -> Commit. Explore only long enough to expose genuinely different project routes. Discriminate when their preferences begin to separate them. Deepen once one direction has a center of gravity. Commit when its user, behavior, input, output, first visible result, and locus of problem solving are clear enough to decompose.",
+    "At every turn decide which mode they need. Evidence of convergence includes returning to one idea, preferring it, elaborating its implementation or behavior, rejecting neighbors, asking narrower questions, or finding an asset that makes it tractable. Once several signals accumulate, stop introducing unrelated directions by default. State the emerging direction and explain why it coheres with what they said, what they know, the paper, the assets, and where they will make consequential decisions. This is grounded assurance, not praise. Reopen exploration only when they ask or new evidence undermines the direction.",
+    "Questions must narrow as the mode advances: Explore distinguishes fundamentally different projects; Discriminate distinguishes versions of the same project; Deepen and Commit use behavioral scenarios -- who acts, what goes in, what they see, what failure looks like, and what would make the result wrong. Late divergence branches within the idea through what-if scenarios, not away from it.",
+    "Maintain the working direction on every reply. Update it as the conversation changes. Keep deliberately rejected or deferred alternatives inactive so they stop competing psychologically with the live direction. New paper assets normally sharpen the live direction; do not create sibling projects merely because an asset makes them possible. The direction that reaches planning must be a cleaned-up crystallization of what has already been visible, never a clever replacement project.",
+    "Your job is to find, with them, the piece of this paper worth extending or reproducing in a small first project that would hold their attention, and to learn what they already know along the way. Use the graded levels above: do not ask what the grades already answered.",
     "They will build the project with Claude Code, an AI coding assistant that writes, runs and debugs the code with them. Their programming ability is therefore not a constraint and not a question: never ask what languages they know, whether they have used an API, or whether they can code. Ask instead about the ideas they would have to hold themselves -- what they want to make, for whom, what they would judge a result by, which of the things above they want to work with -- and about the domain knowledge those decisions need.",
+    "Judge difficulty by the locus of problem solving: where this student must make and evaluate consequential decisions. Sophisticated libraries may be infrastructure rather than the intellectual difficulty. Prefer a route whose sticky decisions fit their current knowledge; say why when that makes an ambitious-looking route tractable.",
     "",
     "Reply with ONE JSON object and nothing else:",
     '{"say": "<what you say to them, plain prose, at most three sentences; empty when the card says it all>",',
     ' "card": "questions" | "focus" | "none",',
     ' "questions": {"eyebrow": "<two or three words>", "items": [{"id": "<short slug>", "type": "mcq" | "select_all" | "free" | "open", "title": "<the question>", "subtitle": "<optional>", "options": [{"label": "<the choice>", "why": "<optional: what it buys them>"}], "placeholder": "<for free and open>"}]},',
     ' "focus": {"title": "<what you are asking them to choose between>", "options": [{"label": "<one reading of what they could build>", "why": "<why this one>"}]},',
+    ' "mode": "explore" | "discriminate" | "deepen" | "commit",',
+    ' "working_direction": {"title": "<2-8 words; empty only before any direction exists>", "summary": "<the capability taking shape, one or two sentences>", "why": ["<evidence this coheres with the student, paper, assets, or locus>"], "unclear": ["<a consequential behavioral question still open>"], "alternatives": [{"label": "<considered route>", "reason": "<why it is inactive or deferred>"}]},',
     ' "interest": "<one sentence: what they seem drawn to so far, in the third person; empty if you cannot tell yet>"'
       + (readyAsked ? ',\n "ready": true | false' : "") + "}",
     "",
     "Only the key for the card you name is read. `questions` is for one to three questions whose answers change what you would suggest -- mcq (one answer), select_all (say so in the subtitle), free (one line), open (a paragraph); never questions you could assume the answer to. `focus` is for when what they want could be read two or three ways and which one decides everything after it; two to four options with a why each. The card is the whole conversation: there is no free-text box beside it, so every turn carries a card that gives them something to answer or pick"
       + (readyAsked ? "; `none` is allowed only with `ready` true." : "."),
-    opening ? "This is the opening turn: `say` is empty and the card opens the conversation. Do not introduce the paper or yourself; ask." : "",
+    "Return `mode` and `working_direction` on every turn. During the first exploratory turn the working direction may have an empty title and arrays; after a plausible center exists, keep it concrete and revise rather than replacing it casually.",
+    opening ? "This is the opening turn: `say` is empty and the card opens the conversation. Do not introduce the paper or yourself; ask. Start in Explore." : "",
     "Do not propose goals, todos, or a plan; that comes later. Write at the register above.",
     readyAsked
-      ? "`ready` says whether you have learned enough to plan with them: what draws them, one concrete direction they lean toward, and the rough level they can work at. Set it true only then; false keeps the conversation going. It is not a question to them."
+      ? "`ready` says whether the working direction is in Commit: they understand what they are building, who acts, the observable behavior, what paper asset it uses, its first visible result, and where their own problem solving lies. Set it true only then; false keeps the conversation going. It is not a question to them."
       : "",
   ].filter((line) => line !== "").join("\n");
 }
@@ -618,7 +633,7 @@ function assetAskPrompt({ reader, paper, asset, thread, question }) {
 // assessment, turns (the brainstorm, condensed by cap), asset (the one they
 // picked), leveled ({locus, sticky}), previous (the direction being revised,
 // or null), feedback (their change request, or "").
-function directionPrompt({ reader, paper, interest, assessment, turns, asset, leveled, previous, feedback }) {
+function directionPrompt({ reader, paper, interest, assessment, turns, asset, leveled, workingDirection, previous, feedback }) {
   const lv = leveled || {};
   return [
     ...readerBlock(reader), ...assessmentBlock(assessment), "",
@@ -628,6 +643,8 @@ function directionPrompt({ reader, paper, interest, assessment, turns, asset, le
     Array.isArray(lv.sticky) && lv.sticky.length ? `What they must hold in their head: ${lv.sticky.join("; ")}` : "",
     "The thing they chose to build on:",
     JSON.stringify(asset || {}, null, 0),
+    workingDirection && workingDirection.title ? "The working direction they already shaped in brainstorming:" : "",
+    workingDirection && workingDirection.title ? JSON.stringify(workingDirection, null, 0) : "",
     ...transcriptBlock(turns, 16),
     previous ? "" : "",
     previous ? "The direction you proposed before:" : "",
@@ -636,7 +653,7 @@ function directionPrompt({ reader, paper, interest, assessment, turns, asset, le
     "",
     previous
       ? "Revise the direction to do what they asked. Keep what they did not object to."
-      : "Choose ONE direction for their first project. Not three to pick from: the one that best fits everything above. It must name a concrete capability they could build, run, or modify within a couple of weeks with an AI coding assistant, using the thing they chose; a coding agent should know what to implement next, and the start must not depend on the student first browsing a dataset, choosing an example, collecting inputs, reading background, or making another decision. Prefer a direction whose thinnest working version is an interactive GUI they can use immediately, not a backend hidden until later. It must produce something they can see or play with early -- attention first, usefulness to the PhD student second -- and it must sit where the problem solving lies for THEM, not in the part a library or the assistant will carry.",
+      : "Choose ONE direction by crystallizing the working direction they already shaped. Do not introduce a new project at planning time. Clean up and make precise what has already been visible, preserving its user, behavioral scenarios, assets, and locus of problem solving. It must name a concrete capability they could build, run, or modify within a couple of weeks with an AI coding assistant, using the thing they chose; a coding agent should know what to implement next, and the start must not depend on the student first browsing a dataset, choosing an example, collecting inputs, reading background, or making another decision. Prefer a direction whose thinnest working version is an interactive GUI they can use immediately, not a backend hidden until later. It must produce something they can see or play with early -- attention first, usefulness to the PhD student second -- and it must sit where the problem solving lies for THEM, not in the part a library or the assistant will carry.",
     "Write at the register above.",
     "",
     JSON_ONLY,

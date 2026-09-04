@@ -711,14 +711,19 @@ test("leveled waits for the hunt, then re-cuts the assets with children and chec
 
 test("once the resources are fitted the model is asked whether they are ready, and its answer rides on the turn", async () => {
   const asked = [];
-  const db = fake({ model: { brainstorm: (text) => { asked.push(text); return { say: "You have enough to start.", card: "none", interest: "timing", ready: true }; } } });
+  const working = { title: "Timing comparison", summary: "Compare two movement timings.", why: ["They chose timing."], unclear: [], alternatives: [] };
+  const db = fake({ model: { brainstorm: (text) => { asked.push(text); return { say: "You have enough to start.", card: "none",
+    interest: "timing", ready: true, mode: "commit", working_direction: working }; } } });
   const row = await ready(db, { leveled_status: "done" });
   const cals = db.tables.engelbart_onboarding_calibrations;
   const out = await OB.brainstorm(USER, row, cals, { text: "I want the timing side" }, CREDS, db.options);
   assert.match(asked[0], /"ready": true \| false/);
   assert.match(asked[0], /`none` is allowed only with `ready` true/);
   assert.equal(out.ready, true);
+  assert.equal(out.mode, "commit");
+  assert.equal(out.working_direction.title, "Timing comparison");
   assert.equal(db.tables.engelbart_onboarding_turns[1].card.ready, true);
+  assert.deepEqual(db.tables.engelbart_onboarding_turns[1].card.working_direction, working);
   const again = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
   assert.equal(again.ready, true, "handing back the last card keeps its verdict");
 });
@@ -726,9 +731,12 @@ test("once the resources are fitted the model is asked whether they are ready, a
 test("a brainstorm turn stores both sides, carries the card, and keeps the interest current", async () => {
   const asked = [];
   const db = fake({ model: { brainstorm: (text) => { asked.push(text); return asked.length === 1
-    ? { say: "What drew you here?", card: "questions", interest: "", questions: { eyebrow: "first", items: [
+    ? { say: "What drew you here?", card: "questions", interest: "", mode: "explore", questions: { eyebrow: "first", items: [
         { id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math" }] }] } }
-    : { say: "Good.", card: "focus", interest: "the geometry of poses", focus: { title: "Which?", options: [{ label: "Angles", why: "a" }, { label: "Timing", why: "b" }] } }; } } });
+    : { say: "Good.", card: "focus", interest: "the geometry of poses", mode: "deepen",
+      working_direction: { title: "Pose geometry", summary: "Show pose angles to a learner.", why: ["They chose math."],
+        unclear: ["Static or sequential?"], alternatives: [{ label: "Timing", reason: "Not their preference." }] },
+      focus: { title: "Which?", options: [{ label: "Angles", why: "a" }, { label: "Timing", why: "b" }] } }; } } });
   const row = await ready(db, { assets_brief: [{ title: "Pose viewer", type: "demo", one_liner: "views poses" }] });
   const cals = db.tables.engelbart_onboarding_calibrations;
   const first = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
@@ -748,6 +756,8 @@ test("a brainstorm turn stores both sides, carries the card, and keeps the inter
   assert.deepEqual(turns.map((t) => t.role), ["assistant", "user", "assistant"]);
   assert.deepEqual(turns[1].card, { answers: { drew: "The math" } }, "the user turn keeps the answers beside the text");
   assert.equal(turns[2].card.card, "focus");
+  assert.equal(turns[2].card.mode, "deepen");
+  assert.equal(turns[2].card.working_direction.title, "Pose geometry");
   // Readiness is the model's call, and only asked for once the resources are fitted.
   assert.match(asked[0], /opening turn/);
   assert.doesNotMatch(asked[1], /"ready"/, "not asked while the resources are still being fitted");
@@ -783,11 +793,17 @@ test("one direction, revised on feedback; three subgoals, revised on feedback; t
     todos: { todos: ["Draw one pose from the toy set", "Label its angles"], name: "pose-angles" } } });
   const row = await ready(db, { leveled: LEVELED, leveled_status: "done", interest: "geometry", project_name: "" });
   const cals = db.tables.engelbart_onboarding_calibrations;
+  db.tables.engelbart_onboarding_turns.push({ id: "brain-1", onboarding_id: row.id, user_id: USER.id, stage: "brainstorm",
+    asset_key: "", role: "assistant", content: "The pose comparison is taking shape.", created_at: "2026-09-04T00:00:00Z",
+    card: { card: "none", mode: "commit", working_direction: { title: "Pose comparison", summary: "Compare one learner pose to a target.",
+      why: ["Geometry is the locus."], unclear: [], alternatives: [] } } });
   await assert.rejects(OB.direction(USER, row, cals, {}, CREDS, db.options), (e) => e.statusCode === 409, "needs a pick");
   await OB.chooseAsset(USER, row, { key: "Pose viewer" }, db.options);
   const first = await OB.direction(USER, row, cals, {}, CREDS, db.options);
   assert.equal(first.direction.title, "Pose to angles");
   assert.match(seen[0], /Choose ONE direction/);
+  assert.match(seen[0], /working direction they already shaped/);
+  assert.match(seen[0], /Pose comparison/);
   assert.match(seen[0], /What they are drawn to: "geometry"/);
   assert.equal((await OB.direction(USER, row, cals, {}, CREDS, db.options)).direction.title, "Pose to angles");
   assert.equal(seen.length, 1, "asking again serves the stored one");
