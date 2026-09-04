@@ -23,7 +23,6 @@ test("the install handoff is operable for every supported desktop OS", async ({ 
       await page.getByText(item.os, { exact: true }).click();
       await page.getByText(item.arch, { exact: true }).click();
       await page.getByRole("button", { name: "Continue" }).click();
-      await page.getByRole("button", { name: "Continue" }).click();
       const command = await page.locator(".ob-cmd-text").textContent();
       expect(command).toContain(item.fragment);
       expect(command).toContain(SETUP_CODE);
