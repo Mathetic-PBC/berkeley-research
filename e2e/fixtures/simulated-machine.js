@@ -183,8 +183,14 @@ class SimulatedMachine {
     fs.mkdirSync(this.claudeConfig, { recursive: true });
     fs.mkdirSync(this.userHome, { recursive: true });
     this.fakeClaude = writeFakeClaude(this.fakeBin, options.claude || {});
+    const inheritedEnv = { ...process.env };
+    // Playwright sets FORCE_COLOR while developer shells can export NO_COLOR;
+    // Node warns about that pair before the CLI starts, which would make the
+    // simulated terminal noisier than either installer under test.
+    delete inheritedEnv.FORCE_COLOR;
+    delete inheritedEnv.NO_COLOR;
     this.env = {
-      ...process.env,
+      ...inheritedEnv,
       // This fixture models a person's machine even when Playwright itself is
       // running in CI. Leaving CI=1 would bypass the Claude install/update
       // lifecycle and make the simulation green without exercising it.

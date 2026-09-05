@@ -275,3 +275,35 @@ test("resourcesBlock lists assets and their children, or nothing", () => {
   assert.match(lines.join("\n"), /Pose viewer \(demo\): play <https:\/\/x\.org>/);
   assert.match(lines.join("\n"), /start with Toy \(dataset\): small/);
 });
+
+test("planning prompts put an agent-executable GUI before human input choices", () => {
+  const reader = { depth: "some" };
+  const paper = { title: "Video Study", one_liner: "Compares explanations of recorded work." };
+  const resources = [{ title: "Interview clips", type: "dataset", what_you_can_do_with_it: "select a clip" }];
+  const goals = P.goalsPrompt({ reader, paper, draft: "Make a video analysis tool", details: {}, resources });
+  assert.match(goals, /Order by implementation dependency, not by the order of the research story/);
+  assert.match(goals, /A video can be uploaded and previewed/);
+  assert.match(goals, /comes before .*A study video is chosen/);
+
+  const direction = P.directionPrompt({ reader, paper, interest: "annotation", assessment: [], turns: [],
+    asset: resources[0], leveled: {}, previous: null, feedback: "" });
+  assert.match(direction, /coding agent should know what to implement next/);
+  assert.match(direction, /start must not depend on the student first browsing a dataset/);
+  assert.match(direction, /interactive GUI they can use immediately/);
+
+  const subgoals = P.subgoalsPrompt({ reader, paper,
+    direction: { title: "Clip annotator", what_you_would_make: "Upload and annotate a video." },
+    asset: resources[0], leveled: {}, previous: null, feedback: "" });
+  assert.match(subgoals, /smallest runnable technical vertical slice/);
+  assert.match(subgoals, /tiny bundled or synthetic fixture/);
+  assert.match(subgoals, /A representative study video is chosen/);
+
+  const todos = P.todosPrompt({ reader, paper,
+    direction: { title: "Clip annotator", what_you_would_make: "Upload and annotate a video." },
+    subgoal: { label: "Video upload works", description: "A user can upload and preview one clip." },
+    resources });
+  assert.match(todos, /Treat a GUI as the default first implementation, not later polish/);
+  assert.match(todos, /key input control and a visible output or status region/);
+  assert.match(todos, /thinnest real input-to-output path/);
+  assert.match(todos, /Do not write research, planning, browsing, dataset-selection/);
+});

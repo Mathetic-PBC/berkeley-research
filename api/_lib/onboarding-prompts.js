@@ -411,7 +411,9 @@ function goalsPrompt({ reader, paper, draft, details, resources }) {
     `Their project, in their words: "${draft}"`,
     answered.length ? "What they said when asked:" : "", ...answered,
     "",
-    "Offer exactly four goals a first project could be about, each an outcome they could tell you they had reached, not a task and not a phase. Order them so the first is the one everything else depends on. Each carries a short name (2-4 words) and one sentence on why it is worth starting there, written at the register above.",
+    "Offer exactly four goals a first project could be about. Each must name a concrete, testable capability they could tell you is working, not a topic, task, phase, aspiration, or decision they still need to make. A coding agent should know what to implement from the outcome alone.",
+    "Order by implementation dependency, not by the order of the research story. The first goal must be the useful capability they can build now without waiting for the student to browse a dataset, choose an example, collect inputs, read background, or make another decision. Build the interface or pipeline that accepts the choice before asking the student to make that choice. For example, an outcome like \"A video can be uploaded and previewed\" comes before \"A study video is chosen.\" Favor a small runnable GUI as the first capability whenever the project can have an interactive surface.",
+    "Each carries a short name (2-4 words) and one sentence on why it is worth starting there, written at the register above.",
     "",
     JSON_ONLY,
     '{"goals": [{"label": "the outcome", "short": "2-4 words", "why": "one sentence"}]}',
@@ -430,7 +432,8 @@ function todosPrompt({ reader, paper, direction, subgoal, resources }) {
     `The direction: "${d.title}" -- ${d.what_you_would_make || ""}`,
     `The first piece of it, the one to start on now: "${sg.label}"${sg.description ? " -- " + sg.description : ""}`,
     "",
-    "Write the TODO rows for that first piece only. Two to four rows, in the imperative, each one thing a coding agent working with them could pick up and finish -- concrete, checkable, small enough for a session. The first row must produce something they can see or run. Where a resource above is the right starting point, name it in the row. Do not write rows for the other pieces.",
+    "Write the TODO rows for that first piece only. Two to four rows, in the imperative, each one thing a coding agent working with them could pick up and finish -- concrete, checkable, small enough for a session. Do not write research, planning, browsing, dataset-selection, or other human-decision rows; when a real input is not chosen yet, use a tiny bundled or synthetic fixture so implementation can begin now. Where a resource above is the right starting point, name it in the row. Do not write rows for the other pieces.",
+    "Treat a GUI as the default first implementation, not later polish. Unless an interactive surface genuinely makes no sense for this direction, make the first row create or adapt a runnable GUI shell containing the project's key input control and a visible output or status region. Make the remaining rows wire the thinnest real input-to-output path and show its result in that GUI. The first round should end with something the student can operate immediately, not a static mock; reuse an existing demo or interface from the resources when one exists.",
     "Also propose a short project name: two to four lowercase words joined by hyphens.",
     "Write at the register above.",
     "",
@@ -633,7 +636,7 @@ function directionPrompt({ reader, paper, interest, assessment, turns, asset, le
     "",
     previous
       ? "Revise the direction to do what they asked. Keep what they did not object to."
-      : "Choose ONE direction for their first project. Not three to pick from: the one that best fits everything above. It must be something they could build, run, or modify within a couple of weeks with an AI coding assistant, using the thing they chose; it must produce something they can see or play with early -- attention first, usefulness to the PhD student second; and it must sit where the problem solving lies for THEM, not in the part a library or the assistant will carry.",
+      : "Choose ONE direction for their first project. Not three to pick from: the one that best fits everything above. It must name a concrete capability they could build, run, or modify within a couple of weeks with an AI coding assistant, using the thing they chose; a coding agent should know what to implement next, and the start must not depend on the student first browsing a dataset, choosing an example, collecting inputs, reading background, or making another decision. Prefer a direction whose thinnest working version is an interactive GUI they can use immediately, not a backend hidden until later. It must produce something they can see or play with early -- attention first, usefulness to the PhD student second -- and it must sit where the problem solving lies for THEM, not in the part a library or the assistant will carry.",
     "Write at the register above.",
     "",
     JSON_ONLY,
@@ -660,7 +663,7 @@ function subgoalsPrompt({ reader, paper, direction, asset, leveled, previous, fe
     "",
     previous
       ? "Revise the three subgoals to do what they asked. Keep what they did not object to."
-      : "Break the direction into exactly three subgoals, in order. Each is an outcome someone could tell you they had reached, not a phase or a heading. The first must be the smallest thing that produces the first visible result; the second builds the substance; the third reaches toward the paper's actual contribution or their own twist. Each carries a description (two sentences, what done looks like) and a why (one sentence, why it comes where it does).",
+      : "Break the direction into exactly three subgoals, in implementation order. Each must name a concrete, testable capability someone could tell you is working, not a phase, heading, instruction, topic, or unanswered decision. The first must be the smallest runnable technical vertical slice a coding agent can implement now without waiting for the student to browse a dataset, choose an example, collect inputs, read background, or make another decision. Prefer a usable GUI with the core input control and visible output; if the eventual input requires a human choice, first build the interface or pipeline with a tiny bundled or synthetic fixture, then put the human choice in a later subgoal. For example, \"A video can be uploaded and previewed\" comes before \"A representative study video is chosen.\" The second builds the substance; the third reaches toward the paper's actual contribution or their own twist. Each carries a description (two sentences defining observable done conditions) and a why (one sentence explaining the dependency on what comes before).",
     "Write at the register above.",
     "",
     JSON_ONLY,
