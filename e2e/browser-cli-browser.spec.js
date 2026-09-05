@@ -12,6 +12,25 @@ const ARCH_LABEL = Object.freeze({
   win32: { arm64: "ARM", x64: "x64" },
 });
 
+test("Claude lifecycle: a completed update is verified and a reinstall does not update again", async () => {
+  test.setTimeout(240_000);
+  // Model the failure mode where `claude update` has already replaced the
+  // executable but exits nonzero during a final cleanup step. Exit status is
+  // not the state of the machine: the post-update version probe is.
+  const machine = new SimulatedMachine("http://127.0.0.1:9", {
+    claude: { version: "2.1.174", updateVersion: "2.1.175", updateExit: 1 },
+  });
+  try {
+    await machine.installLocal();
+    await machine.installLocal();
+    const calls = machine.claudeInvocations();
+    expect(calls.filter((call) => call === "update")).toHaveLength(1);
+    expect(calls.filter((call) => call === "--version").length).toBeGreaterThanOrEqual(4);
+  } finally {
+    await machine.stop();
+  }
+});
+
 test("browser → CLI → /bart browser → Claude context", async ({ page }) => {
   test.setTimeout(240_000);
   const stack = new SimulationStack();
