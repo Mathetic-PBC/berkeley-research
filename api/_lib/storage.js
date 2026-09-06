@@ -27,9 +27,11 @@ function paperObjectPath(paperId) {
   return `papers/${String(paperId)}.pdf`;
 }
 
-function traced(name, path, attributes, fn) {
+// `lineage` = {reads, writes}: the stored values the operation touches, by the
+// contract's names; the paper is the one a storage operation here can name.
+function traced(name, path, attributes, fn, lineage = {}) {
   return telemetry.runOperation({
-    name, type: "storage",
+    name, type: "storage", reads: lineage.reads, writes: lineage.writes,
     attributes: { "engelbart.storage.bucket": PAPERS_BUCKET, "engelbart.storage.object": path, ...(attributes || {}) },
   }, fn);
 }
@@ -124,7 +126,7 @@ async function downloadObject(path, options = {}) {
       throw error;
     }
     return bytes;
-  });
+  }, { reads: ["paper"] });
 }
 
 module.exports = {

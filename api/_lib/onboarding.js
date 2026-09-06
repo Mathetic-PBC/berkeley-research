@@ -12,6 +12,7 @@ const Storage = require("./storage");
 const PageFetch = require("./page-fetch");
 const Curated = require("./curated");
 const SetupChat = require("./setup-chat");
+const Lineage = require("./lineage");
 const { deleteRows, insertRows, patchRows, selectRows, rpc } = require("./supabase");
 const { telemetry } = require("./telemetry");
 const { hostOf, safeUrl } = require("./telemetry/redaction");
@@ -43,9 +44,19 @@ function eq(column, value) {
   return `${column}=eq.${encodeURIComponent(String(value))}`;
 }
 // The same options, with a semantic name for the one database operation
-// they reach: "analysis.persist" in the graph, not a generic db.patch.
-function traced(options, name) {
-  return { ...options, trace: { name } };
+// they reach ("analysis.persist" in the graph, not a generic db.patch) and
+// the stored values it reads and writes, by the contract's lineage names
+// (./lineage). Names given here add to any the options already carry.
+function traced(options, name, lineage = {}) {
+  if (options && options.trace === false) return options;
+  const have = options && options.trace && typeof options.trace === "object" ? options.trace : {};
+  const trace = { ...have };
+  if (name) trace.name = name;
+  for (const kind of ["reads", "writes"]) {
+    const names = [have[kind], lineage[kind]].flat(Infinity).filter(Boolean);
+    if (names.length) trace[kind] = names;
+  }
+  return { ...options, trace };
 }
 // How the workflow ended, on the workflow's own node.
 function outcome(status) {
@@ -57,11 +68,11 @@ function outcome(status) {
 // --- the row ------------------------------------------------------------------
 
 async function rowsOf(user, options) {
-  return selectRows(TABLE, `${eq("user_id", user.id)}&select=*&order=created_at.desc`, traced(options, "row.load"));
+  return selectRows(TABLE, `${eq("user_id", user.id)}&select=*&order=created_at.desc`, traced(options, "row.load", { reads: ["session"] }));
 }
 
 async function calibrationsOf(row, options) {
-  return selectRows(CALIBRATIONS, `${eq("onboarding_id", row.id)}&select=*&order=asked_at.asc`, traced(options, "calibrations.load"));
+  return selectRows(CALIBRATIONS, `${eq("onboarding_id", row.id)}&select=*&order=asked_at.asc`, traced(options, "calibrations.load", { reads: ["calibrations"] }));
 }
 
 // Every write asks for the representation back, so an empty answer means the
@@ -72,8 +83,11 @@ function wroteOne(rows) {
   return rows[0];
 }
 
+// The write's lineage is the columns it sets: each column written with a
+// value is a write of the value that column holds (a cleared column is not).
 async function patch(row, values, options) {
-  const rows = await patchRows(TABLE, `${eq("id", row.id)}`, { ...values, updated_at: new Date().toISOString() }, options);
+  const rows = await patchRows(TABLE, `${eq("id", row.id)}`, { ...values, updated_at: new Date().toISOString() },
+    traced(options, null, { writes: Lineage.writesOf(values) }));
   Object.assign(row, wroteOne(rows));
   return row;
 }
@@ -108,7 +122,7 @@ async function open(user, body, options = {}) {
     // row we hand back is the row the table holds without a re-read.
     const seed = { user_id: user.id, status: "open", step: 0 };
     if (prior) { for (const k of PROFILE_FIELDS) seed[k] = prior[k]; seed.step = PAPER_STEP; }
-    const made = await insertRows(TABLE, [seed], options);
+    const made = await insertRows(TABLE, [seed], traced(options, null, { reads: ["session"], writes: Lineage.writesOf(seed) }));
     row = Array.isArray(made) ? made[0] : made;
   } else if (prior && row.status === "open" && (!hasProfile(row) || (Number(row.step) || 0) < PAPER_STEP)) {
     const values = {};
@@ -126,7 +140,7 @@ async function open(user, body, options = {}) {
 
 async function turnsOf(row, stage, assetKey, options) {
   const key = assetKey ? `&${eq("asset_key", assetKey)}` : "";
-  return selectRows(TURNS, `${eq("onboarding_id", row.id)}&${eq("stage", stage)}${key}&select=*&order=created_at.asc`, traced(options, "turns.load"));
+  return selectRows(TURNS, `${eq("onboarding_id", row.id)}&${eq("stage", stage)}${key}&select=*&order=created_at.asc`, traced(options, "turns.load", { reads: ["turns"] }));
 }
 
 function publicTurn(t) {
@@ -135,7 +149,7 @@ function publicTurn(t) {
 
 async function addTurn(user, row, stage, assetKey, role, content, card, options) {
   const rows = await insertRows(TURNS, [{ onboarding_id: row.id, user_id: user.id, stage, asset_key: assetKey || "",
-    role, content: long(content, 4000), card: card || null }], options);
+    role, content: long(content, 4000), card: card || null }], traced(options, null, { writes: ["turns"] }));
   return wroteOne(rows);
 }
 
@@ -228,7 +242,7 @@ async function pageTexts(row, options) {
   for (const [url, traceName] of [[row.project_url, "project-page.fetch"], [row.repo_url, "repo-page.fetch"]]) {
     if (!url) continue;
     let text = "";
-    try { text = await PageFetch.fetchPageText(url, { ...at, traceName }); } catch { text = "(could not be fetched)"; }
+    try { text = await PageFetch.fetchPageText(url, { ...at, traceName, reads: ["links"] }); } catch { text = "(could not be fetched)"; }
     out.push({ url, text });
   }
   return out;
@@ -240,7 +254,7 @@ async function pageTexts(row, options) {
 // error belongs to the paper that is there now.
 async function supersededBy(row, paperId, options, name = "check-superseded") {
   try {
-    const rows = await selectRows(TABLE, `${eq("id", row.id)}&select=id,paper_id&limit=1`, traced(options, name));
+    const rows = await selectRows(TABLE, `${eq("id", row.id)}&select=id,paper_id&limit=1`, traced(options, name, { reads: ["paper"] }));
     const now = rows && rows[0];
     return Boolean(now) && String(now.paper_id) !== String(paperId);
   } catch (error) {
@@ -265,7 +279,7 @@ async function runAnalysis(user, row, credentials, options) {
     if (pdf.length > MAX_PDF_BYTES) throw fail("That PDF is larger than 20 MB", 413);
     const familiarity = P.FAMILIARITY[Number(row.paper_familiarity) || 0];
     const depth = P.depthOf(row.depth) || P.DEPTHS[0];
-    const urls = await telemetry.runOperation({ name: "analysis.context", type: "processing",
+    const urls = await telemetry.runOperation({ name: "analysis.context", type: "processing", reads: ["links"],
       attributes: { "engelbart.analysis.pages": [row.project_url, row.repo_url].filter(Boolean).length } },
     async (op) => {
       const texts = await pageTexts(row, options);
@@ -339,10 +353,11 @@ function running(row, prefix, now = Date.now()) {
 }
 
 // One link check is one http operation. It never fails: an unreachable host
-// is a verdict ("kept", the link stays), recorded as such.
-async function linkAlive(url, options) {
+// is a verdict ("kept", the link stays), recorded as such. `of` names the
+// stored value the link belongs to: the hunt's `assets`, or `leveled`.
+async function linkAlive(url, options, of = "assets") {
   const fetchImpl = (options && options.fetchImpl) || global.fetch;
-  return telemetry.runOperation({ name: "link.check", type: "http",
+  return telemetry.runOperation({ name: "link.check", type: "http", reads: [of],
     attributes: { "http.request.method": "HEAD", "url.full": safeUrl(url), "server.address": hostOf(url) } }, async (op) => {
     try {
       PageFetch.safeHttpUrl(url);
@@ -374,8 +389,10 @@ function countLinks(assets) {
   return n;
 }
 
-async function verifyLinks(assets, options) {
-  return telemetry.runOperation({ name: "assets.verify-links", type: "processing",
+// The list goes in and comes back out with its dead links dropped: one value
+// (`of`) read and written.
+async function verifyLinks(assets, options, of = "assets") {
+  return telemetry.runOperation({ name: "assets.verify-links", type: "processing", reads: [of], writes: [of],
     attributes: { "engelbart.links.before": countLinks(assets), "engelbart.links.budget": MAX_LINK_CHECKS } }, async (op) => {
     let budget = MAX_LINK_CHECKS;
     async function check(asset) {
@@ -383,7 +400,7 @@ async function verifyLinks(assets, options) {
       const verdicts = await Promise.all(asset.links.map((l) => {
         if (budget <= 0) return Promise.resolve(true);
         budget -= 1;
-        return linkAlive(l.url, options);
+        return linkAlive(l.url, options, of);
       }));
       asset.links = asset.links.filter((_, i) => verdicts[i]);
       if (had && !asset.links.length && asset.availability === "usable") asset.availability = "unknown";
@@ -407,7 +424,8 @@ async function runAssets(user, row, credentials, options) {
     const assets = await verifyLinks(found.assets, options);
     if (await supersededBy(row, mine, options, "assets.check-superseded")) return { assets_status: outcome("superseded") };
     const value = { assets, searched: found.searched };
-    await patch(row, { assets: value, assets_brief: OM.briefOf(assets), assets_status: "done" }, traced(options, "assets.persist"));
+    // The brief is cut from the verified list here, so the persist reads the assets it writes the brief from.
+    await patch(row, { assets: value, assets_brief: OM.briefOf(assets), assets_status: "done" }, traced(options, "assets.persist", { reads: ["assets"] }));
     return { assets_status: outcome("done"), assets: value, assets_brief: row.assets_brief };
   } catch (error) {
     if (await supersededBy(row, mine, options, "assets.check-superseded")) return { assets_status: outcome("superseded") };
@@ -461,7 +479,15 @@ function compileAssessment(row, calibrations) {
 async function topicsDone(user, row, calibrations, body, options = {}) {
   requireOpen(row);
   if (row.analysis_status !== "done") throw fail("The paper is still being read", 409);
-  const assessment = compileAssessment(row, calibrations);
+  const assessment = await telemetry.runOperation({ name: "assessment.compile", type: "processing",
+    reads: ["calibrations", "analysis", "profile"], writes: ["assessment"],
+    attributes: { "engelbart.assessment.calibrations": (calibrations || []).length } }, async (op) => {
+    const out = compileAssessment(row, calibrations);
+    op.setAttributes({ "engelbart.assessment.areas": out.areas.length, "engelbart.assessment.asked": out.areas.filter((a) => a.questions_asked > 0).length,
+      "engelbart.assessment.depth": out.depth, "engelbart.assessment.depth_shift": out.depth_shift });
+    op.snapshot("processing_output", out);
+    return out;
+  });
   if (!assessment.areas.some((a) => a.questions_asked > 0)) throw fail("Answer the topic questions first", 400);
   await patch(row, { assessment, step: Math.max(Number(row.step) || 0, STEP.brainstorm) }, options);
   return { assessment };
@@ -480,7 +506,7 @@ async function runLeveled(user, row, calibrations, credentials, options) {
   try {
     const leveled = await OM.levelAssets({ reader: readerOf(row, calibrations), assessment: row.assessment,
       assets: row.assets.assets, interest: row.interest || "" }, credentials, options);
-    await verifyLinks(leveled.assets, options);
+    await verifyLinks(leveled.assets, options, "leveled");
     if (await supersededBy(row, mine, options, "leveled.check-superseded")) return { leveled_status: outcome("superseded") };
     await patch(row, { leveled, leveled_status: "done" }, traced(options, "leveled.persist"));
     return { leveled_status: outcome("done"), leveled };
@@ -599,15 +625,18 @@ function userTurnCard(body) {
 // --- assets: ask, choose ------------------------------------------------------
 
 // An asset is named by its title, a child by "parent title :: child title".
+// `from` says which stored value held it: the fitted `leveled` list when
+// there is one, else the hunt's `assets`.
 function findAsset(row, key) {
-  const list = row.leveled && Array.isArray(row.leveled.assets) ? row.leveled.assets
-    : row.assets && Array.isArray(row.assets.assets) ? row.assets.assets : [];
+  const fitted = row.leveled && Array.isArray(row.leveled.assets);
+  const list = fitted ? row.leveled.assets : row.assets && Array.isArray(row.assets.assets) ? row.assets.assets : [];
+  const from = fitted ? "leveled" : "assets";
   const [parentTitle, childTitle] = String(key || "").split(" :: ");
   const parent = list.find((a) => a.title === parentTitle);
   if (!parent) return null;
-  if (!childTitle) return { asset: parent, parent: null };
+  if (!childTitle) return { asset: parent, parent: null, from };
   const child = (parent.children || []).find((c) => c.title === childTitle);
-  return child ? { asset: child, parent } : null;
+  return child ? { asset: child, parent, from } : null;
 }
 
 async function assetAsk(user, row, calibrations, body, credentials, options = {}) {
@@ -618,7 +647,7 @@ async function assetAsk(user, row, calibrations, body, credentials, options = {}
   const found = findAsset(row, key);
   if (!found) throw fail("That is not one of the things on the list", 400);
   const thread = await turnsOf(row, "asset", key, options);
-  const made = await OM.assetAsk({ reader: readerOf(row, calibrations), paper: paperOf(row), asset: found.asset,
+  const made = await OM.assetAsk({ reader: readerOf(row, calibrations), paper: paperOf(row), asset: found.asset, from: found.from,
     thread: thread.map((t) => ({ role: t.role, content: t.content })), question }, credentials, options);
   await addTurn(user, row, "asset", key, "user", question, null, options);
   const reply = await addTurn(user, row, "asset", key, "assistant", made.answer, null, options);
@@ -632,8 +661,9 @@ async function chooseAsset(user, row, body, options = {}) {
   if (!found) throw fail("Pick one of the things on the list", 400);
   const { children, ...rest } = found.asset;
   const chosen = { key, ...rest, parent: found.parent ? found.parent.title : "" };
+  // The choice is cut from the list it was picked off, so the write reads that list.
   await patch(row, { asset_chosen: chosen, direction: null, subgoals: null, todos: null,
-    step: Math.max(Number(row.step) || 0, STEP.direction) }, options);
+    step: Math.max(Number(row.step) || 0, STEP.direction) }, traced(options, null, { reads: [found.from] }));
   return { asset_chosen: chosen };
 }
 
@@ -728,7 +758,7 @@ async function answer(user, row, calibrations, body, credentials, options = {}) 
     answer: said, answered_at: new Date().toISOString(), graded_level: null, grade_confidence: null, grade_rationale: "" };
   let cal;
   if (existing) {
-    const rows = await patchRows(CALIBRATIONS, `${eq("id", existing.id)}`, values, options);
+    const rows = await patchRows(CALIBRATIONS, `${eq("id", existing.id)}`, values, traced(options, null, { writes: ["calibrations"] }));
     cal = Object.assign(existing, wroteOne(rows));
   } else {
     cal = await upsertCalibration(user, row, calibrations, areaIndex, level, values, options);
@@ -737,7 +767,7 @@ async function answer(user, row, calibrations, body, credentials, options = {}) 
     sample: source.sample_response, answer: said }, credentials, options);
   if (graded) {
     const rows = await patchRows(CALIBRATIONS, `${eq("id", cal.id)}`, { graded_level: graded.level,
-      grade_confidence: graded.confidence, grade_rationale: graded.rationale }, options);
+      grade_confidence: graded.confidence, grade_rationale: graded.rationale }, traced(options, null, { writes: ["calibrations"] }));
     Object.assign(cal, wroteOne(rows));
   }
   const out = { graded_level: cal.graded_level, grade_confidence: cal.grade_confidence, grade_rationale: cal.grade_rationale,
@@ -770,7 +800,7 @@ async function answer(user, row, calibrations, body, credentials, options = {}) 
 // gateway's "credit exhausted" rather than as the answer landing.
 async function upsertCalibration(user, row, calibrations, areaIndex, level, values, options) {
   const rows = await insertRows(CALIBRATIONS, [{ onboarding_id: row.id, user_id: user.id, area_index: areaIndex,
-    question_level: level, ...values }], { ...options,
+    question_level: level, ...values }], { ...traced(options, null, { writes: ["calibrations"] }),
     query: "on_conflict=onboarding_id,area_index,question_level",
     prefer: "resolution=merge-duplicates,return=representation" });
   const cal = wroteOne(rows);
@@ -897,7 +927,7 @@ async function ask(user, row, calibrations, body, credentials, options = {}) {
   if (DEPTH_KEYS.includes(String(body && body.level))) reader.depth = String(body.level);
   const made = await OM.ask({ reader, paper: paperOf(row), quote, question }, credentials, options);
   await insertRows(ASKS, [{ onboarding_id: row.id, user_id: user.id, step: Number(body.step) || 0, quote, question,
-    level: reader.depth, answer: made.answer }], options);
+    level: reader.depth, answer: made.answer }], traced(options, null, { writes: ["asks"] }));
   return { answer: made.answer, level: reader.depth };
 }
 
@@ -959,7 +989,7 @@ async function saveProfile(user, reader, options) {
   try {
     await insertRows(PROFILES, [{ user_id: user.id, display_name: reader.name, year: reader.year,
       major: reader.major, tech_level: reader.level, knowledge: reader.knowledge,
-      updated_at: new Date().toISOString() }], { ...options, query: "on_conflict=user_id",
+      updated_at: new Date().toISOString() }], { ...traced(options, null, { reads: ["profile", "calibrations"], writes: ["profileRecord"] }), query: "on_conflict=user_id",
       prefer: "resolution=merge-duplicates,return=representation" });
     return true;
   } catch (error) {
@@ -984,8 +1014,17 @@ async function create(user, row, calibrations, body, options = {}) {
   if (!Array.isArray(merged.todos) || merged.todos.length < 2) throw fail("At least two todos", 400);
   values.goal_chosen = merged.direction.title;
   Object.assign(row, values);
-  const payload = SetupChat.normalizePayload(toPayload(row, calibrations));
-  const saved = await rpc("engelbart_save_pending_setup", { p_user_id: user.id, p_payload: payload }, options);
+  // The whole setup becomes the one payload /bart claims: its own step in the
+  // record, reading everything the payload is built from.
+  const payload = await telemetry.runOperation({ name: "create.payload", type: "processing",
+    reads: ["profile", "analysis", "calibrations", "paper", "links", "interest", "chosen", "direction", "subgoals", "todos"], writes: ["payload"],
+    attributes: { "engelbart.payload.subgoals": Array.isArray(row.subgoals) ? row.subgoals.length : 0,
+      "engelbart.payload.todos": Array.isArray(row.todos) ? row.todos.length : 0, "engelbart.payload.has_paper": Boolean(row.paper_id) } }, async (op) => {
+    const out = SetupChat.normalizePayload(toPayload(row, calibrations));
+    op.snapshot("processing_output", out);
+    return out;
+  });
+  const saved = await rpc("engelbart_save_pending_setup", { p_user_id: user.id, p_payload: payload }, traced(options, null, { writes: ["payload"] }));
   const pendingId = typeof saved === "string" ? saved : (saved && saved.id) || null;
   const profileSaved = await saveProfile(user, payload.reader, options);
   await patch(row, { ...values, status: "created", pending_setup_id: pendingId, step: STEP.done }, options);

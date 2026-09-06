@@ -159,8 +159,9 @@ polls, the browser's direct upload to Storage) are listed too, marked
 untraced, consecutive polls folded into one row. The run picker beside the
 mode switch opens an earlier onboarding of yours into the same panel. Nothing
 is invented: no cost is estimated, request bodies the server did not keep are
-not shown, and because the contract does not record which stored values an
-operation read and wrote, the Data flow view says lineage is unavailable
+not shown, and the Data flow view draws only the reads and writes the server
+recorded for each operation (`engelbart.lineage.reads` / `.writes`, see the
+contract's *Lineage*); a run recorded before the server kept those says so
 rather than guessing edges.
 
 Real mode performs real actions: the product on the left does real work as

@@ -18,8 +18,10 @@ const DIR = path.join(ROOT, "engelbart", "setup", "test");
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(ROOT, "docs", "observability", "example-onboarding-analysis-run.json"), "utf8"));
 const ORIGIN = "https://app.example";
 const OB = FIXTURE.run.onboarding_id;
-const TRACE = { open: "da7a9b2cdab30b007e5fa8fdbdf79e32", step: "c857eb5dcb4e5dea436fea805844cba0", analysis: "a7552ec53c282068e729fef8b025b8d6" };
+// The fixture is regenerated from the real code, so its ids and timings are read from it, never copied.
+const TRACE = {}; FIXTURE.operations.filter((o) => o.type === "workflow").forEach((o) => { TRACE[o.action] = o.trace_id; });
 const ROOTS = {}; FIXTURE.operations.filter((o) => o.type === "workflow").forEach((o) => { ROOTS[o.action] = o.operation_id; });
+const OPEN_MS = FIXTURE.operations.find((o) => o.name === "onboarding.open").duration_ms;
 const MODEL_OP = FIXTURE.operations.find((o) => o.type === "model").operation_id;
 const TOKEN = "member-token";
 
@@ -70,9 +72,12 @@ function find(node, pred, out = []) {
 }
 
 // The telemetry endpoint the page reads, answering from the fixture; every call is kept for inspection.
+// An operation as a build before lineage recorded it: the same record without the two attributes.
+function preLineage(op) { const attributes = { ...op.attributes }; delete attributes["engelbart.lineage.reads"]; delete attributes["engelbart.lineage.writes"]; return { ...op, attributes }; }
+
 function telemetryServer(options = {}) {
   const calls = [];
-  const sub = (filter, onboarding) => ({ contract_version: FIXTURE.contract_version, run: FIXTURE.run, onboarding, operations: FIXTURE.operations.filter(filter),
+  const sub = (filter, onboarding, map = (op) => op) => ({ contract_version: FIXTURE.contract_version, run: FIXTURE.run, onboarding, operations: FIXTURE.operations.filter(filter).map(map),
     snapshots: options.inline === false ? FIXTURE.snapshots.map((s) => { const { content, ...meta } = s; return { ...meta, content_omitted: true }; }) : FIXTURE.snapshots,
     events: FIXTURE.events.filter(filter), snapshots_inline: options.inline !== false });
   const row = (id, extra) => Object.assign({ onboarding_id: id, onboarding_status: "open", step: 4, project_name: "Speculative decoding", paper_title: "Fast Inference", created_at: "2026-09-06T02:49:00.000Z" }, extra || {});
@@ -98,7 +103,8 @@ function telemetryServer(options = {}) {
     if (u.searchParams.has("run")) {
       const id = u.searchParams.get("run");
       if (id === OB) return json(200, sub(() => true, row(OB)));
-      if (id === "ob-older") return json(200, sub((o) => o.trace_id === TRACE.analysis, row("ob-older", { project_name: "Older project" })));
+      // The older run was recorded by a build before lineage: its operations carry no reads or writes.
+      if (id === "ob-older") return json(200, sub((o) => o.trace_id === TRACE.analysis, row("ob-older", { project_name: "Older project" }), preLineage));
       return json(404, { error: "No run by that id" });
     }
     if (u.searchParams.has("snapshot")) { const s = FIXTURE.snapshots.find((x) => x.snapshot_id === u.searchParams.get("snapshot")); return s ? json(200, { snapshot: s }) : json(404, { error: "No snapshot" }); }
@@ -215,7 +221,7 @@ test("a request the frame reports is a row at once; when the reply names a trace
   const insp = P.d.inspectorVM();
   same(insp.tabs.map((t) => t.label), ["Request", "Response", "Attributes"]);
   assert.equal(insp.json, JSON.stringify({ action: "open" }, null, 2), "the Request tab is what the browser sent");
-  assert.ok(insp.meta.some((m) => m.k === "round trip" && m.v === "120 ms") && insp.meta.some((m) => m.k === "server time" && m.v === "47 ms"), "browser and server timings side by side");
+  assert.ok(insp.meta.some((m) => m.k === "round trip" && m.v === "120 ms") && insp.meta.some((m) => m.k === "server time" && m.v === P.d.fmtMs(OPEN_MS)), "browser and server timings side by side");
   assert.ok(insp.meta.some((m) => m.k === "ops" && m.v === "4"));
   const reads = P.server.telemetry();
   assert.ok(reads.every((c) => c.method === "GET" && c.auth === "Bearer " + TOKEN), "telemetry is only ever read, as the member");
@@ -267,6 +273,59 @@ test("a real model call's snapshots are inspectable: the request body sent to th
   insp = P.d.inspectorVM();
   assert.equal(insp.kindLabel, "Storage");
   assert.equal(insp.tabs[0].label, "Attributes", "a storage read recorded no snapshot, so none is invented");
+});
+
+test("in Real mode the Data flow view draws what the run recorded reading and writing, and a value's panel shows its producer's recorded payloads by their snapshots", async () => {
+  const P = page({ mode: "real" });
+  P.request("rq-1", { action: "analysis", body: { action: "analysis", run: true }, bg: true });
+  P.response("rq-1", { trace_id: TRACE.analysis, body: { onboarding: { id: OB }, analysis: { status: "running" } } });
+  await settle();
+  let V = P.d.renderVals();
+  assert.equal(V.lineageUnavailable, false);
+  const ids = V.flowNodes.map((n) => n.id);
+  for (const id of ["session", "calibrations", "turns", "paper", "links", "profile", "analysis"]) assert.ok(ids.includes(id), `${id} was read or written, so it is drawn`);
+  for (const id of ["assets", "direction", "todos", "payload"]) assert.ok(!ids.includes(id), `${id} was not touched, so it is not`);
+  assert.ok(V.flowEdges.length > 0, "an arrow from what was read to what was written");
+  const analysisNode = V.flowNodes.find((n) => n.id === "analysis");
+  assert.equal(analysisNode.wroteHere, true, "the reading was written on this step");
+  assert.match(analysisNode.title, /written on this step/);
+  assert.match(V.flowNodes.find((n) => n.id === "paper").title, /written on this step · read on this step/, "the run's earlier sources action stored the paper, and the analysis read it");
+  // The value's panel: its producer is the recorded model call, and its tabs are the snapshots that call kept.
+  P.d.setState({ flowSel: "analysis", flowTab: null });
+  await flush();
+  V = P.d.renderVals();
+  let d = V.flowDetail;
+  assert.equal(d.label, "Paper reading");
+  same(d.tabs.map((t) => t.label), ["Prompt", "Model output", "Raw reply", "Request", "Response"], "the three recorded snapshots, then what the browser saw of the request");
+  assert.match(d.status, /^Last written on .* by “analysis\.persist” · 3 writes so far$/, "the last writer stored it; the model call, its normalize step and the persist all wrote it");
+  const parsed = FIXTURE.snapshots.find((x) => x.kind === "model_parsed_response");
+  assert.ok(d.hasValue && d.json.includes(JSON.stringify(Object.keys(parsed.content)[0])), "Model output is the recorded parsed reply, inline");
+  assert.equal(d.tabNote, "redacted before it was stored", "the snapshot says how it was kept");
+  d.tabs[0].select();
+  await flush();
+  d = P.d.renderVals().flowDetail;
+  assert.ok(d.json.includes('"max_tokens"'), "Prompt is the recorded model request");
+  assert.doesNotMatch(d.json, /sk-[A-Za-z0-9]/, "with no key in it");
+  // A value the run only read has no producer to show, and nothing is invented for it.
+  P.d.setState({ flowSel: "session", flowTab: null });
+  await flush();
+  d = P.d.renderVals().flowDetail;
+  assert.equal(d.label, "Session");
+  same(d.tabs.map((t) => t.label), ["Value"]);
+  assert.equal(d.hasValue, false);
+  assert.equal(d.status, "");
+  // A value a row write stored: its producer is the database operation, whose payloads are its request and response.
+  P.request("rq-2", { action: "step", body: { action: "step", step: 1, fields: { name: "A" } } });
+  P.response("rq-2", { trace_id: TRACE.step, body: { onboarding: { id: OB } } });
+  await settle();
+  P.d.setState({ flowSel: "profile", flowTab: null });
+  await flush();
+  d = P.d.renderVals().flowDetail;
+  assert.equal(d.label, "Reader profile");
+  same(d.tabs.map((t) => t.label), ["Input", "Output", "Request", "Response"]);
+  assert.match(d.status, /by “db\.patch”/);
+  assert.ok(d.json.includes('"name"'), "Output is the recorded database response, with the columns the write set");
+  assert.equal(P.server.telemetry().filter((c) => c.url.includes("snapshot=")).length, 0, "inline snapshots were never asked for again");
 });
 
 test("a snapshot the run left out is asked for once when its tab opens, and never twice", async () => {
@@ -354,6 +413,11 @@ test("the run picker opens an earlier run in the same panel and comes back to th
   assert.equal(texts(P.d.renderLive(V)).some((t) => /^Earlier run · Older project/.test(t)), true);
   assert.equal(V.stages[0].modelPill, "model");
   assert.ok(P.server.telemetry().some((c) => c.url === "/api/engelbart-telemetry?run=ob-older"));
+  // Recorded before the server kept lineage: its operations are all there, and the graph guesses nothing.
+  assert.ok(P.stages()[0].ops.every((o) => Array.isArray(o.reads) && o.reads.length === 0 && Array.isArray(o.writes) && o.writes.length === 0));
+  assert.equal(V.lineageUnavailable, true);
+  assert.equal(V.flowHasNodes, false, "no edge is drawn for a run recorded without lineage");
+  assert.ok(texts(P.d.renderLineageUnavailable()).some((t) => /Lineage was not recorded for this run/.test(t)));
   // The product kept going on the left meanwhile.
   P.request("rq-2", { action: "step" }); P.response("rq-2", { trace_id: TRACE.step, body: { onboarding: { id: OB } } });
   await settle();
@@ -397,8 +461,8 @@ test("switching modes keeps each side's state: the simulator's tabs survive a vi
   await settle();
   assert.equal(P.stages().find((s) => s.trace_id === TRACE.open).ops.length, 4);
   const VR = P.d.renderVals();
-  assert.equal(VR.flowHasNodes, false, "no lineage graph is drawn for real runs");
-  assert.ok(texts(P.d.renderLineageUnavailable()).some((t) => /Lineage is not recorded for real runs/.test(t)));
+  assert.equal(VR.lineageUnavailable, false, "the recorded run names what it read and wrote");
+  assert.equal(VR.flowHasNodes, true, "so the graph draws a real run from its recorded reads and writes, with nothing guessed");
   assert.equal(VR.views[1].label, "Requests · 4");
   P.send({ egb: "trace", event: events[0] });
   await new Promise((r) => setTimeout(r, 80));

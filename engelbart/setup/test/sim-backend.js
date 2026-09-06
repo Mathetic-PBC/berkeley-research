@@ -51,6 +51,8 @@
     { id: "interest", label: "Interest", sub: "one line", col: 4, row: 3 },
     { id: "leveled", label: "Fitted resources", sub: "locus · sticky · stand-ins", col: 5, row: 4 },
     { id: "chosen", label: "Chosen thing", sub: "one asset", col: 6, row: 4 },
+    { id: "details", label: "Project details", sub: "questions · answers", col: 7, row: 1 },
+    { id: "goals", label: "Goals", sub: "four options", col: 8, row: 1 },
     { id: "direction", label: "Direction", sub: "one proposal", col: 7, row: 3 },
     { id: "subgoals", label: "Subgoals", sub: "three pieces", col: 8, row: 3 },
     { id: "todos", label: "Todos + name", sub: "first piece", col: 9, row: 3 },
@@ -85,7 +87,7 @@
   };
   var FIELD_NODE = { name: "profile", year: "profile", major: "profile", depth: "profile", paper_id: "paper", paper_familiarity: "paper", project_url: "links", repo_url: "links",
     analysis: "analysis", assets: "assets", assets_brief: "brief", assessment: "assessment", leveled: "leveled", interest: "interest", asset_chosen: "chosen",
-    direction: "direction", subgoals: "subgoals", todos: "todos", project_name: "todos", goal_chosen: "todos", pending_setup_id: "payload" };
+    direction: "direction", subgoals: "subgoals", details: "details", goals: "goals", todos: "todos", project_name: "todos", goal_chosen: "todos", pending_setup_id: "payload" };
   function declare(name, input) {
     var keys = Object.keys(DECL), hit = null;
     for (var i = 0; i < keys.length; i++) if (name.indexOf(keys[i]) === 0) { hit = DECL[keys[i]]; break; }
@@ -885,5 +887,5 @@
       state: function () { return clone(db); }, USER: USER, DEFAULT_KNOBS: DEFAULT_KNOBS };
   }
 
-  window.EngelbartSim = { create: create, redact: redact, DEFAULT_KNOBS: DEFAULT_KNOBS, FLOW: { nodes: NODES, edges: EDGES } };
+  window.EngelbartSim = { create: create, redact: redact, DEFAULT_KNOBS: DEFAULT_KNOBS, FLOW: { nodes: NODES, edges: EDGES }, FIELD_NODE: FIELD_NODE };
 })();

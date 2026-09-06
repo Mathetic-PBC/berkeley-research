@@ -708,9 +708,15 @@ class Debugger extends React.Component {
         const carrier = [...okW].reverse().find(x => substantive(x.op.output)) || last;
         if (carrier) { const out = carrier.op.output; value = Array.isArray(out) && out.length === 1 ? out[0] : out; source = carrier; }
       }
+      // A recorded operation carries no output to find the value in; what wrote it is what its record says wrote it.
+      if (!source && last && last.op.real) source = last;
       const producer = [...okW].reverse().find(x => x.op.kind === "model") || source || last;
       const isModel = producer && producer.op.kind === "model";
-      const tabDefs = producer ? (isModel ? [["prompt", "Prompt"], ["output", "Model output"]] : [["input", "Input"], ["output", "Output"]]).concat([["request", "Request"], ["response", "Response"]]) : [["value", "Value"]];
+      // A recorded operation's payloads are its snapshots, read by id as the inspector reads them; a simulated one
+      // carries its input and output. The browser's request and reply are there only when the browser reported them.
+      const realSnaps = producer && producer.op.real ? [["input", isModel ? "Prompt" : "Input", producer.op.snaps.input], ["output", isModel ? "Model output" : "Output", producer.op.snaps.output], ["raw", "Raw reply", producer.op.snaps.raw]].filter(t => t[2]) : null;
+      const tabDefs = realSnaps ? (realSnaps.length ? realSnaps.map(t => [t[0], t[1]]) : [["value", "Value"]]).concat(producer.stage.observed ? [["request", "Request"], ["response", "Response"]] : [])
+        : producer ? (isModel ? [["prompt", "Prompt"], ["output", "Model output"]] : [["input", "Input"], ["output", "Output"]]).concat([["request", "Request"], ["response", "Response"]]) : [["value", "Value"]];
       const tabKey = tabDefs.some(t => t[0] === S.flowTab) ? S.flowTab : (tabDefs.some(t => t[0] === "output") ? "output" : tabDefs[0][0]);
       const pIn = producer && producer.op.input || {};
       // The prompt as one message, the way the model receives it: the template's text with the filled-in
@@ -718,12 +724,16 @@ class Debugger extends React.Component {
       const assembled = () => { if (!pIn.body) return pIn; const blocks = ((pIn.body.messages || [])[0] || {}).content || []; let lastText = -1; blocks.forEach((b, i) => { if (b.type === "text") lastText = i; });
         const content = blocks.map((b, i) => i === lastText ? Object.assign({}, b, { filled_in: pIn.context || undefined }) : b);
         return { template: pIn.template, template_edited: pIn.template_edited, model: pIn.body.model, max_tokens: pIn.body.max_tokens, tools: pIn.body.tools, timeout_ms: pIn.timeout_ms, messages: [{ role: "user", content: content }] }; };
-      const shownValue = tabKey === "value" ? value : tabKey === "prompt" ? assembled()
+      const realSnap = realSnaps && realSnaps.find(t => t[0] === tabKey), realState = realSnap ? this.snapshot(realSnap[2]) : null;
+      const shownValue = realSnap ? (realState.state === "ready" ? (realState.content === undefined || realState.content === null ? "—" : realState.content) : realState.state === "pending" ? "Loading " + (realState.bytes ? Math.round(realState.bytes / 1024) + " KB" : "the snapshot") + "…" : realState.state === "missing" ? "This snapshot was not stored." : "This snapshot could not be read.")
+        : realSnaps && tabKey === "value" ? undefined : tabKey === "value" ? value : tabKey === "prompt" ? assembled()
         : tabKey === "context" ? (pIn.context || "(this call declares no context)") : tabKey === "input" ? pIn : tabKey === "output" ? (sel.row && !isModel ? sel.row : producer.op.output) : tabKey === "request" ? { path: producer.stage.method + " " + producer.stage.path, body: producer.stage.request } : { status: producer.stage.status + (producer.stage.code ? " · " + producer.stage.code : ""), body: producer.stage.response };
-      const json = shownValue === undefined || shownValue === null ? "" : (typeof shownValue === "string" ? shownValue : JSON.stringify(shownValue, null, 2));
+      let json = shownValue === undefined || shownValue === null ? "" : (typeof shownValue === "string" ? shownValue : JSON.stringify(shownValue, null, 2));
+      if (realState && realState.state === "ready" && realState.truncated) json = "// cut to the byte bound when it was recorded\n" + json;
+      const tabNote = realSnaps && !realSnaps.length ? "This operation kept no payload; open it in the inspector for its attributes and events." : realState && realState.state === "ready" ? (realState.redacted ? "redacted before it was stored" : "stored as sent") : "";
       detail = { label: (sel.group ? sel.group + " · " : "") + sel.label, sub: sel.sub, rendered: null, hasRendered: false, showRaw: !!json, rawLabel: "", toggleRaw: () => {},
         tabs: tabDefs.map(([k, label]) => ({ label: label, select: () => this.setState({ flowTab: k }), bg: tabKey === k ? "#171717" : "#fff", color: tabKey === k ? "#fff" : "#4d4d4d", border: tabKey === k ? "#171717" : "#eaeaea" })),
-        tabNote: "",
+        tabNote: tabNote,
         status: source ? "Last written on " + source.rec.name + " at " + this.clock(source.op.at) + " by “" + source.op.name + "”" + (source.op.kind === "model" ? " (a model call)" : "") + (w.length > 1 ? " · " + w.length + " writes so far" : "") : "",
         hasValue: !!json, json: json || "", why: why ? "Why · " + why : "", hasWhy: !!why,
         openLabel: source ? "open in inspector ›" : "", open: () => { if (!source) return; const o = Object.assign({}, this.state.open); o[source.stage.id] = true; this.setState({ open: o, viewing: S.recordings.indexOf(source.rec) }); this.select("live", source.stage.id, source.op.id); },
@@ -805,8 +815,10 @@ class Debugger extends React.Component {
     const counts = {}; live.stages.forEach(s => s.ops.forEach(o => { counts[o.kind] = (counts[o.kind] || 0) + 1; }));
     const insp = this.inspectorVM();
     const real = this.isReal();
-    // Lineage (which stored values an operation read and wrote) is not in the telemetry contract, so no graph is drawn for a real run.
-    const flow = real ? { nodes: [], edges: [], junctions: [], width: 0, height: 0, detail: null } : this.flowVM(live);
+    // A real run draws the lineage its operations recorded (engelbart.lineage.reads / .writes). A run recorded
+    // before that was part of the contract has none, and no edge is guessed for it.
+    const lineageUnavailable = real && !live.lineage;
+    const flow = lineageUnavailable ? { nodes: [], edges: [], junctions: [], width: 0, height: 0, detail: null } : this.flowVM(live);
     const tokens = live.stages.reduce((n, s) => n + s.ops.reduce((m, o) => m + ((o.meta && o.meta.tokens && ((o.meta.tokens.input || 0) + (o.meta.tokens.output || 0))) || 0), 0), 0);
     const cmp = this.compareData();
     const testMode = this.props.productTestMode ?? false;
@@ -864,7 +876,7 @@ class Debugger extends React.Component {
       views: [["flow", "Data flow"], ["requests", "Requests" + (t.requests ? " · " + t.requests : "")]].map(([k, label]) => ({ key: k, label: label, color: (S.view || "flow") === k ? "#171717" : "#8f8f8f", line: (S.view || "flow") === k ? "#171717" : "transparent", select: () => this.setState({ view: k }) })),
       isFlowView: (S.view || "flow") === "flow", isRequestsView: (S.view || "flow") === "requests",
       flowNodes: flow.nodes, flowEdges: flow.edges, flowDetail: flow.detail || {}, flowHasDetail: !!flow.detail, flowOpen: true,
-      flowW: flow.width, flowH: flow.height, flowEmpty: !flow.nodes.length, flowHasNodes: flow.nodes.length > 0, flowJunctions: flow.junctions,
+      flowW: flow.width, flowH: flow.height, flowEmpty: !flow.nodes.length, flowHasNodes: flow.nodes.length > 0, flowJunctions: flow.junctions, lineageUnavailable: lineageUnavailable,
       flowZoomLabel: Math.round(S.flowZoom * 100) + "%",
       zoomIn: () => this.setState({ flowZoom: Math.min(2.5, Math.round((S.flowZoom + 0.15) * 100) / 100) }), zoomOut: () => this.setState({ flowZoom: Math.max(0.4, Math.round((S.flowZoom - 0.15) * 100) / 100) }),
       zoomReset: () => this.setState({ flowZoom: 1, flowPos: {}, flowPan: { x: 0, y: 0 } }), hasLayoutChanges: Object.keys(S.flowPos).length > 0 || S.flowZoom !== 1 || !!(S.flowPan && (S.flowPan.x || S.flowPan.y)),
@@ -1074,7 +1086,8 @@ class Debugger extends React.Component {
             h("button", { onClick: fd.open, className: "hv-ink", style: css("padding:0;border:none;background:none;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#0070f3;white-space:nowrap") }, fd.openLabel)),
           fd.hasWhy ? h("div", { style: css("margin-top:8px;padding:8px 10px;border-radius:6px;background:#e6f0fd;font:11.5px/1.5 " + SANS + ";color:#0761d1;text-wrap:pretty") }, fd.why) : null,
           h("div", { style: css("margin-top:10px;display:flex;align-items:center;gap:4px;flex-wrap:wrap") },
-            fd.tabs.map((ft, i) => h("button", { key: i, onClick: ft.select, style: css("padding:5px 10px;border:1px solid " + ft.border + ";border-radius:999px;background:" + ft.bg + ";font:500 9.5px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:" + ft.color + ";white-space:nowrap") }, ft.label))),
+            fd.tabs.map((ft, i) => h("button", { key: i, onClick: ft.select, style: css("padding:5px 10px;border:1px solid " + ft.border + ";border-radius:999px;background:" + ft.bg + ";font:500 9.5px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:" + ft.color + ";white-space:nowrap") }, ft.label)),
+            fd.tabNote ? h("span", { "data-tab-note": "1", style: css("font:11px/1.4 " + SANS + ";color:#8f8f8f") }, fd.tabNote) : null),
           fd.hasRendered ? h("div", { style: css("margin-top:10px;max-height:420px;overflow:auto;padding:12px 14px;background:#fafafa;border:1px solid #eaeaea;border-radius:6px") }, fd.rendered) : null,
           fd.showRaw ? h("pre", { style: css("margin:8px 0 0;overflow:auto;padding:10px 12px;background:#fafafa;border:1px solid #eaeaea;border-radius:6px;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word;min-height:0;flex:" + dm.preFlex + ";max-height:" + dm.preMax) }, fd.json) : null,
           h("div", { style: css("flex:none;margin-top:10px") },
@@ -1135,15 +1148,15 @@ class Debugger extends React.Component {
               h("span", { style: css("display:block;margin-top:5px;font:11px/1.3 " + SANS + ";color:#8f8f8f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, stt.k)))))),
       h("div", { style: css("display:flex;align-items:center;gap:2px;margin-bottom:12px;border-bottom:1px solid #eaeaea") },
         V.views.map(vw => h("button", { key: vw.key, onClick: vw.select, style: css("padding:8px 10px 9px;border:none;background:transparent;font:500 12.5px/1 " + SANS + ";color:" + vw.color + ";border-bottom:2px solid " + vw.line + ";margin-bottom:-1px;white-space:nowrap") }, vw.label))),
-      V.isFlowView && V.isReal ? this.renderLineageUnavailable() : null,
-      V.isFlowView && !V.isReal ? this.renderFlow(V) : null,
+      V.isFlowView && V.lineageUnavailable ? this.renderLineageUnavailable() : null,
+      V.isFlowView && !V.lineageUnavailable ? this.renderFlow(V) : null,
       V.isRequestsView ? this.renderRequests(V) : null);
   }
   renderLineageUnavailable() {
     return h("div", { "data-screen-label": "Lineage unavailable", style: css("border:1px dashed #e2e2e2;border-radius:10px;padding:28px 18px;text-align:center;margin-bottom:14px") },
-      h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "Lineage is not recorded for real runs"),
+      h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "Lineage was not recorded for this run"),
       h("div", { style: css("margin:4px auto 0;max-width:460px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") },
-        "The graph draws which stored values each operation read and wrote. Real telemetry records the operations, their timing, payloads and errors, but not yet that, and no edge is guessed here. Use Requests to inspect every operation; the graph fills in once reads and writes are instrumented."));
+        "The graph draws which stored values each operation read and wrote. This run was recorded before the server kept that, so its operations, timing, payloads and errors are on record but no edge is guessed from them. Use Requests to inspect every operation; runs recorded since carry their reads and writes and draw here."));
   }
   renderCases(V) {
     return h("div", { style: css("flex:1;min-height:0;overflow:auto;padding:12px 14px 20px") },

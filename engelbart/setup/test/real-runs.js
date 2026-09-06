@@ -5,8 +5,11 @@
  * The source of truth is the telemetry contract (docs/observability/
  * data-contract.md): a workflow root becomes a request row, the operations
  * beneath it become that row's operation rows, and snapshots of every kind
- * become the inspector's tabs. Nothing is added that was not recorded: no
- * cost, no lineage, no request bodies the server did not keep.
+ * become the inspector's tabs, and the lineage attributes
+ * (engelbart.lineage.reads / .writes) become the operation's reads and
+ * writes, which the Data flow view draws. Nothing is added that was not
+ * recorded: no cost, no request bodies the server did not keep, and no edge
+ * for a run recorded before lineage was.
  *
  * What the browser saw is a second source: in Real mode the frame reports
  * every request the product makes, and the reply names its trace
@@ -92,9 +95,22 @@
     return out;
   }
 
+  // The stored values an operation read and wrote, as the contract records them: an attribute per kind,
+  // a list of names. Anything that is not a list of strings is no lineage at all.
+  var LINEAGE = { reads: "engelbart.lineage.reads", writes: "engelbart.lineage.writes" };
+  function lineageOf(attributes, kind) {
+    var v = (attributes || {})[LINEAGE[kind]];
+    return Array.isArray(v) ? v.filter(function (n) { return typeof n === "string" && n; }) : [];
+  }
+  function hasLineage(op) {
+    var a = op && op.attributes;
+    return !!a && (Array.isArray(a[LINEAGE.reads]) || Array.isArray(a[LINEAGE.writes]));
+  }
+
   function opVM(op, seq, depth) {
     return { id: op.operation_id, seq: seq, at: when(op.started_at), kind: kindOf(op), name: op.name, target: targetOf(op), status: statusOf(op.status),
-      input: undefined, output: undefined, ms: durationOf(op), meta: metaOf(op), error: op.error || null, reads: [], writes: [],
+      input: undefined, output: undefined, ms: durationOf(op), meta: metaOf(op), error: op.error || null,
+      reads: lineageOf(op.attributes, "reads"), writes: lineageOf(op.attributes, "writes"),
       real: true, type: op.type, level: op.level, depth: depth, trace_id: op.trace_id, span_id: op.span_id, parent_span_id: op.parent_span_id,
       started_at: op.started_at, ended_at: op.ended_at, attributes: op.attributes || {}, snaps: snapsOf(op), events: [] };
   }
@@ -218,8 +234,12 @@
     stages.forEach(function (s, i) { s.seq = i + 1; });
     var snapshots = {}; (envelope.snapshots || []).forEach(function (s) { if (s && s.snapshot_id) snapshots[s.snapshot_id] = s; });
     var run = envelope.run || {}, ob = envelope.onboarding || opts.onboarding || {};
+    // A run recorded before lineage was has no operation that names what it read or wrote; the graph
+    // then says so rather than draw nothing as if nothing happened.
+    var lineage = ops.some(hasLineage);
     return { id: "real-" + (run.run_id || ob.onboarding_id || "run"), name: opts.name || runLabel(ob, run), real: true, knobs: {}, stages: stages, requests: [], startedAt: when(run.started_at) || null,
-      seed: null, trigger: null, presses: 0, run: run, onboarding: ob, snapshots: snapshots, snapshotsInline: envelope.snapshots_inline !== false, contract: envelope.contract_version || null };
+      seed: null, trigger: null, presses: 0, run: run, onboarding: ob, snapshots: snapshots, snapshotsInline: envelope.snapshots_inline !== false, contract: envelope.contract_version || null,
+      lineage: lineage };
   }
 
   // Two envelopes as one: a trace read after its request, folded into the run it belongs to. The

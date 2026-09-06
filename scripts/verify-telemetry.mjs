@@ -27,6 +27,11 @@ const USAGE = [
   "  TRACE_ID                     inspect this trace instead of the latest attempt",
 ].join("\n");
 
+import { createRequire } from "node:module";
+// The lineage vocabulary is the backend's own (api/_lib/lineage.js): a recorded
+// name outside it is a name the debugger cannot draw.
+const Lineage = createRequire(import.meta.url)("../api/_lib/lineage.js");
+
 const env = process.env;
 const BASE = String(env.SUPABASE_URL || "").replace(/\/+$/, "");
 const KEY = env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -50,6 +55,9 @@ const EXPECTED_CHILDREN = {
   leveled: ["row.load", "calibrations.load", "turns.load", "leveled.mark-running", "model.leveled", "leveled.normalize",
     "leveled.check-superseded", "leveled.persist"],
 };
+// The value each background reader exists to write; its persist step must say so.
+const EXPECTED_WRITES = { analysis: "analysis", assets: "assets", leveled: "leveled" };
+const LINEAGE_ATTRIBUTES = ["engelbart.lineage.reads", "engelbart.lineage.writes"];
 const EXPECTED_SNAPSHOTS = {
   "model.analysis": ["model_request", "model_raw_response", "model_parsed_response"],
   "model.assets": ["model_request", "model_raw_response", "model_parsed_response"],
@@ -191,6 +199,23 @@ async function main() {
     const extra = names.filter((n) => !expected.includes(n) && n !== persistAlt);
     if (extra.length) warn("unexpected stages", extra.join(", "));
   } else warn("expected stages", `no expectation table for action ${action}; shape checks only`);
+
+  // --- lineage: which stored values each operation read and wrote -----------------------------------
+  const declared = ops.filter((o) => LINEAGE_ATTRIBUTES.some((k) => o.attributes && o.attributes[k] !== undefined));
+  const badLineage = declared.filter((o) => LINEAGE_ATTRIBUTES.some((k) => {
+    const v = o.attributes[k];
+    return v !== undefined && !(Array.isArray(v) && v.every((n) => typeof n === "string" && Lineage.known(n)));
+  }));
+  const persist = ops.find((o) => o.name === `${action}.persist`);
+  const mustWrite = EXPECTED_WRITES[action];
+  const persistSilent = persist && mustWrite && declared.length && !((persist.attributes || {})["engelbart.lineage.writes"] || []).includes(mustWrite);
+  if (!declared.length) warn("lineage", "no operation names what it read or wrote (a build before lineage; the debugger draws no graph for this run)");
+  else if (badLineage.length) fail("lineage", `names outside the contract's vocabulary on ${badLineage.map((o) => o.name).join(", ")}`);
+  else if (persistSilent) fail("lineage", `${persist.name} does not record writing ${mustWrite}`);
+  else {
+    const written = [...new Set(declared.flatMap((o) => o.attributes["engelbart.lineage.writes"] || []))];
+    pass("lineage", `${declared.length} of ${ops.length} operations name their reads and writes; written: ${written.join(", ") || "nothing"}`);
+  }
 
   const unended = ops.filter((o) => o.status === "running" || o.status === "waiting");
   if (!unended.length) pass("operations ended", `all ${ops.length} completed or failed`);

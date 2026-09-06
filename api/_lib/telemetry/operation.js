@@ -53,6 +53,21 @@ function attributeValue(value) {
   return String(value).slice(0, MAX_ATTRIBUTE_STRING);
 }
 
+// Lineage names: the stored values an operation read or wrote, as the caller
+// named them (the vocabulary is the application's, in the contract's
+// *Lineage* section). Strings only, trimmed, deduplicated, in the order
+// given; the attribute cap of 50 applies as to any array.
+const LINEAGE_ATTRIBUTES = Object.freeze({ reads: "engelbart.lineage.reads", writes: "engelbart.lineage.writes" });
+function lineageNames(names, have = []) {
+  const out = have.slice();
+  for (const name of [names].flat(Infinity)) {
+    if (typeof name !== "string") continue;
+    const clean = name.trim();
+    if (clean && !out.includes(clean)) out.push(clean);
+  }
+  return out;
+}
+
 class Operation {
   constructor(telemetry, spec) {
     this.telemetry = telemetry;
@@ -83,9 +98,23 @@ class Operation {
     this.record = null;
     if (this.run) (this.run.operations || (this.run.operations = [])).push(this);
     this.setAttributes({ "bart.operation_id": this.operation_id, "bart.type": this.type, ...(spec.attributes || {}) });
+    if (spec.reads) this.reads(spec.reads);
+    if (spec.writes) this.writes(spec.writes);
   }
 
   get ended() { return this.status !== STATUS.running && this.status !== STATUS.waiting; }
+
+  // Lineage: which stored values this operation read and wrote, by name.
+  // Recorded as two attributes so the store needs no new column; a name
+  // given twice is kept once, and names accumulate across calls.
+  reads(...names) { return this.lineage("reads", names); }
+  writes(...names) { return this.lineage("writes", names); }
+  lineage(kind, names) {
+    const key = LINEAGE_ATTRIBUTES[kind];
+    const list = lineageNames(names, Array.isArray(this.attributes[key]) ? this.attributes[key] : []);
+    if (list.length) this.setAttribute(key, list);
+    return this;
+  }
 
   setAttribute(key, value) {
     const safe = attributeValue(this.telemetry.redactScalar(value));
@@ -223,6 +252,8 @@ class NoopOperation {
   get ended() { return false; }
   setAttribute() { return this; }
   setAttributes() { return this; }
+  reads() { return this; }
+  writes() { return this; }
   event() { return this; }
   waiting() { return this; }
   snapshot() { return null; }
@@ -231,4 +262,4 @@ class NoopOperation {
   toJSON() { return null; }
 }
 
-module.exports = { LEVELS, NoopOperation, Operation, STATUS, TYPES, attributeValue, levelOf, nextSequence };
+module.exports = { LEVELS, LINEAGE_ATTRIBUTES, NoopOperation, Operation, STATUS, TYPES, attributeValue, levelOf, lineageNames, nextSequence };

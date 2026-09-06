@@ -62,11 +62,13 @@ function pageText(html) {
 // URL without its query, the host, the status and the body size -- never the
 // HTML -- with the HTML-to-text step as a processing child whose bounded
 // output is the one thing captured as a snapshot, and only when detailed
-// capture is on.
+// capture is on. `options.reads` / `options.writes` name the stored values
+// the fetch is lineage of (the onboarding's `links`, when the URL came from
+// the row).
 async function fetchPageText(url, options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
   return telemetry.runOperation({
-    name: options.traceName || "page.fetch", type: "http",
+    name: options.traceName || "page.fetch", type: "http", reads: options.reads, writes: options.writes,
     attributes: { "http.request.method": "GET", "url.full": safeUrl(url), "server.address": hostOf(url) },
   }, async (op) => {
     let response;

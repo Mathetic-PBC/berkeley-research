@@ -426,6 +426,25 @@ test("the real paper-analysis path is one trace with the expected operations, an
       "analysis.normalize", "analysis.check-superseded", "analysis.persist"]) assert.equal(levels[name], "stage", name);
     assert.ok(sink.events.filter((e) => e.trace_id === root.trace_id).every((e) => e.level === levels[e.name]));
     assert.equal(root.attributes["engelbart.mode"], "live");
+    // Lineage: each operation names the stored values it consumed and produced; the root names none.
+    const lineage = (ops, name, kind) => ops.find((o) => o.name === name).attributes[`engelbart.lineage.${kind}`];
+    assert.deepEqual(lineage(inTrace, "row.load", "reads"), ["session"]);
+    assert.deepEqual(lineage(inTrace, "calibrations.load", "reads"), ["calibrations"]);
+    assert.deepEqual(lineage(inTrace, "paper.download", "reads"), ["paper"]);
+    assert.deepEqual(lineage(inTrace, "project-page.fetch", "reads"), ["links"]);
+    assert.deepEqual(lineage(inTrace, "analysis.construct-request", "reads"), ["paper", "links", "profile"]);
+    assert.deepEqual(lineage(inTrace, "model.analysis", "reads"), ["paper", "links", "profile"]);
+    assert.deepEqual(lineage(inTrace, "model.analysis", "writes"), ["analysis"]);
+    assert.deepEqual(lineage(inTrace, "analysis.normalize", "writes"), ["analysis"]);
+    assert.deepEqual(lineage(inTrace, "analysis.check-superseded", "reads"), ["paper"]);
+    assert.deepEqual(lineage(inTrace, "analysis.persist", "writes"), ["analysis"], "the persist records the value it stored, not the bookkeeping columns beside it");
+    assert.equal(lineage(inTrace, "analysis.persist", "reads"), undefined);
+    for (const kind of ["reads", "writes"]) assert.equal(root.attributes[`engelbart.lineage.${kind}`], undefined, "the root declares nothing");
+    const sources = sink.operations.filter((o) => o.trace_id === sink.one("onboarding.sources").trace_id);
+    assert.deepEqual(lineage(sources, "db.patch", "writes"), ["paper", "links"], "one write per stored value the row write set");
+    const opened = sink.operations.filter((o) => o.trace_id === sink.one("onboarding.open").trace_id);
+    assert.deepEqual(lineage(opened, "db.insert", "reads"), ["session"]);
+    assert.equal(lineage(opened, "db.insert", "writes"), undefined, "a seed of empty columns stores no value");
     const [branch] = tree(inTrace);
     assert.equal(branch.name, "onboarding.analysis");
     const context = branch.children.find((c) => c.name === "analysis.context");
