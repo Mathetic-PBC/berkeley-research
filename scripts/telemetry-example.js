@@ -18,7 +18,7 @@ process.env.VERCEL_ENV = process.env.VERCEL_ENV || "preview";
 process.env.VERCEL_GIT_COMMIT_SHA = process.env.VERCEL_GIT_COMMIT_SHA || "61d30bd0c0ffee00";
 process.env.VERCEL_DEPLOYMENT_ID = process.env.VERCEL_DEPLOYMENT_ID || "dpl_ExampleDeploymentId0000";
 process.env.ENGELBART_TRACE_CONTENT = "true";
-delete process.env.ENGELBART_TELEMETRY_STORE;
+process.env.ENGELBART_TELEMETRY_STORE = "false";   // the fixture goes to disk, not to Supabase
 delete process.env.ENGELBART_TELEMETRY_LOG;
 delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;

@@ -269,6 +269,14 @@ test("untraced work produces nothing, and events share the operation's ids in li
 test("settings come from the environment, and the run learns its ids from later database reads", async () => {
   const settings = T.readSettings({ ENGELBART_TRACE_CONTENT: "true", ENGELBART_TRACE_POLLS: "1", ENGELBART_TELEMETRY_STORE: "no", ENGELBART_TELEMETRY_FLUSH_MS: "750" });
   assert.deepEqual(settings, { captureContent: true, tracePolls: true, store: false, log: false, flushMs: 750 });
+  // Unset: capture is on, and persistence is on exactly when the service role is there to write with.
+  assert.deepEqual(T.readSettings({}), { captureContent: true, tracePolls: false, store: false, log: false, flushMs: 2000 });
+  const creds = { SUPABASE_URL: "https://x.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "service-key" };
+  assert.deepEqual(T.readSettings(creds), { captureContent: true, tracePolls: false, store: true, log: false, flushMs: 2000 });
+  // ...and an explicit `false` switches either off.
+  const quiet = T.readSettings({ ...creds, ENGELBART_TRACE_CONTENT: "false", ENGELBART_TELEMETRY_STORE: "off" });
+  assert.equal(quiet.store, false);
+  assert.equal(quiet.captureContent, false);
   const { telemetry, sink } = make();
   await telemetry.withRun({ action: "open", test_run_id: "t-1" }, () => telemetry.runOperation({ name: "onboarding.open", type: "workflow" }, async () => {
     await telemetry.runOperation({ name: "db.select", type: "database" }, async () => {});
@@ -306,4 +314,100 @@ test("settings come from the environment, and the run learns its ids from later 
   assert.equal(T.deriveRun(bogus.sink.operations).mode, "live");
   assert.equal(T.deriveRun(bogus.sink.operations, { mode: "replay" }).mode, "replay");   // an explicit reader option wins
   assert.deepEqual(T.MODES, ["live", "test", "simulation", "replay", "fixture"]);
+});
+
+test("an explicit level overrides the central default through runOperation and startOperation, on the operation and its events", async () => {
+  const { telemetry, sink } = make();
+  await telemetry.runOperation({ name: "onboarding.analysis", type: "workflow" }, async () => {
+    await telemetry.runOperation({ name: "db.select", type: "database", level: "stage" }, async () => {});   // a detail promoted
+    const manual = telemetry.startOperation({ name: "paper.download", type: "storage", level: "detail" });   // a stage demoted
+    manual.complete();
+    await telemetry.runOperation({ name: "model.analysis", type: "model", level: "huge" }, async () => {});  // unknown: the default
+    await telemetry.runOperation({ name: "analysis.context", type: "processing" }, async () => {});           // unset: the default
+  });
+  assert.equal(sink.one("db.select").level, "stage");
+  assert.equal(sink.one("paper.download").level, "detail");
+  assert.equal(sink.one("model.analysis").level, "stage");
+  assert.equal(sink.one("analysis.context").level, "stage");
+  assert.equal(sink.started.find((o) => o.name === "db.select").level, "stage");
+  for (const [name, level] of [["db.select", "stage"], ["paper.download", "detail"], ["model.analysis", "stage"]]) {
+    const events = sink.events.filter((e) => e.name === name);
+    assert.deepEqual(events.map((e) => e.type), ["operation.started", "operation.completed"], name);
+    assert.deepEqual(events.map((e) => e.level), [level, level], name);
+  }
+});
+
+test("bundle() orders events by time, trace, sequence and id, not by the process-local sequence alone", () => {
+  // Two traces from two function instances whose counters overlap: trace B's
+  // events carry LOWER sequence numbers although they happened LATER.
+  const A = "a".repeat(32); const B = "b".repeat(32);
+  const ev = (trace, sequence, at, id) => ({ event_id: id, sequence, at, trace_id: trace, operation_id: `op-${trace[0]}`, type: "operation.progress" });
+  const events = [
+    ev(A, 10, "2026-09-05T10:00:00.000Z", "e1"), ev(A, 11, "2026-09-05T10:00:00.400Z", "e2"), ev(A, 12, "2026-09-05T10:00:01.000Z", "e3"),
+    ev(B, 1, "2026-09-05T10:00:00.900Z", "e4"), ev(B, 2, "2026-09-05T10:00:01.000Z", "e5"), ev(B, 3, "2026-09-05T10:00:02.000Z", "e6"),
+    ev(A, 13, "2026-09-05T10:00:01.000Z", "e0"),   // same instant as e3 and e5: trace, then sequence, then id
+    ev(A, 13, "2026-09-05T10:00:01.000Z", "e7"),
+  ];
+  const want = ["e1", "e2", "e4", "e3", "e0", "e7", "e5", "e6"];
+  assert.deepEqual(T.bundle({ events }).events.map((e) => e.event_id), want);
+  assert.deepEqual(T.bundle({ events: [...events].reverse() }).events.map((e) => e.event_id), want);   // deterministic
+  assert.notDeepEqual(want, [...events].sort((x, y) => x.sequence - y.sequence).map((e) => e.event_id));  // and not what sequence alone says
+  // Within one trace the order still agrees with sequence.
+  const a = T.bundle({ events }).events.filter((e) => e.trace_id === A).map((e) => e.sequence);
+  assert.deepEqual(a, [...a].sort((x, y) => x - y));
+  // Snapshots and operations also end on a unique key.
+  const snaps = [{ snapshot_id: "s2", created_at: "t" }, { snapshot_id: "s1", created_at: "t" }];
+  assert.deepEqual(T.bundle({ snapshots: snaps }).snapshots.map((s) => s.snapshot_id), ["s1", "s2"]);
+});
+
+test("a snapshot's bytes is the UTF-8 size of its stored content, and the stored content fits the cap even in the preview case", async () => {
+  const Snapshots = require("../api/_lib/telemetry/snapshots");
+  const CAP = Snapshots.MAX_SNAPSHOT_BYTES;
+  const consistent = (out) => {
+    assert.equal(out.bytes, Buffer.byteLength(JSON.stringify(out.content)));
+    assert.ok(out.bytes <= CAP, `${out.bytes} > ${CAP}`);
+  };
+  // Rule 1: whole.
+  consistent(Snapshots.bound({ a: "é".repeat(10) }));
+  assert.equal(Snapshots.bound({ a: "é".repeat(10) }).truncated, false);
+  // Rule 2: strings shortened, and the total measured after shortening.
+  const rule2 = Snapshots.bound({ big: Array.from({ length: 6 }, () => "y".repeat(60000)) });
+  consistent(rule2); assert.equal(rule2.truncated, true); assert.ok(!("[truncated]" in rule2.content));
+  // Rule 3, the hard case: many short strings of 4-byte characters (surrogate pairs) plus
+  // quotes and backslashes that JSON must escape twice inside the preview string.
+  const noisy = Array.from({ length: 120 }, () => `${"😀".repeat(2500)}"\\"\\${"\u00e9".repeat(200)}`);   // 5,000+ units each: rule 2 shortens, still too big
+  const rule3 = Snapshots.bound({ noisy });
+  consistent(rule3);
+  assert.equal(rule3.truncated, true);
+  assert.equal(rule3.content["[truncated]"], true);
+  assert.ok(rule3.content.original_bytes > rule3.content.shrunk_bytes && rule3.content.shrunk_bytes > CAP);
+  assert.ok(rule3.content.preview.length > 1000);
+  assert.ok(rule3.content.preview.length <= Math.floor(CAP / 2));
+  const last = rule3.content.preview.charCodeAt(rule3.content.preview.length - 1);
+  assert.ok(!(last >= 0xd800 && last <= 0xdbff), "the preview does not end in a lone high surrogate");
+  assert.equal(JSON.stringify(rule3.content).length, JSON.stringify(JSON.parse(JSON.stringify(rule3.content))).length);  // round-trips
+  // The same holds for a small cap, where the wrapper's own keys matter.
+  for (const cap of [200, 300, 1000]) {
+    const small = Snapshots.bound({ noisy }, cap);
+    assert.equal(small.bytes, Buffer.byteLength(JSON.stringify(small.content)));
+    assert.ok(small.bytes <= cap, `${small.bytes} > ${cap}`);
+  }
+  // And through the layer: the recorded snapshot says the same about itself.
+  const { telemetry, sink } = make({ captureContent: true });
+  await telemetry.runOperation({ name: "model.analysis", type: "model" }, async (op) => { op.snapshot("model_raw_response", { noisy }); });
+  const recorded = sink.snapshots[0];
+  assert.equal(recorded.bytes, Buffer.byteLength(JSON.stringify(recorded.content)));
+  assert.ok(recorded.bytes <= CAP);
+  assert.equal(recorded.truncated, true);
+});
+
+test("tests never persist or export: the shared layer stores nothing under the test runner, whatever the shell holds", () => {
+  assert.ok(process.env.NODE_TEST_CONTEXT, "node --test marks its processes");
+  assert.equal(T.telemetry.settings.store, false);
+  const creds = { SUPABASE_URL: "https://x.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "service-key" };
+  assert.equal(T.readSettings({ ...creds, NODE_TEST_CONTEXT: "child-v8" }).store, false);
+  assert.equal(T.readSettings({ ...creds, NODE_TEST_CONTEXT: "child-v8", ENGELBART_TELEMETRY_STORE: "true" }).store, true);  // unless asked in so many words
+  assert.equal(T.readSettings(creds).store, true);
+  assert.equal(T.readSettings(creds).captureContent, true);
+  assert.equal(T.telemetry.sinks.some((s) => s instanceof T.SupabaseStoreSink), false);
 });

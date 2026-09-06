@@ -35,21 +35,37 @@ const { LEVELS, NoopOperation, Operation, STATUS, TYPES, levelOf } = require("./
 
 const MAX_LOGGED_ERRORS = 20;
 const TRUE = new Set(["1", "true", "yes", "on"]);
+const FALSE = new Set(["0", "false", "no", "off"]);
 
-function flag(env, name) {
-  return TRUE.has(String(env[name] || "").trim().toLowerCase());
+// An explicit `true`/`false` wins; anything else (unset, blank, a typo) is
+// the default the caller names.
+function flag(env, name, fallback = false) {
+  const value = String(env[name] || "").trim().toLowerCase();
+  if (TRUE.has(value)) return true;
+  if (FALSE.has(value)) return false;
+  return fallback;
 }
 
-// Everything the environment decides. `ENGELBART_TRACE_CONTENT` is the one
-// that matters most: without it, no prompt, reply, page text or row body is
-// ever stored -- only operations, relationships, timing, safe metadata and
-// sanitized errors.
+// Persistence needs the service role; without it there is nowhere to write.
+// Under the node test runner (which sets NODE_TEST_CONTEXT in every test
+// process) nothing is written by default either: a test suite that inherits
+// real credentials from its shell must not record itself into production.
+function canStore(env) {
+  return Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !env.NODE_TEST_CONTEXT);
+}
+
+// Everything the environment decides. Capture and persistence are on wherever
+// they can work, so a deployment records itself without configuration. Set
+// `ENGELBART_TRACE_CONTENT=false` to keep prompts, replies, page text and row
+// bodies out of storage (operations, relationships, timing, safe metadata and
+// sanitized errors are still recorded), or `ENGELBART_TELEMETRY_STORE=false`
+// to persist nothing at all.
 function readSettings(env) {
   return {
-    captureContent: flag(env, "ENGELBART_TRACE_CONTENT"),
-    tracePolls: flag(env, "ENGELBART_TRACE_POLLS"),
-    store: flag(env, "ENGELBART_TELEMETRY_STORE"),
-    log: flag(env, "ENGELBART_TELEMETRY_LOG"),
+    captureContent: flag(env, "ENGELBART_TRACE_CONTENT", true),
+    tracePolls: flag(env, "ENGELBART_TRACE_POLLS", false),
+    store: flag(env, "ENGELBART_TELEMETRY_STORE", canStore(env)),
+    log: flag(env, "ENGELBART_TELEMETRY_LOG", false),
     flushMs: Number(env.ENGELBART_TELEMETRY_FLUSH_MS) || 2000,
   };
 }
@@ -211,8 +227,9 @@ class Telemetry {
 
   // --- operations ---------------------------------------------------------------------
 
-  // spec = { name, type, attributes?, parent? }. `parent` is an Operation, for
-  // the manual form when the caller is not inside runOperation.
+  // spec = { name, type, level?, attributes?, parent? }. `parent` is an
+  // Operation, for the manual form when the caller is not inside
+  // runOperation; `level` overrides the central default (levelOf).
   startOperation(spec) {
     if (this.suppressed()) return new NoopOperation();
     try {
@@ -223,7 +240,7 @@ class Telemetry {
       const run = (spec.parent && spec.parent.run) || ctx.getValue(this.RUN_KEY) || runDefaults(this.env);
       const span = this.otel.tracer.startSpan(String(spec.name), {}, ctx);
       const op = new Operation(this, {
-        span, name: spec.name, type: spec.type, run,
+        span, name: spec.name, type: spec.type, level: spec.level, run,
         parentSpanId: parentSpan ? parentSpan.spanContext().spanId : null,
         attributes: { ...runAttributes(run), ...(spec.attributes || {}) },
       });
@@ -327,8 +344,10 @@ module.exports = {
   SNAPSHOT_KINDS: Snapshots.KINDS,
   CONTRACT_VERSION: Contract.CONTRACT_VERSION,
   bundle: Contract.bundle,
+  compareEvents: Contract.compareEvents,
   deriveRun: Contract.deriveRun,
   tree: Contract.tree,
+  MAX_SNAPSHOT_BYTES: Snapshots.MAX_SNAPSHOT_BYTES,
   createTelemetry,
   readSettings,
   telemetry,

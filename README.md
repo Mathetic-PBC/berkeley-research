@@ -79,17 +79,27 @@ documented in `docs/observability/data-contract.md`, with a real example run in
 `docs/observability/example-onboarding-analysis-run.json`
 (`node scripts/telemetry-example.js` regenerates it).
 
-All of it is optional and off by default:
+A deployment records itself without configuration: operations, snapshots and
+events are persisted to the three `engelbart_telemetry_*` tables (migration
+`20260905120000`) wherever the Supabase service role is configured. Switches:
 
-- `OTEL_EXPORTER_OTLP_ENDPOINT` (+ `OTEL_EXPORTER_OTLP_HEADERS`) — export spans over OTLP/HTTP
-- `ENGELBART_TRACE_CONTENT=true` — also capture payload snapshots (prompts, replies, page text, row bodies); redacted, bounded, never the PDF
-- `ENGELBART_TELEMETRY_STORE=true` — persist operations, snapshots and events to the three `engelbart_telemetry_*` tables (migration `20260905120000`)
-- `ENGELBART_TRACE_POLLS=true` — trace the page's routine status polls too
-- `ENGELBART_TELEMETRY_LOG=true` — one JSON line per finished operation in the function log
+- `ENGELBART_TRACE_CONTENT=false` — stop capturing payload snapshots (prompts, replies, page text, row bodies); on by default, redacted, bounded, never the PDF
+- `ENGELBART_TELEMETRY_STORE=false` — persist nothing to Supabase (on by default when `SUPABASE_SERVICE_ROLE_KEY` is set)
+- `ENGELBART_TRACE_POLLS=true` — trace the page's routine status polls too (off by default)
+- `ENGELBART_TELEMETRY_LOG=true` — one JSON line per finished operation in the function log (off by default)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (+ `OTEL_EXPORTER_OTLP_HEADERS`) — export spans over OTLP/HTTP (unset by default)
 
 Telemetry never fails a request: a sink or exporter error is logged and
 onboarding continues. The handler flushes before it responds, within
-`ENGELBART_TELEMETRY_FLUSH_MS` (default 2000).
+`ENGELBART_TELEMETRY_FLUSH_MS` (default 2000). Under `node --test` nothing is
+persisted unless `ENGELBART_TELEMETRY_STORE=true` is set explicitly.
+
+To check what a deployment persisted for one run, read-only and without
+printing any captured content:
+
+```sh
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... RUN_ID=<onboarding id> npm run verify:telemetry
+```
 
 ## Source of truth
 
