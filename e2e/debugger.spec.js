@@ -205,6 +205,28 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(inspector).toContainText("redacted");
     await expect(inspector).not.toContainText("est. cost");
 
+    // Requests that land in one turn. One click at the Paper step fires the step, then the analysis and assets
+    // runs; an upload's reply can arrive with the next request. React applies a turn's updates together, so
+    // each has to build on the state as it stands then: every row must show, and the upload must keep its reply.
+    // The frame posts exactly these shapes as it observes the product; here it posts them directly.
+    await realFrame.locator("body").evaluate(() => {
+      const at = Date.now(), post = (m) => window.parent.postMessage(m, location.origin);
+      const req = (id, action, over) => post(Object.assign({ egb: "request", id, at, method: "POST", path: "/api/engelbart-onboarding", where: "api", action, body: { action }, step: "Paper", bg: false, poll: false }, over || {}));
+      req("burst-1", "analysis", { body: { action: "analysis", run: true }, bg: true });
+      req("burst-2", "assets", { body: { action: "assets", run: true }, bg: true });
+      req("burst-3", "upload", { method: "PUT", path: "/storage/v1/object/berkeley-papers/papers/p.pdf", where: "storage", body: { bytes: 2059, type: "application/pdf" } });
+      post({ egb: "response", id: "burst-3", at: at + 310, ms: 310, status: 200, ok: true, trace_id: null, body: { ok: true, status: 200 } });
+      req("burst-4", "own_paper_saved", { body: { action: "own_paper_saved", id: "p" } });
+    });
+    // (The onboarding's history already holds one analysis run, drawn ahead; this turn's is the second.)
+    await expect(page.locator("[id^=stage-]", { hasText: "onboarding · analysis (run)" })).toHaveCount(2);
+    await expect(page.locator("[id^=stage-]", { hasText: "onboarding · assets (run)" })).toBeVisible();
+    await expect(page.locator("[id^=stage-]", { hasText: "onboarding · own_paper_saved" })).toBeVisible();
+    const uploadRow = page.locator("[id^=stage-]", { hasText: "storage · upload" });
+    await expect(uploadRow).toBeVisible();
+    await expect(uploadRow).toContainText("310 ms");
+    await expect(uploadRow).toContainText("browser → storage");
+
     // An earlier run, from the picker, in the same panel: the model call's recorded request and replies are inspectable.
     await page.locator("[data-run-picker]").selectOption(OLDER);
     await expect(page.getByText(/^Earlier run · Older project/)).toBeVisible();

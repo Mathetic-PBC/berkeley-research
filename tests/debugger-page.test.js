@@ -27,13 +27,27 @@ function plain(x) { return JSON.parse(JSON.stringify(x)); }
 // Values built in the sandbox have that realm's prototypes: compared as plain data.
 function same(actual, expected, message) { assert.deepEqual(plain(actual), plain(expected), message); }
 async function settle(rounds = 8) { for (let i = 0; i < rounds; i++) await new Promise((r) => setTimeout(r, 0)); }
+// The stand-in React applies queued updates in a microtask; this lets exactly that happen, and nothing that
+// waits on a reply or a timer.
+const flush = () => Promise.resolve();
 
 // React, as far as the component uses it: a base class with setState/forceUpdate, createElement as a plain tree, refs.
 function fakeReact() {
+  // Updates queue and apply together in a later microtask, as React 18 batches them: an object patch lands as
+  // its caller computed it, from whatever state the caller read; a function patch runs against the state as it
+  // is when the queue drains. Callbacks run after the drain. This is what makes a stale read a lost update.
   class Component {
-    constructor(props) { this.props = props; this.state = {}; }
-    setState(patch, after) { const p = typeof patch === "function" ? patch(this.state) : patch; if (p) this.state = Object.assign({}, this.state, p); if (after) after(); }
-    forceUpdate(after) { if (after) after(); }
+    constructor(props) { this.props = props; this.state = {}; this.queue = []; this.draining = null; }
+    setState(patch, after) {
+      this.queue.push([patch, after]);
+      if (!this.draining) this.draining = Promise.resolve().then(() => { this.draining = null; this.drain(); });
+    }
+    drain() {
+      const q = this.queue; this.queue = []; const afters = [];
+      for (const [patch, after] of q) { const p = typeof patch === "function" ? patch(this.state) : patch; if (p) this.state = Object.assign({}, this.state, p); if (after) afters.push(after); }
+      afters.forEach((f) => f());
+    }
+    forceUpdate(after) { if (after) Promise.resolve().then(after); }
   }
   const createElement = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter((c) => c != null && c !== false) });
   return { Component, createElement, createRef: () => ({ current: null }) };
@@ -161,16 +175,20 @@ test("the stored mode decides how the page starts; Real mode never hands the fra
 test("a request the frame reports is a row at once; when the reply names a trace, the trace is read and the row becomes the recorded action with its operations", async () => {
   const P = page({ mode: "real" });
   P.send({ egb: "ready", speed: 1, mode: "real" });
+  await flush();
   assert.equal(P.d.state.connected, true);
   same(P.cmds(), [], "nothing is commanded of the real frame on ready: no speed, no snapshot, no prompts");
   P.request("rq-1");
+  await flush();
   let rows = P.stages();
   assert.equal(rows.length, 1);
   same([rows[0].id, rows[0].label, rows[0].status, rows[0].observed, rows[0].untraced, rows[0].ops.length], ["req:rq-1", "onboarding · open", "running", true, true, 0]);
   assert.equal(P.d.renderVals().stages[0].dot, "#0070f3", "a running request is blue");
   // The reader opens the row and inspects it while it is still in flight.
   P.d.setState({ open: { "req:rq-1": true } }); P.d.select("live", "req:rq-1", null);
+  await flush();
   P.response("rq-1", { trace_id: TRACE.open, body: { onboarding: { id: OB, status: "open", step: 1 }, credit: { status: "own" }, own_key: { set: true, last4: "1234" } } });
+  await flush();
   rows = P.stages();
   same([rows[0].status, rows[0].code, rows[0].awaiting], ["ok", 200, "pending"], "answered, trace not yet read");
   assert.equal(P.d.renderVals().stages[0].tag, "reading trace…");
@@ -217,6 +235,7 @@ test("a real model call's snapshots are inspectable: the request body sent to th
   const names = row.ops.map((o) => " ".repeat(o.depth) + o.name);
   same((names), ["row.load", "calibrations.load", "turns.load", "analysis.mark-running", "paper.download", "analysis.context", " project-page.fetch", "  page.extract-text", "analysis.construct-request", "model.analysis", "analysis.normalize", "analysis.check-superseded", "analysis.persist"]);
   P.d.select("live", ROOTS.analysis, MODEL_OP);
+  await flush();
   let insp = P.d.inspectorVM();
   assert.equal(insp.kindLabel, "Model");
   assert.equal(insp.name, "model.analysis");
@@ -228,21 +247,23 @@ test("a real model call's snapshots are inspectable: the request body sent to th
   assert.equal(insp.redacted, "1 secret redacted", "the stored request carries the server's redaction of its key, and the inspector counts it");
   assert.ok(!/sk-[A-Za-z0-9]{6}/.test(insp.json), "no key in the request as shown");
   assert.ok(insp.meta.some((m) => m.k === "in" && m.v === (1843).toLocaleString()) && insp.meta.some((m) => m.k === "out" && m.v === (1276).toLocaleString()) && insp.meta.some((m) => m.k === "cache write"));
-  P.d.setState({ inspTab: "raw" }); insp = P.d.inspectorVM(); body = JSON.parse(insp.json);
+  P.d.setState({ inspTab: "raw" }); await flush(); insp = P.d.inspectorVM(); body = JSON.parse(insp.json);
   assert.equal(body.stop_reason, "end_turn", "the raw reply is the model's own message");
-  P.d.setState({ inspTab: "output" }); insp = P.d.inspectorVM(); body = JSON.parse(insp.json);
+  P.d.setState({ inspTab: "output" }); await flush(); insp = P.d.inspectorVM(); body = JSON.parse(insp.json);
   assert.equal(typeof body, "object");
-  P.d.setState({ inspTab: "attrs" }); insp = P.d.inspectorVM(); body = JSON.parse(insp.json);
+  P.d.setState({ inspTab: "attrs" }); await flush(); insp = P.d.inspectorVM(); body = JSON.parse(insp.json);
   assert.equal(body["gen_ai.usage.output_tokens"], 1276);
   assert.ok(!("authorization" in body) && !JSON.stringify(body).match(/sk-[A-Za-z0-9]{8}/), "no credential in the attributes");
   const persist = row.ops.find((o) => o.name === "analysis.persist");
   P.d.select("live", ROOTS.analysis, persist.id); P.d.setState({ inspTab: "input" });
+  await flush();
   insp = P.d.inspectorVM();
   assert.equal(insp.kindLabel, "DB");
   assert.equal(insp.target, "PATCH /rest/v1/engelbart_onboardings?id=eq.?");
   assert.ok(JSON.parse(insp.json), "the database request snapshot is shown");
   const dl = row.ops.find((o) => o.name === "paper.download");
   P.d.select("live", ROOTS.analysis, dl.id);
+  await flush();
   insp = P.d.inspectorVM();
   assert.equal(insp.kindLabel, "Storage");
   assert.equal(insp.tabs[0].label, "Attributes", "a storage read recorded no snapshot, so none is invented");
@@ -254,6 +275,7 @@ test("a snapshot the run left out is asked for once when its tab opens, and neve
   P.request("rq-1", { action: "analysis" }); P.response("rq-1", { trace_id: TRACE.analysis, body: { onboarding: { id: OB } } });
   await settle();
   P.d.select("live", ROOTS.analysis, MODEL_OP);
+  await flush();
   let insp = P.d.inspectorVM();
   assert.match(insp.json, /^Loading \d+ KB…$/);
   P.d.inspectorVM(); P.d.inspectorVM();
@@ -277,10 +299,12 @@ test("untraced requests are light rows of their own: consecutive status polls fo
   same(V.stages.map((s) => s.tag), ["untraced", "poll ×3", "browser → storage"]);
   same(V.stages.map((s) => s.opsLabel), ["0 ops", "0 ops", "0 ops"], "nothing is invented under an untraced request");
   P.d.select("live", rows[1].id, null); P.d.setState({ inspTab: "output" });
+  await flush();
   const insp = P.d.inspectorVM();
   same(JSON.parse(insp.json), { analysis: { status: "done" } }, "the latest poll's reply");
   assert.ok(insp.meta.some((m) => m.k === "trace" && m.v === "none: untraced request") && insp.meta.some((m) => m.k === "polls" && m.v === "3") && insp.meta.some((m) => m.k === "step" && m.v === "Paper"));
   P.d.select("live", rows[2].id, null);
+  await flush();
   assert.ok(P.d.inspectorVM().meta.some((m) => m.k === "route" && m.v === "browser → Storage, no function"));
   assert.equal(P.server.telemetry().filter((c) => c.url.includes("trace=")).length, 0, "no trace is asked for when no reply named one");
 });
@@ -301,6 +325,7 @@ test("a trace the server has nothing for is retried briefly, then said to be mis
   const V = P.d.renderVals();
   assert.equal(V.stages.find((s) => s.id === "req:rq-1").tag, "trace not recorded");
   P.d.select("live", "req:rq-1", null); P.d.setState({ inspTab: "error" });
+  await flush();
   const insp = P.d.inspectorVM();
   same(insp.tabs.map((t) => t.label), ["Request", "Response", "Error"]);
   assert.match(insp.json, /recorded nothing under this trace id/);
@@ -319,6 +344,7 @@ test("the run picker opens an earlier run in the same panel and comes back to th
   const V0 = P.d.renderVals();
   assert.equal(find(P.d.renderTopBar(V0), (n) => n.type === "select" && n.props["data-run-picker"]).length, 1, "the picker is in the top bar");
   P.d.pickRun("ob-older");
+  await flush();
   assert.equal(P.d.realVM().viewingPicked, true);
   await settle();
   assert.equal(P.d.state.real.loading, false);
@@ -347,6 +373,7 @@ test("the run picker opens an earlier run in the same panel and comes back to th
 test("switching modes keeps each side's state: the simulator's tabs survive a visit to Real mode, and Real mode's session survives a visit back", async () => {
   const P = page({});
   P.send({ egb: "ready", speed: 1, mode: "sim" });
+  await flush();
   same(P.cmds(), ["speed", "snapshot", "prompts"], "the simulated frame is configured on ready");
   // A simulated request, from the real simulator, so its events are the genuine ones.
   const events = [];
@@ -362,6 +389,7 @@ test("switching modes keeps each side's state: the simulator's tabs survive a vi
   assert.equal(P.d.renderVals().flowHasNodes, true, "and the graph draws it");
 
   P.d.setMode("real");
+  await flush();
   assert.equal(P.d.isReal(), true);
   assert.equal(P.store.get("egb.debugger.mode"), "real", "the choice is remembered");
   assert.equal(P.stages().length, 0, "Real mode starts on an empty session");
@@ -377,18 +405,21 @@ test("switching modes keeps each side's state: the simulator's tabs survive a vi
   assert.equal(P.stages().length, 4, "a simulator event means nothing to Real mode");
 
   P.d.setMode("sim");
+  await flush();
   assert.equal(P.d.isReal(), false);
   assert.equal(P.stages().length, 1, "the simulator's tab is back as it was");
   assert.equal(P.stages()[0].id, simStage[0].id);
   P.d.setMode("real");
+  await flush();
   assert.equal(P.stages().length, 4, "and the real session is still there");
   assert.equal(P.d.renderVals().frameSrc, "/engelbart/setup/test/frame?mode=real");
 });
 
-test("the frame's word on the session is shown: signed out means the product left for the sign-in page, so the pane says how to come back and how to reload", () => {
+test("the frame's word on the session is shown: signed out means the product left for the sign-in page, so the pane says how to come back and how to reload", async () => {
   const P = page({ mode: "real" });
   assert.equal(P.d.realVM().signedOut, false);
   P.send({ egb: "session", signedIn: false, email: "" });
+  await flush();
   const R = P.d.realVM();
   assert.equal(R.signedOut, true);
   const overlay = texts(P.d.renderSignedOut(R));
@@ -396,15 +427,47 @@ test("the frame's word on the session is shown: signed out means the product lef
   assert.equal(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Signed out").length, 1, "the notice sits over the frame");
   const key = P.d.state.frameKey;
   R.reloadFrame();
+  await flush();
   assert.equal(P.d.state.frameKey, key + 1, "reloading remounts the frame");
   assert.equal(P.d.realVM().signedOut, false, "and waits for its word again");
   P.send({ egb: "session", signedIn: true, email: "member@berkeley.edu" });
+  await flush();
   assert.equal(P.d.realVM().signedOut, false);
   assert.equal(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Signed out").length, 0);
   // Messages from anywhere but the frame are ignored.
   P.send({ egb: "session", signedIn: false }, { source: {} });
   P.send({ egb: "session", signedIn: false }, { origin: "https://evil.example" });
+  await flush();
   assert.equal(P.d.realVM().signedOut, false);
+});
+
+test("requests and replies that land in one turn all survive: nothing a later message says loses what an earlier one said", async () => {
+  // The product fires three requests from one click (the step, then analysis and assets in the background) and
+  // the storage upload's reply can land in the same turn as the next request. React applies the updates from one
+  // turn together, so each must build on the state as it stands then, not on what its handler read.
+  const P = page({ mode: "real" });
+  P.request("rq-1", { action: "step", body: { action: "step", sources: [] }, step: "Paper" });
+  P.request("rq-2", { action: "analysis", body: { action: "analysis", run: true }, bg: true, step: "Paper" });
+  P.request("rq-3", { action: "assets", body: { action: "assets", run: true }, bg: true, step: "Paper" });
+  P.request("rq-4", { method: "PUT", path: "/storage/v1/object/berkeley-papers/papers/p.pdf", where: "storage", action: "upload", body: { bytes: 2059, type: "application/pdf" } });
+  P.response("rq-4", { status: 200, ms: 310, body: { ok: true, status: 200 } });
+  P.request("rq-5", { action: "own_paper_saved", body: { action: "own_paper_saved", id: "p" }, step: "Paper" });
+  await flush();
+  let rows = P.stages();
+  same((rows.map((s) => [s.label, s.status])), [["onboarding · step", "running"], ["onboarding · analysis (run)", "running"], ["onboarding · assets (run)", "running"], ["storage · upload", "ok"], ["onboarding · own_paper_saved", "running"]], "every request is a row, and the upload has its reply");
+  same([rows[3].ms, rows[3].code], [310, 200], "the upload's reply landed in the same turn as the next request and was not lost");
+  // Replies to the three arrive together too; two of them name traces.
+  P.response("rq-1", { trace_id: TRACE.step, body: { onboarding: { id: OB } } });
+  P.response("rq-2", { trace_id: TRACE.analysis, body: { onboarding: { id: OB }, analysis: { status: "running" } } });
+  P.response("rq-3", { ms: 90, body: { onboarding: { id: OB }, assets: { status: "running" } } });
+  P.response("rq-5", { ms: 40, body: { onboarding: { id: OB } } });
+  await settle();
+  rows = P.stages().filter((s) => s.observed);
+  same((rows.map((s) => [s.label, s.status, s.ops.length])), [["onboarding · step", "ok", 4], ["onboarding · analysis (run)", "ok", 13], ["onboarding · assets (run)", "ok", 0], ["storage · upload", "ok", 0], ["onboarding · own_paper_saved", "ok", 0]], "both traces were read and joined; the untraced replies kept theirs");
+  const reads = P.server.telemetry().map((c) => c.url);
+  assert.ok(reads.includes("/api/engelbart-telemetry?trace=" + TRACE.step) && reads.includes("/api/engelbart-telemetry?trace=" + TRACE.analysis));
+  assert.equal(reads.filter((u) => u === "/api/engelbart-telemetry?run=" + OB).length, 1, "the onboarding's history was read once, although four replies named it in one turn");
+  assert.equal(P.d.state.real.onboardingId, OB);
 });
 
 test("an expired session is said plainly, and nothing is read without a token", async () => {

@@ -291,7 +291,7 @@ class Debugger extends React.Component {
   // session: the member's session as this page reads it; frameSession: as the frame reported it; runs: the
   // member's runs for the picker; envelope: everything recorded for the onboarding this session is on, merged
   // trace by trace; requests: what the frame reported; picked/pickedEnvelope: an earlier run, when one is open.
-  freshReal() { return { session: undefined, frameSession: undefined, runs: null, loading: false, error: "", envelope: null, onboardingId: null, requests: [], picked: null, pickedEnvelope: null, fetching: {}, history: {}, seenAt: 0 }; }
+  freshReal() { return { session: undefined, frameSession: undefined, runs: null, loading: false, error: "", envelope: null, onboardingId: null, requests: [], picked: null, pickedEnvelope: null, history: {}, seenAt: 0 }; }
   // The one recording Real mode draws: this session (what was recorded for the onboarding before, then this
   // session's requests with their traces), or the earlier run picked from the list.
   realRecording(R) {
@@ -303,9 +303,13 @@ class Debugger extends React.Component {
   realRecordingState(R) { const rec = this.realRecording(R); if (!R.picked) rec.id = "real-current"; return { recordings: [rec], targetId: rec.id, viewing: 0 }; }
   // Redraw from the envelope and the requests. A request row keeps its open state and its selection when its
   // trace arrives and the row becomes the trace's root.
+  // `patch` is an object, or a function of the real state as it is when the update runs. Callers that derive
+  // the patch from what they read earlier lose updates: a request and a reply, or two replies, in one turn
+  // are separate messages, and React applies their updates together, after both handlers have run.
   rebuildReal(patch, after) {
     this.setState(s => {
-      const R = Object.assign({}, s.real, patch || {});
+      const add = typeof patch === "function" ? patch(s.real) : patch;
+      const R = Object.assign({}, s.real, add || {});
       const st = this.realRecordingState(R), rec = st.recordings[0];
       const open = Object.assign({}, s.open); let sel = s.sel;
       rec.stages.forEach(x => { if (x.real && x.requestId) { const k = "req:" + x.requestId; if (open[k] != null && open[x.id] == null) open[x.id] = open[k]; if (sel && sel.run === "live" && sel.stage === k) sel = { run: "live", stage: x.id, op: null }; } });
@@ -347,33 +351,37 @@ class Debugger extends React.Component {
   // A request the frame reported as it started: a row of its own until its trace arrives.
   requestStarted(m) {
     const rq = { id: m.id, at: m.at || Date.now(), method: m.method, path: m.path, where: m.where, action: m.action, request: m.body === undefined ? null : m.body, step: m.step || null, bg: !!m.bg, poll: !!m.poll, status: "running", code: null, ms: 0, response: null, trace_id: null, trace: null };
-    this.rebuildReal({ requests: this.state.real.requests.concat([rq]) });
+    this.rebuildReal(R => ({ requests: R.requests.concat([rq]) }));
   }
   // The reply: status, body and, for a traced action, the trace id to read. A reply that carries the
   // onboarding row names the onboarding this session is on.
   requestEnded(m) {
-    const R = this.state.real; const i = R.requests.findIndex(r => r.id === m.id); if (i < 0) return;
-    const rq = Object.assign({}, R.requests[i], { status: m.ok ? "ok" : "error", code: m.status || null, ms: m.ms || 0, response: m.body === undefined ? null : m.body, trace_id: m.trace_id || null, error: m.error || null, trace: m.trace_id ? "pending" : null });
-    const requests = R.requests.slice(); requests[i] = rq;
     const row = m.body && m.body.onboarding && m.body.onboarding.id ? String(m.body.onboarding.id) : null;
-    this.rebuildReal({ requests: requests }, () => {
+    let matched = false;
+    this.rebuildReal(R => {
+      const i = R.requests.findIndex(r => r.id === m.id); if (i < 0) return null;
+      matched = true;
+      const rq = Object.assign({}, R.requests[i], { status: m.ok ? "ok" : "error", code: m.status || null, ms: m.ms || 0, response: m.body === undefined ? null : m.body, trace_id: m.trace_id || null, error: m.error || null, trace: m.trace_id ? "pending" : null });
+      const requests = R.requests.slice(); requests[i] = rq; return { requests: requests };
+    }, () => {
+      if (!matched) return;
       if (row && row !== this.state.real.onboardingId) this.onboardingSeen(row);
-      if (rq.trace_id) this.fetchTrace(rq.trace_id, 0);
+      if (m.trace_id) this.fetchTrace(m.trace_id, 0);
     });
   }
   // The onboarding this session is on. What was recorded for it before this page opened is read once and
   // drawn ahead of this session's requests; the run list is refreshed so the picker knows it.
   onboardingSeen(id) {
-    const R = this.state.real;
-    if (R.history[id]) { this.setReal({ onboardingId: id }); return; }
-    const history = Object.assign({}, R.history); history[id] = "loading";
-    this.rebuildReal({ onboardingId: id, history: history });
+    // One read per row, whatever arrives while it is out: the guard is an instance field, not state.
+    this.rowLoads = this.rowLoads || {};
+    if (this.state.real.history[id] || this.rowLoads[id]) { this.setReal({ onboardingId: id }); return; }
+    this.rowLoads[id] = true;
+    this.rebuildReal(R => { const history = Object.assign({}, R.history); history[id] = "loading"; return { onboardingId: id, history: history }; });
     this.realToken().then(token => token ? this.realClient.run(token, id) : null).then(env => {
-      const h = Object.assign({}, this.state.real.history); h[id] = env ? "loaded" : "none";
-      this.rebuildReal(env ? { history: h, envelope: window.EGB_REAL.mergeEnvelope(this.state.real.envelope, env) } : { history: h });
+      this.rebuildReal(R => { const h = Object.assign({}, R.history); h[id] = env ? "loaded" : "none"; return env ? { history: h, envelope: window.EGB_REAL.mergeEnvelope(R.envelope, env) } : { history: h }; });
       if (env) this.loadRuns();
     }).catch(e => {
-      const h = Object.assign({}, this.state.real.history); h[id] = "failed"; this.rebuildReal({ history: h });
+      this.rebuildReal(R => { const h = Object.assign({}, R.history); h[id] = "failed"; return { history: h }; });
       if (!e || e.status !== 404) this.realFailed(e, "Could not read what was recorded for this onboarding before.");
     });
   }
@@ -385,7 +393,7 @@ class Debugger extends React.Component {
       if (!token) { const e = new Error("Sign in to Engelbart to read telemetry"); e.status = 401; throw e; }
       return this.realClient.trace(token, traceId);
     }).then(env => {
-      this.rebuildReal({ envelope: window.EGB_REAL.mergeEnvelope(this.state.real.envelope, env) }, () => this.markTrace(traceId, "loaded", null));
+      this.rebuildReal(R => ({ envelope: window.EGB_REAL.mergeEnvelope(R.envelope, env) }), () => this.markTrace(traceId, "loaded", null));
     }).catch(e => {
       if (e && e.status === 404 && attempt < DELAYS.length) { setTimeout(() => this.fetchTrace(traceId, attempt + 1), DELAYS[attempt]); return; }
       this.markTrace(traceId, "missing", e && e.status === 404 ? "The server recorded nothing under this trace id: telemetry may be off on this deployment, or its store did not take the write." : (e && e.message) || "The trace could not be read.");
@@ -393,7 +401,7 @@ class Debugger extends React.Component {
     });
   }
   markTrace(traceId, state, why) {
-    this.rebuildReal({ requests: this.state.real.requests.map(r => r.trace_id === traceId ? Object.assign({}, r, { trace: state, traceError: why || null }) : r) });
+    this.rebuildReal(R => ({ requests: R.requests.map(r => r.trace_id === traceId ? Object.assign({}, r, { trace: state, traceError: why || null }) : r) }));
   }
   // The picker: this session, or one of the member's earlier runs, opened in the same panel while the product
   // keeps running on the left. Requests made meanwhile are counted on the way back.
@@ -401,7 +409,7 @@ class Debugger extends React.Component {
     if (value === "__refresh") { this.loadRuns(); return; }
     if (value === "__current") { this.rebuildReal({ picked: null, pickedEnvelope: null, seenAt: 0 }, () => this.setState({ sel: null, open: {}, stick: true })); return; }
     const item = (this.state.real.runs || []).find(r => r.onboarding_id === value); if (!item) return;
-    this.rebuildReal({ picked: item, pickedEnvelope: null, loading: true, error: "", seenAt: this.state.real.requests.length }, () => this.setState({ sel: null, open: {}, stick: false }));
+    this.rebuildReal(R => ({ picked: item, pickedEnvelope: null, loading: true, error: "", seenAt: R.requests.length }), () => this.setState({ sel: null, open: {}, stick: false }));
     this.realToken().then(token => token ? this.realClient.run(token, item.onboarding_id) : null).then(env => {
       if (!this.state.real.picked || this.state.real.picked.onboarding_id !== item.onboarding_id) return; // moved on meanwhile
       this.rebuildReal({ pickedEnvelope: env, loading: false });
@@ -412,15 +420,18 @@ class Debugger extends React.Component {
   snapshot(id) {
     const rec = this.viewed(); if (!rec || !rec.real || !id) return { state: "none" };
     const s = window.EGB_REAL.snapshotOf(rec, id);
-    if (s.state === "pending" && !this.state.real.fetching[id]) {
-      const f = Object.assign({}, this.state.real.fetching); f[id] = true; this.setReal({ fetching: f });
+    this.snapshotLoads = this.snapshotLoads || {};
+    if (s.state === "pending" && !this.snapshotLoads[id]) {
+      this.snapshotLoads[id] = true;
       const key = this.state.real.picked ? "pickedEnvelope" : "envelope";
       const settle = (snap) => {
-        const env = this.state.real[key]; if (!env) return;
-        const snapshots = (env.snapshots || []).map(x => x.snapshot_id === id ? (snap || Object.assign({}, x, { content: null, content_omitted: false, unavailable: true })) : x);
-        const patch = {}; patch[key] = Object.assign({}, env, { snapshots: snapshots }); this.rebuildReal(patch);
+        this.rebuildReal(R => {
+          const env = R[key]; if (!env) return null;
+          const snapshots = (env.snapshots || []).map(x => x.snapshot_id === id ? (snap || Object.assign({}, x, { content: null, content_omitted: false, unavailable: true })) : x);
+          const patch = {}; patch[key] = Object.assign({}, env, { snapshots: snapshots }); return patch;
+        });
       };
-      this.realToken().then(token => token ? this.realClient.snapshot(token, id) : null).then(body => settle(body && body.snapshot), () => settle(null));
+      this.realToken().then(token => token ? this.realClient.snapshot(token, id) : null).then(body => settle(body && body.snapshot), () => settle(null)).then(() => { delete this.snapshotLoads[id]; });
     }
     return s;
   }
