@@ -232,6 +232,13 @@ class Telemetry {
   // runOperation; `level` overrides the central default (levelOf).
   startOperation(spec) {
     if (this.suppressed()) return new NoopOperation();
+    // Every trace has a workflow root. A database, storage, http, model or
+    // processing operation started with no operation above it is untraced:
+    // the shared boundaries (supabase.js, storage.js, page-fetch.js,
+    // onboarding-model.js) serve every endpoint, and an endpoint that opens
+    // no workflow and awaits no flush would otherwise leave rootless,
+    // half-written traces behind.
+    if (spec.type !== "workflow" && !spec.parent && !this.current()) return new NoopOperation();
     try {
       const { trace, context } = this.otel.api;
       let ctx = context.active();

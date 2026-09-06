@@ -124,6 +124,17 @@ everything else → `stage`. A caller may pass `level` explicitly in the spec of
 operation; an explicit `workflow`/`stage`/`detail` wins, an unknown value falls
 back to the default. Events carry the same `level` as their operation.
 
+### Every trace has a workflow root
+
+A `database`, `storage`, `http`, `model` or `processing` operation started
+with no operation above it is untraced: no Operation, Event or Snapshot is
+produced and the work runs unchanged. The boundaries are shared by every
+Engelbart endpoint, but only `api/engelbart-onboarding.js` opens an
+`onboarding.<action>` workflow and awaits the flush; other endpoints therefore
+record nothing rather than rootless, partially written traces. Instrumenting
+another endpoint means giving it a workflow root and a pre-response flush, not
+changing the boundaries.
+
 ### Attribute namespaces
 
 - `engelbart.*` — application metadata: `run_id`, `onboarding_id`, `test_run_id`, `action`, `user_hash`, `poll`, `retry`, `outcome`, `model.*`, `db.*`, `storage.*`, `analysis.*`, `links.*`, `link.verdict`, `page.*`.
