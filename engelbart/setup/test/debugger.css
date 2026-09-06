@@ -1,0 +1,32 @@
+/* The Engelbart debugger, flattened from the Claude Design file
+ * "Engelbart Debugger.dc.html". Layout and colour live inline in debugger.js,
+ * the way the design wrote them; this file carries what inline styles cannot:
+ * the page reset and the design's style-hover / style-focus rules. Those need
+ * !important because an inline style would otherwise beat a class rule. */
+html, body { margin: 0; height: 100%; background: #fff; color: #171717; }
+a { color: #171717; }
+a:hover { color: #4d4d4d; }
+::selection { background: #dbe8fd; }
+pre { margin: 0; }
+button { font-family: inherit; cursor: pointer; }
+input, textarea, select { font-family: inherit; }
+input::placeholder, textarea::placeholder { color: #8f8f8f; opacity: 1; }
+#debugger { height: 100%; }
+#debugger .unavailable { padding: 32px; font: 14px/1.6 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #4d4d4d; max-width: 560px; }
+
+/* style-hover */
+.hv-ink:hover { color: #171717 !important; }
+.hv-ink-line:hover { color: #171717 !important; border-color: #c9c9c9 !important; }
+.hv-ink-line-fill:hover { color: #171717 !important; border-color: #c9c9c9 !important; background: #f2f2f2 !important; }
+.hv-fafafa:hover { background: #fafafa !important; }
+.hv-f5:hover { background: #f5f5f5 !important; color: #171717 !important; }
+.hv-dim:hover { opacity: 0.86 !important; }
+.hv-red:hover { color: #e70022 !important; }
+.hv-red-line:hover { color: #e70022 !important; border-color: #e70022 !important; }
+.hv-line-ink:hover { border-color: #171717 !important; }
+
+/* style-focus */
+.fc-blue:focus { border-color: #0070f3 !important; background: #fff !important; }
+.fc-blue-line:focus { border-color: #0070f3 !important; }
+.fc-bottom-grey:focus { border-bottom-color: #c9c9c9 !important; }
+.fc-bottom-blue:focus { border-bottom-color: #0070f3 !important; }

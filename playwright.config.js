@@ -16,7 +16,7 @@ module.exports = defineConfig({
   projects: [
     {
       name: "chromium-e2e",
-      testMatch: ["browser-cli-browser.spec.js", "browser-compatibility.spec.js"],
+      testMatch: ["browser-cli-browser.spec.js", "browser-compatibility.spec.js", "debugger.spec.js"],
       use: { ...devices["Desktop Chrome"] },
     },
     {

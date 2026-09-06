@@ -283,6 +283,9 @@ class SimulationStack {
     if (!relative) relative = "index.html";
     if (relative.endsWith("/")) relative += "index.html";
     if (relative === "engelbart/setup") relative = "engelbart/setup/index.html";
+    // The debugger's clean URLs, as vercel.json serves them.
+    if (relative === "engelbart/setup/test") relative = "engelbart/setup/test/index.html";
+    if (relative === "engelbart/setup/test/frame") relative = "engelbart/setup/test/frame.html";
     if (relative === "engelbart") relative = "engelbart/index.html";
     const file = path.resolve(ROOT, relative);
     if (file !== ROOT && !file.startsWith(`${ROOT}${path.sep}`)) {
