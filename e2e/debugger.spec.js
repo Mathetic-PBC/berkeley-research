@@ -180,14 +180,17 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(simFrame.locator(".ob-title", { hasText: "What is your name?" })).toBeVisible();
     const before = onboardingCalls.length;
 
-    // Switching to Real keeps the composition: the product stays on the left, in the real frame; the simulator's controls go.
-    await page.getByRole("button", { name: "Real", exact: true }).click();
+    // Real mode is the URL's, not a switch in the page. It keeps the composition: the product stays on the left,
+    // in the real frame; the simulator's controls go, and nothing in the bar offers a mode.
+    await expect(page.getByRole("button", { name: "Real", exact: true })).toHaveCount(0);
+    await page.goto(`${stack.url}/engelbart/setup/test?mode=real`);
     const realFrame = page.frameLocator('iframe[title="Engelbart setup, running against the real backend"]');
     await expect(page.locator('iframe[title="Engelbart setup, running against the real backend"]')).toHaveAttribute("src", /\/engelbart\/setup\/test\/frame\?mode=real$/);
     await expect(page.locator("iframe")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Reset test environment" })).toHaveCount(0);
-    await expect(page.getByText("real actions")).toBeVisible();
-    await expect(page.getByText(/Model calls spend real credit/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Simulated" })).toHaveCount(0);
+    await expect(page.getByText("real actions")).toHaveCount(0);
+    await expect(page.getByText(/Model calls spend real credit/)).toHaveCount(0);
     await expect(page.locator("[data-run-picker]")).toBeVisible();
     await expect(page.getByText("member@example.com")).toBeVisible();
 
@@ -291,7 +294,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(page.getByText("Lineage was not recorded for this run")).toHaveCount(0);
     await page.getByRole("button", { name: /^Requests/ }).click();
 
-    // The mode is remembered across a reload; the product boots again against the real backend.
+    // The URL keeps the mode across a reload; the product boots again against the real backend.
     const calls = onboardingCalls.length;
     await page.reload();
     await expect(page.locator('iframe[title="Engelbart setup, running against the real backend"]')).toBeVisible();
@@ -300,9 +303,9 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect.poll(() => onboardingCalls.length).toBeGreaterThan(calls);
     await expect(page.locator("[id^=stage-]", { hasText: "onboarding · open" }).last()).toContainText("4 ops");
 
-    // And back to the simulator: after a reload nothing is open, so the dashboard shows the environment, and
-    // opening it boots the product exactly as before.
-    await page.getByRole("button", { name: "Simulated" }).click();
+    // And back at the plain URL: nothing is open, so the dashboard shows the environment, and opening it boots
+    // the product exactly as before.
+    await page.goto(`${stack.url}/engelbart/setup/test`);
     await expect(page.getByText("Test environments")).toBeVisible();
     await expect(page.getByRole("button", { name: "Reset test environment" })).toHaveCount(0);
     await page.getByText("Environment 1", { exact: true }).click();
