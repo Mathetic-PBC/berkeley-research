@@ -240,6 +240,10 @@ async function analyze(input, credentials, options = {}) {
       "engelbart.analysis.urls": Array.isArray(input.urls) ? input.urls.length : 0,
       "engelbart.analysis.paper_mode": input.pdfBase64 ? "pdf_base64" : "text",
       "engelbart.analysis.pdf_base64_chars": input.pdfBase64 ? String(input.pdfBase64).length : undefined,
+      // The paper this request carries, as the download recorded it: same id, same bytes, same hash.
+      "engelbart.paper.id": input.paperId || undefined,
+      "engelbart.analysis.pdf_sha256": input.pdfSha256 || undefined,
+      "engelbart.analysis.pdf_bytes": input.pdfBytes || undefined,
       "engelbart.analysis.familiarity": input.familiarityLabel,
       "engelbart.analysis.depth": input.depthLabel,
     },

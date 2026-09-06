@@ -4,21 +4,30 @@
  * the credit read and LiteLLM ledger refresh, every Supabase read and write,
  * the Storage download, the model call with its cached paper prefix, the
  * link checks. Each operation is emitted to a tracer as it runs, with
- * sanitized inputs and outputs. Model replies come from debugger/fixture.js.
+ * sanitized inputs and outputs. Model replies come from a test case in
+ * fixture.js (EGB_FIXTURES): the simulated model never reads the uploaded
+ * PDF, and every operation that would have says so in what it emits.
  *
- *   var sim = EngelbartSim.create({ emit, speed, knobs, persist })
+ *   var sim = EngelbartSim.create({ emit, speed, knobs, persist, fixture })
  *   sim.handle(url, init) -> Promise<{ ok, status, json() }>
  *   sim.local(name, input, output)   // a client-side step worth a row
  *   sim.setSpeed(x); sim.reset(); sim.knobs
  */
 (function () {
   "use strict";
-  var FX = window.EGB_FIXTURE, PR = window.EGB_PROMPTS;
+  var FIXTURES = window.EGB_FIXTURES, PR = window.EGB_PROMPTS;
+  // The test case to answer from: by id, or the default. An unknown id is an error, not a silent default,
+  // so a debugger URL that names a case that is not there does not quietly run another.
+  function fixtureOf(id) {
+    var key = id == null || id === "" ? window.EGB_DEFAULT_FIXTURE : String(id);
+    if (!FIXTURES || !FIXTURES[key]) throw new Error("No simulated test case named “" + key + "”");
+    return FIXTURES[key];
+  }
   // The real prompt text for one call, with the environment's edits if it made any.
   function promptText(key, vars, knobs) { return PR.render(key, vars, knobs.prompts || null); }
-  var USER = FX.USER;
+  var USER = window.EGB_FIXTURE.USER;
   var DEPTHS = ["everyday", "some", "technical", "expert"];
-  var LEVELS = FX.LEVELS;
+  var LEVELS = window.EGB_FIXTURE.LEVELS;
   var SUPA = "https://sim.supabase.local";
   var LITELLM = "https://engelbart-litellm.up.railway.app";
   var MODEL_ID = { sonnet: "claude-sonnet-4-5-20250929", haiku: "claude-haiku-4-5-20251001" };
@@ -136,8 +145,12 @@
     var speed = opts.speed == null ? 1 : opts.speed;
     var knobs = Object.assign({}, DEFAULT_KNOBS, opts.knobs || {});
     var persist = opts.persist || null;
+    var fixture = fixtureOf(opts.fixture), FX = fixture.data;
     var seq = 0, stageSeq = 0, BOOT = Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(2, 5);
     var db = (opts.seed ? clone(opts.seed) : null) || load() || fresh();
+    // A record belongs to the test case it was made with: one answered from another case starts over.
+    if (db.fixture && db.fixture !== fixture.id) db = fresh();
+    db.fixture = fixture.id;
     // A configured participant: the account has finished a setup before, so the profile is on record and
     // the next setup starts at the paper with their links and familiarity already filled in.
     var participant = opts.participant || null;
@@ -156,7 +169,7 @@
     seedParticipant();
 
     function fresh() {
-      return { n: 0, onboardings: [], calibrations: [], turns: [], asks: [], profiles: [], papers: [], codes: [],
+      return { n: 0, fixture: fixture.id, onboardings: [], calibrations: [], turns: [], asks: [], profiles: [], papers: [], codes: [],
         credit: { user_id: USER.id, email: USER.email, status: "ready", blocked: false, budget_usd: 25, spend_usd: 0.4187, models: ["all-proxy-models"], synced_at: null } };
     }
     function load() { if (!persist) return null; try { var raw = window.localStorage.getItem(persist); return raw ? JSON.parse(raw) : null; } catch (e) { return null; } }
@@ -218,7 +231,8 @@
       var p = PRICE[family];
       var cost = (io.input || 0) * p.input / 1e6 + (io.output || 0) * p.output / 1e6 + (io.cache_read || 0) * p.cache_read / 1e6 + (io.cache_write || 0) * p.cache_write / 1e6 + (io.web_searches || 0) * SEARCH_PRICE;
       db.credit.spend_usd = Math.round((db.credit.spend_usd + cost) * 10000) / 10000;
-      return { family: family, model: MODEL_ID[family], tokens: io, cost: cost, lat: io.lat };
+      // Every simulated model answer is the test case's saved output: the meta says which, on each call.
+      return { family: family, model: MODEL_ID[family], tokens: io, cost: cost, lat: io.lat, answered_from: "fixture " + fixture.id };
     }
     function modelRequest(family, content, maxTokens, extra) {
       var body = { model: MODEL_ID[family], max_tokens: maxTokens, messages: [{ role: "user", content: content }] };
@@ -387,10 +401,13 @@
       if (row[prefix + "_status"] !== "running") return false;
       return Date.now() - (Date.parse(row[prefix + "_started_at"] || "") || 0) < RUNNING_STALE_MS;
     }
+    // What every simulated model answer says about itself: the saved output of the test case, not a reading of the file.
+    function fixtureNote() { return "the test case “" + fixture.name + "” (" + fixture.id + "): saved model output; the uploaded PDF is not read"; }
     function downloadPaper(ctx, row) {
       var paper = db.papers.filter(function (p) { return p.id === row.paper_id; })[0];
       return ctx.op("storage", "download paper (service role)", "GET " + SUPA + "/storage/v1/object/berkeley-papers/papers/" + row.paper_id + ".pdf", { maxBytes: 20971520, headers: { Authorization: "Bearer <service_role>" } },
-        function () { return { bytes: paper ? paper.bytes : 1998042, content_type: "application/pdf" }; });
+        function () { return { object: "papers/" + row.paper_id + ".pdf", uploaded_file: paper ? paper.file || paper.title : null, bytes: paper ? paper.bytes : fixture.bytes, content_type: "application/pdf",
+          simulated: "the object's bytes are not read; the model answers from the test case “" + fixture.name + "”" }; });
     }
     function supersededBy(ctx, row, paperId) {
       return ctx.op("db", "select engelbart_onboardings (superseded?)", "GET /rest/v1/engelbart_onboardings?id=eq." + row.id + "&select=id,paper_id&limit=1", {}, function () { return [{ id: row.id, paper_id: row.paper_id }]; })
@@ -438,7 +455,7 @@
           var content = paperPrefix().concat([{ type: "text", text: promptText("analyzePrompt", { familiarityLabel: (PR.FAMILIARITY[Number(row.paper_familiarity) || 0]).label, familiarityDesc: (PR.FAMILIARITY[Number(row.paper_familiarity) || 0]).desc, depthLabel: (PR.depthOf(row.depth) || PR.DEPTHS[0]).label, depthDesc: (PR.depthOf(row.depth) || PR.DEPTHS[0]).desc, urls: pages.length ? pages.map(function (p) { return p.url + "\n(" + p.chars + " characters of fetched page text)"; }).join("\n\n") : "" }, knobs) }]);
           var tok = io({ input: 1900 + pages.reduce(function (n, p) { return n + Math.round(p.chars / 4); }, 0), output: 3400 }, paperIO(true));
           return ctx.op("model", "analyze the paper", "sonnet · 8192 max tokens · paper as cached document", modelRequest("sonnet", content, 8192, { key: "analyzePrompt", timeoutMs: 100000, prompt: "analyzePrompt (the founder's diagnostic, kept verbatim): read the paper, pick 2–4 areas of prior knowledge that change how the project is explained, and for each write a ladder of five questions with sample answers, one per stop of familiarity.",
-              context: { paper: "the PDF as a document block, base64, " + (knobs.cachePaper ? "cache_control ephemeral (shared with the asset hunt)" : "no cache_control"), project_pages: pages.length ? pages.map(function (p) { return p.url + " · " + p.chars + " chars of fetched text"; }) : "(none supplied)", paper_familiarity: P_FAM[Number(row.paper_familiarity) || 0], register: row.depth, not_included: "name, year, major, grades (none exist yet)" } }),
+              context: { paper: "the PDF as a document block, base64, " + (knobs.cachePaper ? "cache_control ephemeral (shared with the asset hunt)" : "no cache_control"), answered_from: fixtureNote(), project_pages: pages.length ? pages.map(function (p) { return p.url + " · " + p.chars + " chars of fetched text"; }) : "(none supplied)", paper_familiarity: P_FAM[Number(row.paper_familiarity) || 0], register: row.depth, not_included: "name, year, major, grades (none exist yet)" } }),
             function () { var a = clone(FX.PAPER); a.areas.forEach(function (x) { delete x.keywords; }); return a; },
             modelMeta("sonnet", Object.assign(tok, { lat: "analyze" })));
         }).then(function () {
@@ -836,7 +853,7 @@
         if (action === "own_paper") {
           var id;
           return ctx.op("db", "rpc engelbart_curator_upsert_paper", "POST /rest/v1/rpc/engelbart_curator_upsert_paper · an unlisted paper owned by this member", { p_title: one(body.title, 200), p_owner: USER.id, p_listed: false },
-            function () { id = uid("paper"); db.papers.push({ id: id, title: one(body.title, 200), bytes: 0, owner: USER.id, pdf_path: "" }); save(); return { id: id }; })
+            function () { id = uid("paper"); db.papers.push({ id: id, title: one(body.title, 200), file: one(body.title, 200) + ".pdf", bytes: 0, owner: USER.id, pdf_path: "" }); save(); return { id: id }; })
             .then(function () { return ctx.op("storage", "sign an upload URL", "POST " + SUPA + "/storage/v1/object/upload/sign/berkeley-papers/papers/" + id + ".pdf · x-upsert: true", { headers: { Authorization: "Bearer <service_role>" } }, function () { return { url: "/object/upload/sign/berkeley-papers/papers/" + id + ".pdf?token=••••" }; }); })
             .then(function () { return ctx.op("processing", "ownPaperToken", "HMAC-SHA256(paper_id · user_id) — proof this member made this paper just now", { paper_id: id, user_id: USER.id }, function () { return { token: "hmac-••••" }; }); })
             .then(function () { return { id: id, token: "hmac-" + hash(id).toString(16), upload: { uploadUrl: SUPA + "/storage/v1/object/upload/sign/berkeley-papers/papers/" + id + ".pdf?token=sim", anonKey: "anon" } }; });
@@ -896,8 +913,8 @@
     function isSim(url) { var u = String(url); return /^\/api\//.test(u) || u.indexOf(SUPA) === 0; }
 
     return { handle: handle, local: local, isSim: isSim, knobs: knobs, setSpeed: function (x) { speed = x; }, setPrompts: function (p) { knobs.prompts = p && typeof p === "object" ? p : null; }, reset: function () { db = fresh(); seedParticipant(); save(); },
-      state: function () { return clone(db); }, USER: USER, DEFAULT_KNOBS: DEFAULT_KNOBS };
+      state: function () { return clone(db); }, USER: USER, DEFAULT_KNOBS: DEFAULT_KNOBS, fixture: { id: fixture.id, name: fixture.name, file: fixture.file } };
   }
 
-  window.EngelbartSim = { create: create, redact: redact, DEFAULT_KNOBS: DEFAULT_KNOBS, FLOW: { nodes: NODES, edges: EDGES }, FIELD_NODE: FIELD_NODE };
+  window.EngelbartSim = { create: create, redact: redact, fixtureOf: fixtureOf, DEFAULT_KNOBS: DEFAULT_KNOBS, FLOW: { nodes: NODES, edges: EDGES }, FIELD_NODE: FIELD_NODE };
 })();

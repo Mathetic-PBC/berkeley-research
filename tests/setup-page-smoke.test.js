@@ -367,6 +367,43 @@ test("an accepted paper starts the reading and moves on without waiting for it",
   assert.equal(one(page.app, "ob-reading"), undefined, "and stops saying so once it is");
 });
 
+// A second paper accepted while the first's reading is still on the page: the
+// page drops every copy of the first paper's results the moment the server
+// accepts the second, so nothing of paper A is drawn while B is being read.
+test("accepting another paper drops the page's copies of the first paper's reading, fit and plan before the new reading lands", async () => {
+  let release = null;
+  const held = new Promise((resolve) => { release = resolve; });
+  const NEW = { title: "TutorTrace", one_liner: "Traces of tutoring.", date: "2026", areas: [{ index: 0, area: "Tutoring logs", parent_field: "", project_role: "core", granularity_rationale: "g", questions: five() }] };
+  const page = mount({
+    row: fullRow({ step: 4 }),
+    replies: { analysis: () => held.then(() => ({ ok: true, status: 200, json: () => Promise.resolve({ analysis_status: "done", analysis: NEW }) })) },
+  });
+  await settle();
+  assert.equal(page.title(), "Which paper are you building on?");
+  assert.equal(textOf(one(page.app, "ob-file-name")), "Zebra Tuning", "paper A is on the step");
+  byClass(page.app, "ob-link").find((b) => textOf(b) === "Replace").fire("click");
+  await settle();
+  const chooser = one(page.app, "ob-hide");
+  chooser.files = [{ name: "TutorTrace.pdf", type: "application/pdf", size: 2048 }];
+  chooser.fire("change");
+  await settle();
+  assert.equal(textOf(one(page.app, "ob-file-name")), "TutorTrace", "paper B replaces it on the step");
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.title(), "Which computer are you on?");
+  assert.ok(one(page.app, "ob-reading"), "the new reading is under way");
+  // Every later save carries what the page holds; none of it may be paper A's.
+  const saved = page.bodies.filter((b) => b.action === "step").pop();
+  assert.equal(saved.step, 5);
+  const rail = textOf(page.app);
+  assert.equal(rail.includes("Zebra Tuning"), false, "paper A's title is nowhere on the page");
+  assert.equal(rail.includes("Pose viewer"), false, "nor its resources");
+  assert.equal(rail.includes("Pose to angles"), false, "nor its plan");
+  release();
+  await settle();
+  assert.equal(one(page.app, "ob-reading"), undefined);
+});
+
 test("a refused paper keeps the reader on the paper step, with the reason", async () => {
   const page = mount({
     row: fullRow({ step: 4, analysis: null, analysis_status: "none" }),

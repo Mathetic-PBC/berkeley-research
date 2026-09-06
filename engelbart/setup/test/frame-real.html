@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Engelbart setup · debugger frame (real backend)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/engelbart/setup/setup.css">
+</head>
+<body>
+  <!-- The real backend's frame: the product's own scripts and the observer, and nothing of the
+       simulator. No fixture.js, no sim-backend.js: nothing here can answer in the model's place. -->
+  <div class="ob" id="app"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js" integrity="sha384-yiVMs0R/Jyz7OhoXa/DsEMUSBLjEhr/QJta2ONO+zB6I8/GmNg/7AUFrZmAJV7KV" crossorigin="anonymous"></script>
+  <script src="/engelbart/setup/test/frame.js"></script>
+  <script src="/engelbart/setup/install.js"></script>
+  <script src="/engelbart/setup/setup.js"></script>
+</body>
+</html>

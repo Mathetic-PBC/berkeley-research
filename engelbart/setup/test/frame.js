@@ -1,22 +1,34 @@
 /* The real setup page (setup.js, install.js, setup.css, unmodified) inside the
- * debugger, in one of two modes named on the URL.
+ * debugger, on one of two backends named on the URL. Each is an adapter of its
+ * own, and there is no path from one to the other: nothing the real backend
+ * fails to do is answered by the simulator, and nothing the simulator answers
+ * is a reading of the uploaded file.
  *
- * Simulated (the default): fetch() to /api and to the fake Supabase host is
- * answered in-page by sim-backend.js, supabase-js is replaced by a session that
- * is always signed in, and every simulated operation is posted to the parent.
+ * SimulatedBackend (frame.html, the default): fetch() to /api and to the fake
+ * Supabase host is answered in-page by sim-backend.js from one saved test case
+ * (fixture.js, EGB_FIXTURES, chosen by ?fixture=), supabase-js is replaced by
+ * a session that is always signed in, and every simulated operation is posted
+ * to the parent. The test case is named in the ready message, so the debugger
+ * can say on screen what the answers are.
  *
- * Real (?mode=real): nothing is replaced and, with one addition, nothing is
- * intercepted: the page's own fetch is watched, and the edited prompts the
- * debugger chose for this run ride along on the model actions
- * (`prompt_overrides`), for the member's own onboarding. The page boots on the
- * pinned supabase-js, reads the member's own session from this origin's
- * storage, and talks to the real endpoints, which do real work: model calls
- * spend credit, writes land in the member's onboarding, uploads go to Storage.
- * What this file adds is observation only: each request the page makes to
- * /api or to Storage is reported to the parent as it starts and as it ends,
- * with the trace id the server names in its reply (x-engelbart-trace-id), so
- * the debugger can read that trace's telemetry and put it under the request.
- * Bodies are redacted here, before they leave the frame.
+ * RealBackend (frame-real.html, ?mode=real): nothing is replaced and, with one
+ * addition, nothing is intercepted: the page's own fetch is watched, and the
+ * edited prompts the debugger chose for this run ride along on the model
+ * actions (`prompt_overrides`), for the member's own onboarding. The page
+ * boots on the pinned supabase-js, reads the member's own session from this
+ * origin's storage, and talks to the real endpoints, which do real work: model
+ * calls spend credit, writes land in the member's onboarding, uploads go to
+ * Storage and are read back by the model. What this file adds is observation
+ * only: each request the page makes to /api or to Storage is reported to the
+ * parent as it starts and as it ends, with the trace id the server names in
+ * its reply (x-engelbart-trace-id), so the debugger can read that trace's
+ * telemetry and put it under the request. Bodies are redacted here, before
+ * they leave the frame. A failure is reported as the failure it was.
+ *
+ * The real page loads no fixture and no simulator. Should one be present all
+ * the same (frame.html opened with ?mode=real, say), the real backend refuses
+ * to boot rather than run beside it: every /api request is failed with a
+ * message that says why.
  *
  * In both modes the parent is the debugger page on this same origin. */
 (function () {
@@ -29,6 +41,8 @@
   var promptOverrides = null;
   var speed = Number(params.get("speed") || 1);
   var sim = null;
+  // What the parent is told about the backend on ready: which adapter, and for the simulator, which test case.
+  var backend = null;
 
   /* Anything that could be a credential is replaced before a body is posted:
    * by the name of the field it sits in, or by its shape. The same names the
@@ -53,12 +67,18 @@
     return v;
   }
 
-  if (MODE === "sim") {
-    // One simulated account per test environment: the record lives under the environment's key.
+  // The simulator's globals: what the simulated backend needs, and what the real one must not find.
+  function simulatorPresent() { return !!(window.EngelbartSim || window.EGB_FIXTURE || window.EGB_FIXTURES); }
+
+  /* SimulatedBackend: one simulated account per test environment, answered from one test case. */
+  function SimulatedBackend() {
+    if (!window.EngelbartSim || !window.EGB_FIXTURES) return refuse("sim", "The simulator did not load; this frame cannot simulate anything.");
     var env = String(params.get("env") || "default").replace(/[^A-Za-z0-9_-]/g, "");
     var participant = null; try { participant = params.get("p") ? JSON.parse(params.get("p")) : null; } catch (e) { participant = null; }
-    sim = window.EngelbartSim.create({ persist: "egb.sim.db." + env, speed: speed, recordRaw: true, participant: participant,
-      emit: function (ev) { post({ egb: "trace", event: ev }); } });
+    try {
+      sim = window.EngelbartSim.create({ persist: "egb.sim.db." + env, speed: speed, recordRaw: true, participant: participant, fixture: params.get("fixture") || null,
+        emit: function (ev) { post({ egb: "trace", event: ev }); } });
+    } catch (e) { return refuse("sim", String(e && e.message || e)); }
     var simFetch = window.fetch.bind(window);
     window.fetch = function (url, init) { return sim.isSim(url) ? sim.handle(url, init) : simFetch(url, init); };
     var session = { access_token: "eyJ" + "sim".repeat(20), user: sim.USER };
@@ -69,9 +89,36 @@
       },
       onAuthStateChange: function () { return { data: { subscription: { unsubscribe: function () {} } } }; }
     } }; } };
-  } else {
-    observeReal();
+    return { name: "SimulatedBackend", fixture: sim.fixture };
   }
+
+  /* RealBackend: the page's own fetch and session, watched and never answered here. */
+  function RealBackend() {
+    if (simulatorPresent()) return refuse("real", "Real mode refused to start: simulator scripts (fixture.js or sim-backend.js) are loaded in this frame. Open the real frame page, which loads neither.");
+    observeReal();
+    return { name: "RealBackend", fixture: null };
+  }
+
+  /* A backend that cannot be what the URL asked for does not become the other one: every /api request
+   * and every Storage request fails with the reason, the page shows that error, and the parent is told. */
+  function refuse(mode, why) {
+    window.fetch = function () { return Promise.reject(new Error(why)); };
+    window.supabase = { createClient: function () { return { auth: {
+      getSession: function () { return Promise.reject(new Error(why)); },
+      onAuthStateChange: function () { return { data: { subscription: { unsubscribe: function () {} } } }; } } }; } };
+    // The product's own error screen shows the reason (its first request fails with it); this note stays
+    // beside it, outside the container the product redraws.
+    try {
+      var note = document.createElement("div");
+      note.setAttribute("data-egb-refused", mode);
+      note.style.cssText = "margin:24px;padding:14px 16px;border:1px solid #e70022;border-radius:8px;font:13px/1.5 system-ui,sans-serif;color:#171717";
+      note.textContent = why;
+      document.body.appendChild(note);
+    } catch (e) { /* no document to write into; the fetch failure carries the reason */ }
+    return { name: mode === "real" ? "RealBackend" : "SimulatedBackend", fixture: null, refused: why };
+  }
+
+  backend = MODE === "real" ? RealBackend() : SimulatedBackend();
 
   /* Real mode: the page's own fetch, watched. Only same-origin /api requests and
    * the browser's PUT of a paper to Storage are reported; anything else (fonts,
@@ -154,11 +201,6 @@
     }
   }
 
-  function fixturePdf() {
-    var head = "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >> endobj\n";
-    var pad = new Uint8Array(1998042 - head.length - 6); // the fixture paper weighs 1.9 MB
-    return new File([head, pad, "%%EOF\n"], "Inspectable Intent in Agentic Programming.pdf", { type: "application/pdf" });
-  }
   function notice(text) { post({ egb: "notice", text: text }); }
 
   /* Triggers: a button in the product that starts a new recording when it is
@@ -207,23 +249,15 @@
       // nothing to speed up, and no record to reset, because the record is the member's real onboarding.
       if (m.cmd === "prompts") { promptOverrides = m.value && typeof m.value === "object" && !Array.isArray(m.value) && Object.keys(m.value).length ? m.value : null; return; }
       if (m.cmd === "snapshot") post({ egb: "snapshot", state: null });
-      if (m.cmd === "reset" || m.cmd === "dropFixture" || m.cmd === "speed") notice("That is a simulator control; it does nothing in Real mode.");
+      if (m.cmd === "reset" || m.cmd === "speed") notice(backend.refused ? "The frame refused to start: " + backend.refused : "That is a simulator control; it does nothing in Real mode.");
       return;
     }
     if (m.cmd === "speed") sim.setSpeed(Number(m.value));
     if (m.cmd === "prompts") sim.setPrompts(m.value);
     if (m.cmd === "snapshot") post({ egb: "snapshot", state: sim.state() });
     if (m.cmd === "reset") { sim.reset(); window.location.reload(); }
-    if (m.cmd === "dropFixture") {
-      var drop = document.querySelector(".ob-drop");
-      if (!drop) { notice("The Paper step is not on screen; the fixture paper can only be dropped there."); return; }
-      try {
-        var dt = new DataTransfer(); dt.items.add(fixturePdf());
-        drop.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
-      } catch (err) { notice("This browser would not let the page synthesize a drop: " + err.message); }
-    }
   });
-  post({ egb: "ready", speed: speed, mode: MODE });
+  post({ egb: "ready", speed: speed, mode: MODE, backend: backend.name, fixture: backend.fixture, refused: backend.refused || null });
 
   /* Which step is on screen. setup.js marks the rail's active row; the Done screen has no rail
    * row, so it is read from its own heading. Reported whenever it changes. */

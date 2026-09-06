@@ -15,7 +15,7 @@ const SetupChat = require("./setup-chat");
 const Lineage = require("./lineage");
 const { deleteRows, insertRows, patchRows, selectRows, rpc } = require("./supabase");
 const { telemetry } = require("./telemetry");
-const { hostOf, safeUrl } = require("./telemetry/redaction");
+const { hostOf, safeUrl, sha256 } = require("./telemetry/redaction");
 
 const TABLE = "engelbart_onboardings";
 const CALIBRATIONS = "engelbart_onboarding_calibrations";
@@ -271,6 +271,9 @@ async function supersededBy(row, paperId, options, name = "check-superseded") {
 // `traced` so the graph reads "analysis.persist" where the code says patch.
 async function runAnalysis(user, row, credentials, options) {
   const mine = row.paper_id;
+  // The workflow names the paper it reads, so a trace ties its download, its request and its result to one id.
+  const workflow = telemetry.current();
+  if (workflow) workflow.setAttribute("engelbart.paper.id", mine);
   await patch(row, { analysis_status: "running", analysis_started_at: new Date().toISOString(), analysis_error: "" },
     traced(options, "analysis.mark-running"));
   try {
@@ -289,11 +292,14 @@ async function runAnalysis(user, row, credentials, options) {
     const analysis = await OM.analyze({
       familiarityLabel: familiarity.label, familiarityDesc: familiarity.desc,
       depthLabel: depth.label, depthDesc: depth.desc,
-      pdfBase64: pdf.toString("base64"),
+      pdfBase64: pdf.toString("base64"), pdfSha256: sha256(pdf), pdfBytes: pdf.length, paperId: mine,
       urls,
     }, credentials, options);
     if (await supersededBy(row, mine, options, "analysis.check-superseded")) return { analysis_status: outcome("superseded") };
     await patch(row, { analysis, analysis_status: "done", paper_title: analysis.title }, traced(options, "analysis.persist"));
+    // What was stored, on the workflow: the new title, one-liner and areas, beside the paper id they came from.
+    if (workflow) workflow.setAttributes({ "engelbart.analysis.title": one(analysis.title, 120), "engelbart.analysis.one_liner": one(analysis.one_liner, 300),
+      "engelbart.analysis.areas": (analysis.areas || []).map((a) => one(a.area, 80)) });
     return { analysis_status: outcome("done"), analysis };
   } catch (error) {
     if (await supersededBy(row, mine, options, "analysis.check-superseded")) return { analysis_status: outcome("superseded") };
@@ -328,14 +334,29 @@ async function sources(user, row, body, credentials, options = {}) {
   }
   const familiarity = Number(body.paper_familiarity);
   if (!Number.isInteger(familiarity) || familiarity < 0 || familiarity > 4) throw fail("Say how familiar you are with the paper", 400);
+  // Everything derived from a paper goes with the paper: the reading, the
+  // hunt, the fit, the plan, and the rows that answered questions about it.
   // `analysis_started_at` goes with the status: a run that was in flight for
-  // the old paper must leave no trace that reads as this paper's run.
-  await patch(row, { paper_id: paperId, project_url: optionalUrl(body.project_url), repo_url: optionalUrl(body.repo_url),
-    paper_familiarity: familiarity, analysis: null, paper_title: "", analysis_status: "none",
-    analysis_error: "", analysis_started_at: null,
+  // the old paper must leave no trace that reads as this paper's run. The
+  // operation names the paper accepted and the one it replaced, so a trace
+  // shows which paper every later run read.
+  const previous = row.paper_id || null;
+  const cleared = { analysis: null, paper_title: "", analysis_status: "none", analysis_error: "", analysis_started_at: null,
     assets: null, assets_brief: null, assets_status: "none", assets_error: "", assets_started_at: null,
     assessment: null, leveled: null, leveled_status: "none", leveled_error: "", leveled_started_at: null,
-    asset_chosen: null, direction: null, subgoals: null, todos: null }, options);
+    asset_chosen: null, direction: null, subgoals: null, todos: null };
+  await telemetry.runOperation({ name: "sources.accept-paper", type: "processing", writes: ["paper", "links"],
+    attributes: { "engelbart.paper.id": paperId, "engelbart.paper.previous_id": previous || undefined,
+      "engelbart.paper.replaced": Boolean(previous && previous !== paperId), "engelbart.paper.proven_by": given ? "token" : "row",
+      "engelbart.sources.cleared": Object.keys(cleared).filter((k) => !/_(status|error|started_at)$/.test(k)),
+      "engelbart.sources.cleared_rows": ["calibrations", "turns", "asks"] } },
+  async () => {
+    await patch(row, { paper_id: paperId, project_url: optionalUrl(body.project_url), repo_url: optionalUrl(body.repo_url),
+      paper_familiarity: familiarity, ...cleared }, options);
+    for (const [table, name] of [[CALIBRATIONS, "sources.clear-calibrations"], [TURNS, "sources.clear-turns"], [ASKS, "sources.clear-asks"]]) {
+      await deleteRows(table, eq("onboarding_id", row.id), traced(options, name));
+    }
+  });
   return { ok: true, analysis_status: "none", assets_status: "none" };
 }
 

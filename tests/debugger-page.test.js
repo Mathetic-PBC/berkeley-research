@@ -152,19 +152,25 @@ function page(options = {}) {
     response: (id, over) => send(Object.assign({ egb: "response", id, at: 1_700_000_000_000 + 120, ms: 120, status: 200, ok: true, trace_id: null, body: { ok: true } }, over || {})) };
 }
 
-test("the URL decides the mode; Real mode never hands the frame the product's test switch, and hides the simulator's reset; nothing in the page switches modes", async () => {
+test("the URL decides the mode; Real mode runs the real frame page, never hands it the product's test switch, hides the simulator's reset, and says on screen which backend it is on", async () => {
   const P = page({ mode: "real" });
   assert.equal(P.d.isReal(), true);
   const V = P.d.renderVals();
-  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?mode=real", "no env, no participant, and never test=true, although the page itself was opened with it");
+  assert.equal(V.frameSrc, "/engelbart/setup/test/frame-real?mode=real", "the real frame page, which loads no simulator; no env, no participant, and never test=true, although the page itself was opened with it");
   assert.equal(P.d.props.productTestMode, true);
   const bar = texts(P.d.renderTopBar(V));
-  assert.ok(!bar.includes("Simulated") && !bar.includes("Real"), "no mode toggle: the mode is the URL's");
+  // The two modes are named side by side as links: the mode is the URL's, and the links change the URL.
+  const links = find(P.d.renderTopBar(V), (n) => n.type === "a");
+  same(links.map((a) => [texts(a).pop(), a.props.href, a.props["aria-current"] || null]), [["Simulated", "/engelbart/setup/test?test=true", null], ["Real", "/engelbart/setup/test?test=true&mode=real", "page"]]);
   assert.ok(!bar.includes("real actions"), "no warning badge");
   assert.ok(!bar.includes("Reset test environment"), "no reset button in Real mode");
   assert.ok(!bar.some((t) => /Configure this environment/.test(t)), "no environment menu in Real mode");
-  assert.equal(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Real mode notice").length, 0, "no strip under the bar");
-  assert.equal(P.d.setMode, undefined, "and no way to switch");
+  const strip = texts(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Mode")[0]);
+  assert.ok(strip.includes("Real backend"), "the strip under the bar names the backend");
+  assert.ok(strip.some((t) => /runs as member@berkeley.edu against the real endpoints/.test(t) || /runs as you against the real endpoints/.test(t)));
+  assert.ok(strip.some((t) => /Nothing in this mode comes from a fixture; a failure shows as the failure/.test(t)));
+  assert.equal(find(P.d.render(), (n) => n.props && n.props["data-testcase-picker"]).length, 0, "no test case to pick: there is none in Real mode");
+  assert.equal(P.d.setMode, undefined, "and no way to switch in the page itself");
   assert.ok(texts(P.d.render()).includes("Engelbart setup, running against the real backend"), "the frame is on the page in Real mode");
   assert.equal(find(P.d.render(), (n) => n.type === "iframe").length, 1);
   assert.equal(V.isRequestsView, true, "Real mode opens on Requests, where the work shows");
@@ -178,9 +184,11 @@ test("the URL decides the mode; Real mode never hands the frame the product's te
   assert.equal(S.d.renderVals().isDashboard, true, "Simulated mode lands on the environments dashboard");
   S.d.createEnv("Lab"); await settle();
   const VS = S.d.renderVals();
-  assert.match(VS.frameSrc, /^\/engelbart\/setup\/test\/frame\?env=env-[a-z0-9]+&test=true$/, "Simulated mode still passes the test switch through");
+  assert.match(VS.frameSrc, /^\/engelbart\/setup\/test\/frame\?env=env-[a-z0-9]+&test=true&fixture=inspectable-intent$/, "Simulated mode still passes the test switch through, and names the test case");
   const sbar = texts(S.d.renderTopBar(VS));
-  assert.ok(sbar.includes("Reset test environment") && !sbar.includes("real actions") && !sbar.includes("Real"));
+  assert.ok(sbar.includes("Reset test environment") && !sbar.includes("real actions"));
+  const slinks = find(S.d.renderTopBar(VS), (n) => n.type === "a");
+  same(slinks.map((a) => [texts(a).pop(), a.props["aria-current"] || null]), [["Simulated", "page"], ["Real", null]]);
   assert.equal(S.server.telemetry().length, 0, "the simulator never reads telemetry");
   assert.equal(S.store.has("egb.debugger.mode"), false, "nothing about the mode is stored");
 });
@@ -204,7 +212,7 @@ test("Simulated mode lands on the environments dashboard: no frame and no simula
   assert.ok(copy.includes("New environment"));
   assert.ok(copy.includes("No environments yet. Create one to open the product against a fresh simulated account."), "the empty state");
   const bar = texts(P.d.renderTopBar(V));
-  same(bar.filter(Boolean), ["Engelbart"], "the wordmark alone, as designed: no mode toggle");
+  same(bar.filter((t) => ["Engelbart", "Simulated", "Real"].includes(t)), ["Engelbart", "Simulated", "Real"], "the wordmark and the two mode links, nothing else");
   assert.ok(!bar.includes("Reset test environment") && !bar.includes("switch environment"), "no environment controls on the dashboard");
   // New environment: the popup in "new" mode; Create makes the environment and opens it.
   V.newEnv(); await flush();
@@ -219,7 +227,7 @@ test("Simulated mode lands on the environments dashboard: no frame and no simula
   assert.equal(envs.length, 1);
   assert.equal(envs[0].name, "Physics major");
   assert.equal(P.d.state.envId, envs[0].id);
-  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?env=" + envs[0].id + "&test=true", "the frame runs against this environment's simulated account");
+  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?env=" + envs[0].id + "&test=true&fixture=inspectable-intent", "the frame runs against this environment's simulated account, on its test case");
   tree = P.d.render();
   assert.equal(find(tree, (n) => n.type === "iframe").length, 1);
   assert.equal(find(tree, (n) => n.props && n.props["data-screen-label"] === "Environments").length, 0);
@@ -305,7 +313,7 @@ test("the dashboard's cards: most recently opened first, saying when, how the pa
   P.d.renderVals().envCards[0].open(); await flush();
   V = P.d.renderVals();
   same([V.isDashboard, P.d.state.envId], [false, "env-a"]);
-  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?env=env-a&test=true");
+  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?env=env-a&test=true&fixture=inspectable-intent");
   assert.ok(JSON.parse(P.store.get("egb.debugger.envs.v1"))[0].lastUsedAt > opened, "opening is what Last opened means");
   V.envSelect({ target: { value: "__all" } }); await flush();
   V = P.d.renderVals();
@@ -639,7 +647,7 @@ test("each mode keeps its own state and the URL says which one runs: a Real sess
   assert.equal(VR.lineageUnavailable, false, "the recorded run names what it read and wrote");
   assert.equal(VR.flowHasNodes, true, "so the graph draws a real run from its recorded reads and writes, with nothing guessed");
   assert.equal(VR.views[1].label, "Requests · 4");
-  assert.equal(VR.frameSrc, "/engelbart/setup/test/frame?mode=real");
+  assert.equal(VR.frameSrc, "/engelbart/setup/test/frame-real?mode=real");
   R.send({ egb: "trace", event: events[0] });
   await new Promise((r) => setTimeout(r, 80));
   assert.equal(R.stages().length, 4, "a simulator event means nothing to Real mode");
@@ -917,4 +925,72 @@ test("a request whose id repeats one kept from an earlier boot of the product go
   same([start.name, start.stages.length, start.stages[0].ops.map((o) => o.name)], ["Start", 1, ["store the step 1"]], "the earlier boot's request keeps its own operation");
   same([name.step, name.stages.length, name.stages[0].status, name.stages[0].ops.map((o) => o.name)], ["Name", 1, "ok", ["store the step 2"]], "the new request, on the step's tab, gets its operation and its end");
   same([P.d.state.flowSel, P.d.viewed().step], ["profile", "Name"], "and the value it wrote selects itself on the tab in view");
+});
+
+// The simulated test case is a first-class thing on the page: the strip under the bar says the model answers
+// come from a saved fixture and which, the card and the popup name it, and another case (a second entry in
+// EGB_FIXTURES) can be chosen, which starts the environment's simulated account over on that case.
+test("Simulated mode names its test case everywhere, says uploads do not change it, and can switch to another case from the registry", async () => {
+  const P = page({});
+  P.w.EGB_FIXTURES.tutortrace = { id: "tutortrace", name: "TutorTrace", description: "A second paper.", file: "TutorTrace.pdf", bytes: 1000, data: P.w.EGB_FIXTURE };
+  let V = P.d.renderVals();
+  let strip = texts(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Mode")[0]);
+  assert.ok(strip.includes("Simulated") && strip.some((t) => /Every environment answers from a saved test case/.test(t)), "the dashboard's strip: simulated, nothing real");
+  P.d.createEnv("Lab"); await settle();
+  V = P.d.renderVals();
+  const envId = P.d.state.envId;
+  assert.equal(JSON.parse(P.store.get("egb.debugger.envs.v1"))[0].config.fixture, "inspectable-intent", "a new environment is on the default test case");
+  assert.match(V.frameSrc, /&fixture=inspectable-intent/);
+  strip = texts(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Mode")[0]);
+  assert.ok(strip.includes("Simulated test case"));
+  assert.ok(strip.some((t) => t === "Model outputs in this mode come from a saved fixture. Uploaded PDFs do not change the fixture."), "the strip says what the answers are");
+  const picker = find(P.d.render(), (n) => n.props && n.props["data-testcase-picker"])[0];
+  assert.equal(picker.props.value, "inspectable-intent");
+  same(find(picker, (n) => n.type === "option").map((o) => texts(o).pop()), ["Test case ▾ Inspectable Intent in Agentic Programming", "Test case ▾ TutorTrace"], "every case in the registry is offered");
+  assert.equal(V.mode.testCase, "Inspectable Intent in Agentic Programming");
+  // The frame says which case it is running; the strip shows that name.
+  P.send({ egb: "ready", speed: 1, mode: "sim", backend: "SimulatedBackend", fixture: { id: "inspectable-intent", name: "Inspectable Intent in Agentic Programming" }, refused: null }); await flush();
+  assert.equal(P.d.renderVals().mode.testCase, "Inspectable Intent in Agentic Programming");
+  // The dashboard card and the configure popup name it too.
+  assert.equal(P.d.envCard(P.d.state.envs[0]).testCase, "Test case · Inspectable Intent in Agentic Programming");
+  P.d.openConfig("edit"); await flush();
+  const cfg = P.d.renderVals().cfg;
+  assert.equal(cfg.fixture, "inspectable-intent");
+  same(cfg.fixtures, [{ value: "inspectable-intent", label: "Inspectable Intent in Agentic Programming" }, { value: "tutortrace", label: "TutorTrace" }]);
+  const popup = P.d.renderConfig(cfg);
+  assert.equal(find(popup, (n) => n.props && n.props["data-fixture-picker"]).length, 1, "the About section has the picker");
+  cfg.sections[1].select(); await flush();
+  const pc = P.d.renderVals().cfg; pc.pToggle[0].select(); await flush();
+  assert.ok(texts(P.d.renderConfig(P.d.renderVals().cfg)).some((t) => /The simulated reading answers from the environment's test case, not from this PDF/.test(t)), "the participant's paper is labelled as not read");
+  P.d.renderVals().cfg.cancel(); await flush();
+  // Switching the case: the configuration changes, the simulated account is reset (the frame is told), the frame runs the new case.
+  const before = P.cmds().length;
+  picker.props.onChange({ target: { value: "tutortrace" } }); await settle();
+  assert.equal(JSON.parse(P.store.get("egb.debugger.envs.v1"))[0].config.fixture, "tutortrace");
+  assert.deepEqual(P.cmds().slice(before), ["reset"], "the account was the old case's answers: it starts over");
+  V = P.d.renderVals();
+  assert.match(V.frameSrc, /&fixture=tutortrace/);
+  assert.equal(V.mode.testCase, "TutorTrace");
+  assert.equal(P.d.envCard(P.d.state.envs[0]).testCase, "Test case · TutorTrace");
+  // A case not in the registry is not accepted; an environment that names one runs the default, visibly.
+  picker.props.onChange({ target: { value: "nope" } }); await settle();
+  assert.equal(JSON.parse(P.store.get("egb.debugger.envs.v1"))[0].config.fixture, "tutortrace");
+  const Q = page({ seed: { "egb.debugger.envs.v1": [{ id: "env-old", name: "Old", createdAt: 1, config: { fixture: "gone" } }] } });
+  Q.d.openEnv("env-old"); await settle();
+  assert.match(Q.d.renderVals().frameSrc, /&fixture=inspectable-intent/);
+  assert.equal(Q.d.renderVals().mode.testCase, "Inspectable Intent in Agentic Programming");
+  assert.equal(envId, P.d.state.envId);
+});
+
+test("a frame that refused to start is shown as refused, in either mode, in the strip under the bar", async () => {
+  const R = page({ mode: "real" });
+  R.send({ egb: "ready", speed: 1, mode: "real", backend: "RealBackend", fixture: null, refused: "Real mode refused to start: simulator scripts (fixture.js or sim-backend.js) are loaded in this frame. Open the real frame page, which loads neither." }); await flush();
+  let strip = texts(find(R.d.render(), (n) => n.props && n.props["data-screen-label"] === "Mode")[0]);
+  assert.ok(strip.some((t) => /Real mode refused to start/.test(t)));
+  assert.equal(R.d.renderVals().mode.refused.length > 0, true);
+  const S = page({});
+  S.d.createEnv("Lab"); await settle();
+  S.send({ egb: "ready", speed: 1, mode: "sim", backend: "SimulatedBackend", fixture: null, refused: "No simulated test case named “nope”" }); await flush();
+  strip = texts(find(S.d.render(), (n) => n.props && n.props["data-screen-label"] === "Mode")[0]);
+  assert.ok(strip.some((t) => /No simulated test case named/.test(t)));
 });

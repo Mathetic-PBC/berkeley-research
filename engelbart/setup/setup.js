@@ -813,6 +813,14 @@
           st.row.repo_url = sources.repo_url;
           st.row.paper_familiarity = sources.paper_familiarity;
         }
+        // The server dropped everything derived from the old paper when it
+        // accepted this one; the page drops its copies too, so nothing read
+        // from the paper before survives past this point in what it shows.
+        st.row.analysis = null; st.row.paper_title = "";
+        st.row.assets = null; st.row.assets_brief = null; st.row.assessment = null;
+        st.row.leveled = null; st.row.leveled_status = "none"; st.row.leveled_error = "";
+        st.row.asset_chosen = null; st.row.direction = null; st.row.subgoals = null; st.row.todos = null;
+        st.cals = []; st.turns = [];
         st.row.analysis_status = "running";
         st.row.analysis_error = "";
         st.row.assets_status = "running";

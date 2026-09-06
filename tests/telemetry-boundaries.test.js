@@ -468,6 +468,26 @@ test("the real paper-analysis path is one trace with the expected operations, an
     assert.deepEqual(lineage(inTrace, "analysis.normalize", "writes"), ["analysis"]);
     assert.deepEqual(lineage(inTrace, "analysis.check-superseded", "reads"), ["paper"]);
     assert.deepEqual(lineage(inTrace, "analysis.persist", "writes"), ["analysis"], "the persist records the value it stored, not the bookkeeping columns beside it");
+    // The paper the run read, tied together by id and by hash: the workflow names the id, the download names the
+    // object and the bytes' hash, the request names the same id, hash and size, and the model request's stored
+    // snapshot refers to the same bytes. What was stored is on the workflow too.
+    const paperId = db.tables.engelbart_onboardings[0].paper_id;
+    const hash = crypto.createHash("sha256").update(PDF).digest("hex");
+    assert.equal(root.attributes["engelbart.paper.id"], paperId);
+    const download = inTrace.find((o) => o.name === "paper.download");
+    assert.equal(download.attributes["engelbart.storage.object"], "papers/" + paperId + ".pdf");
+    assert.equal(download.attributes["engelbart.storage.sha256"], hash);
+    assert.equal(download.attributes["engelbart.storage.bytes"], PDF.length);
+    const construct = inTrace.find((o) => o.name === "analysis.construct-request");
+    assert.equal(construct.attributes["engelbart.paper.id"], paperId);
+    assert.equal(construct.attributes["engelbart.analysis.pdf_sha256"], hash);
+    assert.equal(construct.attributes["engelbart.analysis.pdf_bytes"], PDF.length);
+    const modelOp = inTrace.find((o) => o.name === "model.analysis");
+    const request = sink.snapshots.find((x) => x.operation_id === modelOp.operation_id && x.kind === "model_request");
+    const docBlock = request.content.body.messages[0].content.find((b) => b.type === "document");
+    assert.equal(docBlock.source.source_ref.sha256, hash, "the stored request refers to the same bytes by hash");
+    assert.equal(root.attributes["engelbart.analysis.title"], "Zebra Tuning");
+    assert.deepEqual(root.attributes["engelbart.analysis.areas"], ANALYSIS.areas.map((a) => a.area));
     assert.equal(lineage(inTrace, "analysis.persist", "reads"), undefined);
     for (const kind of ["reads", "writes"]) assert.equal(root.attributes[`engelbart.lineage.${kind}`], undefined, "the root declares nothing");
     const sources = sink.operations.filter((o) => o.trace_id === sink.one("onboarding.sources").trace_id);
@@ -525,5 +545,35 @@ test("under the Anthropic bypass, the model operation names the real host and th
     assert.doesNotMatch(all, new RegExp(OWN_KEY));
     assert.doesNotMatch(all, new RegExp(MEMBER_KEY));
     assert.doesNotMatch(all, /x-api-key|Authorization|Bearer/);
+  } finally { done(); }
+});
+
+// Accepting a paper is its own operation in the trace: which paper, whether it replaced one, and what went with the old one.
+test("sources records the paper it accepted, the one it replaced, and everything it cleared", async () => {
+  const { sink, done } = observe();
+  try {
+    const db = fake();
+    const { onboarding } = await inWorkflow(() => OB.open(USER, {}, db.options));
+    const row = db.tables.engelbart_onboardings[0];
+    const A = "22222222-2222-2222-2222-222222222222", B = "55555555-5555-5555-5555-555555555555";
+    const token = (id) => setupHandler.ownPaperToken(id, USER.id, ENV);
+    await inWorkflow(() => OB.sources(USER, onboarding, { paper_id: A, paper_token: token(A), paper_familiarity: 1 }, CREDS, db.options));
+    const first = sink.operations.filter((o) => o.name === "sources.accept-paper")[0];
+    assert.equal(first.type, "processing");
+    assert.equal(first.attributes["engelbart.paper.id"], A);
+    assert.equal(first.attributes["engelbart.paper.previous_id"], undefined);
+    assert.equal(first.attributes["engelbart.paper.replaced"], false);
+    assert.equal(first.attributes["engelbart.paper.proven_by"], "token");
+    assert.deepEqual(first.attributes["engelbart.lineage.writes"], ["paper", "links"]);
+    await inWorkflow(() => OB.sources(USER, row, { paper_id: B, paper_token: token(B), paper_familiarity: 1 }, CREDS, db.options));
+    const second = sink.operations.filter((o) => o.name === "sources.accept-paper")[1];
+    assert.equal(second.attributes["engelbart.paper.id"], B);
+    assert.equal(second.attributes["engelbart.paper.previous_id"], A);
+    assert.equal(second.attributes["engelbart.paper.replaced"], true);
+    assert.deepEqual(second.attributes["engelbart.sources.cleared"], ["analysis", "paper_title", "assets", "assets_brief", "assessment", "leveled", "asset_chosen", "direction", "subgoals", "todos"]);
+    assert.deepEqual(second.attributes["engelbart.sources.cleared_rows"], ["calibrations", "turns", "asks"]);
+    const children = sink.operations.filter((o) => o.parent_span_id === second.span_id).map((o) => o.name);
+    assert.deepEqual(children, ["db.patch", "sources.clear-calibrations", "sources.clear-turns", "sources.clear-asks"]);
+    assert.equal(JSON.stringify(sink.operations).includes(token(B)), false, "the token is not recorded");
   } finally { done(); }
 });

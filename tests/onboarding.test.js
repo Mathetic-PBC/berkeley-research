@@ -657,6 +657,72 @@ test("sources clears the hunt with the analysis; the hunt stores the assets, the
   assert.equal(again.assets_brief.length, 2);
 });
 
+// Replacing the paper. Everything derived from paper A goes when paper B is
+// accepted: the columns, and the rows that answered questions about A. The
+// run that follows reads B's bytes, by B's id, and stores B's reading; the
+// trace ties the id, the object and the hash together.
+test("accepting a second paper drops every row and column derived from the first, and the next reading is of the second paper's own bytes", async () => {
+  const B = "55555555-5555-5555-5555-555555555555";
+  const bytes = { [PAPER]: Buffer.from("%PDF-1.4 paper A: agentic programming"), [B]: Buffer.from("%PDF-1.4 paper B: TutorTrace, a tutoring dataset") };
+  const db = fake({ model: { analysis: ANALYSIS } });
+  const inner = db.options.fetchImpl;
+  const requests = [], downloads = [];
+  // Storage serves each paper's own bytes; the model's answer is derived from the document it was sent.
+  db.options.fetchImpl = async (url, init = {}) => {
+    const u = new URL(url);
+    const m = /\/storage\/v1\/object\/[^/]+\/papers\/([^/]+)\.pdf$/.exec(u.pathname);
+    if (m) { downloads.push(m[1]); const pdf = bytes[m[1]]; return { ok: true, status: 200, headers: { get: () => null }, async arrayBuffer() { return pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength); }, async text() { return ""; } }; }
+    if (u.pathname === "/v1/messages") {
+      const body = JSON.parse(init.body);
+      const doc = body.messages[0].content.find((b) => b.type === "document");
+      const text = Buffer.from(doc.source.data, "base64").toString();
+      requests.push(text);
+      const reply = { ...ANALYSIS, title: /TutorTrace/.test(text) ? "TutorTrace" : "Agentic Programming", one_liner: text.slice(9) };
+      return { ok: true, status: 200, async text() { return JSON.stringify({ content: [{ type: "text", text: JSON.stringify(reply) }] }); }, async json() { return { content: [{ type: "text", text: JSON.stringify(reply) }] }; } };
+    }
+    return inner(url, init);
+  };
+  const { onboarding } = await OB.open(USER, {}, db.options);
+  const row = db.tables.engelbart_onboardings[0];
+  const tokenA = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
+  await OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: tokenA, paper_familiarity: 2 }, CREDS, db.options);
+  const a = await OB.analysis(USER, row, { run: true }, CREDS, db.options);
+  assert.equal(a.analysis_status, "done");
+  assert.equal(row.analysis.title, "Agentic Programming");
+  assert.equal(row.paper_title, "Agentic Programming");
+  assert.match(requests[0], /paper A: agentic programming/, "the first reading was of paper A's bytes");
+  // The reader has answered about A, chatted, and asked a question; the plan exists.
+  db.tables.engelbart_onboarding_calibrations.push({ id: "cal-a", onboarding_id: row.id, user_id: USER.id, area_index: 0, question_level: 25, answered_at: "t" });
+  db.tables.engelbart_onboarding_turns.push({ id: "turn-a", onboarding_id: row.id, user_id: USER.id, stage: "brainstorm", role: "user", content: "about A" });
+  db.tables.engelbart_onboarding_asks.push({ id: "ask-a", onboarding_id: row.id, user_id: USER.id, quote: "A" });
+  Object.assign(row, { assets: { assets: [] }, assets_brief: [], assets_status: "done", assessment: { mean: 1 }, leveled: LEVELED, leveled_status: "done",
+    asset_chosen: { key: "x" }, direction: DIRECTION, subgoals: [{ label: "P1" }], todos: ["one"] });
+
+  const tokenB = setupHandler.ownPaperToken(B, USER.id, ENV);
+  const out = await OB.sources(USER, row, { paper_id: B, paper_token: tokenB, paper_familiarity: 0 }, CREDS, db.options);
+  assert.deepEqual(out, { ok: true, analysis_status: "none", assets_status: "none" });
+  assert.equal(row.paper_id, B);
+  for (const k of ["analysis", "assets", "assets_brief", "assessment", "leveled", "asset_chosen", "direction", "subgoals", "todos"]) assert.equal(row[k], null, k + " is gone with paper A");
+  assert.equal(row.paper_title, "");
+  assert.deepEqual([row.analysis_status, row.assets_status, row.leveled_status], ["none", "none", "none"]);
+  assert.equal(row.analysis_started_at, null);
+  assert.deepEqual(db.tables.engelbart_onboarding_calibrations, [], "the answers about A's areas are gone");
+  assert.deepEqual(db.tables.engelbart_onboarding_turns, [], "the brainstorm about A is gone");
+  assert.deepEqual(db.tables.engelbart_onboarding_asks, [], "the questions about A's text are gone");
+  assert.equal(requests.length, 1, "accepting B read nothing");
+
+  const b = await OB.analysis(USER, row, { run: true }, CREDS, db.options);
+  assert.equal(b.analysis_status, "done");
+  assert.equal(requests.length, 2);
+  assert.match(requests[1], /paper B: TutorTrace/, "the second reading was of paper B's bytes, by B's id");
+  assert.doesNotMatch(requests[1], /agentic programming/);
+  assert.deepEqual(downloads, [PAPER, B], "Storage was asked for each paper's own object, by id");
+  assert.equal(row.analysis.title, "TutorTrace");
+  assert.equal(row.paper_title, "TutorTrace");
+  assert.notDeepEqual(a.analysis, b.analysis);
+  assert.equal(JSON.stringify(row).includes("agentic programming"), false, "nothing of paper A remains on the row");
+});
+
 test("a hunt that finds nothing is an error the page can show, and the running guard holds", async () => {
   const db = fake({ model: { assets: { assets: [] } } });
   const row = await ready(db);
