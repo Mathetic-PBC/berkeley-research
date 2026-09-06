@@ -46,3 +46,11 @@ test("the second half asks, grades, generates and creates", () => {
   assert.match(html, /src="\/engelbart\/setup\/install\.js"/);
   assert.match(js, /Ask about this/);
 });
+
+test("the rail offers the member's own Anthropic key, typed into a password field and never echoed", () => {
+  assert.match(js, /action: "own_key"/);
+  assert.match(js, /action: "own_key_clear"/);
+  assert.match(js, /Use your own Anthropic key/);
+  assert.match(js, /input\.type = "password"/);
+  assert.match(css, /\.ob-key-input\{/);
+});

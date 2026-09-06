@@ -55,6 +55,25 @@ Production and preview deployments require:
 - `ENGELBART_CREDENTIAL_KEY` — exactly 32 random bytes, base64url encoded
 - `ENGELBART_ADMIN_SESSION_SECRET` — at least 32 random bytes
 
+A member can bring their own Anthropic API key from the setup page's rail
+("Use your own Anthropic key"). The key is checked against Anthropic, stored
+encrypted under `ENGELBART_CREDENTIAL_KEY` in `engelbart_member_model_keys`
+(migration `20260906120000_engelbart_member_model_keys.sql`), and that
+member's setup model calls then go straight to `api.anthropic.com` on it; the
+pool is neither asked nor allowed to refuse them. The page only ever sees the
+key's last four characters, and Claude Code sessions keep using the member's
+LiteLLM key.
+
+Optional, and a stopgap: `ENGELBART_ANTHROPIC_API_KEY`. While it is set, every
+model call the setup and onboarding pages make goes straight to
+`api.anthropic.com` on that one key instead of through LiteLLM on the member's
+key (a key the member brought still wins). Members still need a provisioned
+key (the credit gate and meter keep reading the proxy), but nothing is metered
+per member and the proxy's own upstream key is not used. The key never reaches
+a browser or a terminal: `/api/engelbart-credentials` and Claude Code sessions
+keep using the member's LiteLLM key, and telemetry redacts it. Remove the
+variable to return to the proxy; the next deployment picks the change up.
+
 The bootstrap admin code exists in the migration only as a salted scrypt
 digest. Reset it from `/engelbart/admin` after the first login, then enroll
 TOTP. After re-entering the password and a live TOTP code, the same encrypted

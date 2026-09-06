@@ -9,6 +9,7 @@ const { pickModel } = require("./setup-chat");
 const P = require("./onboarding-prompts");
 const { telemetry } = require("./telemetry");
 const { hostOf, safeUrl } = require("./telemetry/redaction");
+const { resolveUpstream } = require("./upstream");
 
 const MAX_REPLY_TOKENS = 4096;
 const MODEL_TIMEOUT_MS = 90 * 1000;
@@ -40,7 +41,9 @@ function extractJson(text) {
 // digest), the provider's raw reply, and the JSON parsed out of it, as three
 // separate snapshots. The caller's normalization is a fourth, its own
 // operation. Collapsing those into "model output" is what a debugger exists
-// to undo, so they stay apart here.
+// to undo, so they stay apart here. Where the request goes (the member's key
+// through LiteLLM, or one server key straight to Anthropic) is
+// resolveUpstream's decision, and the record says which.
 async function callModel(request, credentials, options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
   const purpose = request.purpose || "call";
@@ -51,9 +54,11 @@ async function callModel(request, credentials, options = {}) {
   };
   if (request.system) body.system = request.system;
   if (request.tools) body.tools = request.tools;
-  const url = `${credentials.baseUrl}/v1/messages`;
+  const upstream = resolveUpstream(credentials, options.env);
+  const url = `${upstream.baseUrl}/v1/messages`;
   const timeoutMs = request.timeoutMs || MODEL_TIMEOUT_MS;
   telemetry.protect(credentials.apiKey);
+  telemetry.protect(upstream.apiKey);
   return telemetry.runOperation({
     name: `model.${purpose}`, type: "model",
     attributes: {
@@ -61,8 +66,8 @@ async function callModel(request, credentials, options = {}) {
       "gen_ai.provider.name": "anthropic",
       "gen_ai.request.model": body.model,
       "gen_ai.request.max_tokens": body.max_tokens,
-      "server.address": hostOf(credentials.baseUrl),
-      "engelbart.model.gateway": "litellm",
+      "server.address": hostOf(upstream.baseUrl),
+      "engelbart.model.gateway": upstream.gateway,
       "engelbart.model.purpose": purpose,
       "engelbart.model.family": request.family || "sonnet",
       "engelbart.model.timeout_ms": timeoutMs,
@@ -75,7 +80,7 @@ async function callModel(request, credentials, options = {}) {
     op.snapshot("model_request", { url: safeUrl(url), body });
     const response = await fetchImpl(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${credentials.apiKey}` },
+      headers: { "Content-Type": "application/json", ...upstream.headers },
       body: JSON.stringify(body),
       signal: options.signal || AbortSignal.timeout(timeoutMs),
     });

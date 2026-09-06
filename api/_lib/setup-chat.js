@@ -8,6 +8,7 @@
 // two surfaces put the same conversation to the same model.
 
 const crypto = require("node:crypto");
+const { resolveUpstream } = require("./upstream");
 
 const MAX_SAY = 1200;
 const MAX_TITLE = 200;
@@ -583,12 +584,10 @@ function extractJson(text) {
 
 async function callModel(prompt, credentials, options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
-  const response = await fetchImpl(`${credentials.baseUrl}/v1/messages`, {
+  const upstream = resolveUpstream(credentials, options.env);
+  const response = await fetchImpl(`${upstream.baseUrl}/v1/messages`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${credentials.apiKey}`,
-    },
+    headers: { "Content-Type": "application/json", ...upstream.headers },
     body: JSON.stringify({
       model: pickModel(credentials.models),
       max_tokens: MAX_REPLY_TOKENS,

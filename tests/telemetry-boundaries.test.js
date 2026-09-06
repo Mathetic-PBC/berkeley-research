@@ -308,10 +308,12 @@ test("a page fetch is an http operation with the URL stripped of its query, and 
 });
 
 // The dispatcher, with an injected record module as engelbart-onboarding.test.js does.
+const NO_OWN_KEY = { status: async () => ({ set: false }), credentials: async () => null };
 function deps(overrides = {}) {
   const { OB: ob, ...rest } = overrides;
   return {
     credentialsFor: async () => CREDS,
+    memberKeys: NO_OWN_KEY,
     ...rest,
     OB: {
       open: async () => ({ onboarding: { id: "row-7", user_id: USER.id, status: "open", step: 0, analysis_status: "running" }, calibrations: [] }),
@@ -376,8 +378,8 @@ test("concurrent onboarding requests keep their own trace context", async () => 
         });
       },
     });
-    const a = handler.dispatch(USER, { action: "brainstorm", text: "a" }, { credentialsFor: async () => CREDS, OB: OBfor("row-a") });
-    const b = handler.dispatch({ id: "22222222-2222-2222-2222-222222222222" }, { action: "brainstorm", text: "b" }, { credentialsFor: async () => CREDS, OB: OBfor("row-b") });
+    const a = handler.dispatch(USER, { action: "brainstorm", text: "a" }, { credentialsFor: async () => CREDS, memberKeys: NO_OWN_KEY, OB: OBfor("row-a") });
+    const b = handler.dispatch({ id: "22222222-2222-2222-2222-222222222222" }, { action: "brainstorm", text: "b" }, { credentialsFor: async () => CREDS, memberKeys: NO_OWN_KEY, OB: OBfor("row-b") });
     setTimeout(release, 5);
     const [ra, rb] = await Promise.all([a, b]);
     assert.equal(ra.say, "row-a"); assert.equal(rb.say, "row-b");
@@ -442,5 +444,37 @@ test("the real paper-analysis path is one trace with the expected operations, an
     const all = everything(sink);
     assert.doesNotMatch(all, new RegExp(`${SERVICE_KEY}|${MEMBER_KEY}`));
     assert.equal(all.includes(PDF.toString("base64").slice(0, 64)), false);
+  } finally { done(); }
+});
+
+// Under the Anthropic bypass the record says where the call went and on which
+// gateway, and the server's key is as absent from it as the member's is.
+test("under the Anthropic bypass, the model operation names the real host and the server's key is nowhere in the record", async () => {
+  const OWN_KEY = "sk-ant-own-key-must-never-appear-0000";
+  const { sink, done } = observe();
+  try {
+    const db = fake();
+    const options = { ...db.options, env: { ...ENV, ENGELBART_ANTHROPIC_API_KEY: OWN_KEY } };
+    const analysis = await telemetry.runOperation({ name: "onboarding.analysis", type: "workflow" }, () => OM.analyze({
+      familiarityLabel: "some", familiarityDesc: "d", depthLabel: "technical", depthDesc: "d",
+      pdfBase64: PDF.toString("base64"), urls: [{ url: "https://x.org/p", text: "project page" }],
+    }, CREDS, options));
+    assert.equal(analysis.title, "Zebra Tuning");
+    const model = sink.one("model.analysis");
+    assert.equal(model.status, "completed");
+    assert.equal(model.attributes["server.address"], "api.anthropic.com");
+    assert.equal(model.attributes["engelbart.model.gateway"], "anthropic");
+    assert.equal(model.attributes["gen_ai.request.model"], "claude-sonnet-4-5-20250929");
+    const sent = db.calls.find((c) => c.url === "https://api.anthropic.com/v1/messages");
+    assert.equal(sent.init.headers["x-api-key"], OWN_KEY);
+    assert.equal(sent.init.headers["anthropic-version"], "2023-06-01");
+    assert.equal(sent.init.headers.Authorization, undefined);
+    const request = sink.snapshots.find((s) => s.kind === "model_request");
+    assert.equal(request.content.url, "https://api.anthropic.com/v1/messages");
+    assert.equal(request.content.headers, undefined);
+    const all = everything(sink);
+    assert.doesNotMatch(all, new RegExp(OWN_KEY));
+    assert.doesNotMatch(all, new RegExp(MEMBER_KEY));
+    assert.doesNotMatch(all, /x-api-key|Authorization|Bearer/);
   } finally { done(); }
 });

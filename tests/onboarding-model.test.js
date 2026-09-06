@@ -307,3 +307,25 @@ test("planning prompts put an agent-executable GUI before human input choices", 
   assert.match(todos, /thinnest real input-to-output path/);
   assert.match(todos, /Do not write research, planning, browsing, dataset-selection/);
 });
+
+// The Anthropic bypass: the same request, byte for byte, to a different
+// address on a different key. Only the transport changes.
+test("with ENGELBART_ANTHROPIC_API_KEY set, the request goes straight to Anthropic on that key", async () => {
+  const calls = [];
+  const reply = { title: "T", one_liner: "o", date: "2024", areas: [
+    { area: "A", questions: fiveQuestions() }, { area: "B", questions: fiveQuestions() }] };
+  const out = await OM.analyze({
+    familiarityLabel: P.FAMILIARITY[1].label, familiarityDesc: P.FAMILIARITY[1].desc,
+    depthLabel: P.DEPTHS[0].label, depthDesc: P.DEPTHS[0].desc,
+    pdfBase64: "JVBERi0=", urls: [{ url: "https://x.org", text: "page text" }],
+  }, CREDS, { fetchImpl: modelSaying(reply, calls), env: { ENGELBART_ANTHROPIC_API_KEY: "sk-ant-own" } });
+  assert.equal(out.areas.length, 2);
+  const { url, body, headers } = calls[0];
+  assert.equal(url, "https://api.anthropic.com/v1/messages");
+  assert.equal(headers["x-api-key"], "sk-ant-own");
+  assert.equal(headers["anthropic-version"], "2023-06-01");
+  assert.equal(headers.Authorization, undefined);
+  assert.equal(body.model, "claude-sonnet-4-5-20250929");   // a dated id Anthropic itself answers to
+  assert.equal(body.max_tokens, 8192);
+  assert.equal(body.messages[0].content[1].type, "document");
+});
