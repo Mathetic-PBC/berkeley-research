@@ -150,4 +150,16 @@
   window.EGB_FIXTURE = { PAPER: PAPER, ASSETS: ASSETS, LEVELED: LEVELED, BRAINSTORM: BRAINSTORM, DIRECTION: DIRECTION, REVISED_DIRECTION: REVISED_DIRECTION,
     SUBGOALS: SUBGOALS, REVISED_SUBGOALS: REVISED_SUBGOALS, TODOS: TODOS, ASK: ASK, REWRITES: REWRITES, LEVELS: LEVELS,
     USER: { id: "11111111-1111-1111-1111-111111111111", email: "sim@berkeley.edu" } };
+  /* The test cases the simulator can run: each is one paper and the saved
+   * model outputs for it. The simulated backend answers from the chosen
+   * case's data whatever PDF is uploaded; the debugger names the case on
+   * screen and the simulator names it in each operation it emits. A new case
+   * is another entry here (its own PAPER, ASSETS, LEVELED, … in the same
+   * shapes); the id is what a frame URL and an environment's config carry. */
+  window.EGB_FIXTURES = {
+    "inspectable-intent": { id: "inspectable-intent", name: "Inspectable Intent in Agentic Programming",
+      description: "A paper on recovering a goal tree from a coding agent's chat; two knowledge areas.",
+      file: "Inspectable Intent in Agentic Programming.pdf", bytes: 1998042, data: window.EGB_FIXTURE }
+  };
+  window.EGB_DEFAULT_FIXTURE = "inspectable-intent";
 })();

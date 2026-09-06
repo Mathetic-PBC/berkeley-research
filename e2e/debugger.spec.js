@@ -180,20 +180,37 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(simFrame.locator(".ob-title", { hasText: "What is your name?" })).toBeVisible();
     const before = onboardingCalls.length;
 
-    // Real mode is the URL's, not a switch in the page. It keeps the composition: the product stays on the left,
-    // in the real frame; the simulator's controls go, and nothing in the bar offers a mode.
+    // Simulated mode says what it is: the strip under the bar names the test case the simulated model answers
+    // from and says an upload does not change it; the two modes are links, and the mode is the URL's.
+    const strip = page.locator('[data-screen-label="Mode"]');
+    await expect(strip).toContainText("Simulated test case");
+    await expect(strip).toContainText("Model outputs in this mode come from a saved fixture. Uploaded PDFs do not change the fixture.");
+    await expect(page.locator("[data-testcase-picker]")).toHaveValue("inspectable-intent");
+    await expect(page.locator("[data-testcase-picker] option", { hasText: "Test case ▾ Inspectable Intent in Agentic Programming" })).toHaveCount(1);
+    await expect(page.locator('iframe[title="Engelbart setup, running against the simulated backend"]')).toHaveAttribute("src", /\/engelbart\/setup\/test\/frame\?env=[^&]+&fixture=inspectable-intent$/);
+    await expect(page.locator('[data-mode-links] a[aria-current="page"]')).toHaveText("Simulated");
+    await expect(page.locator('[data-mode-links] a', { hasText: "Real" })).toHaveAttribute("href", /\/engelbart\/setup\/test\?mode=real$/);
     await expect(page.getByRole("button", { name: "Real", exact: true })).toHaveCount(0);
-    await page.goto(`${stack.url}/engelbart/setup/test?mode=real`);
+    // Real mode keeps the composition: the product stays on the left, now in the real frame page, which loads no
+    // simulator; the simulator's controls go, and the strip says the backend is real.
+    await page.locator('[data-mode-links] a', { hasText: "Real" }).click();
+    await expect(page).toHaveURL(/\/engelbart\/setup\/test\?mode=real$/);
     const realFrame = page.frameLocator('iframe[title="Engelbart setup, running against the real backend"]');
-    await expect(page.locator('iframe[title="Engelbart setup, running against the real backend"]')).toHaveAttribute("src", /\/engelbart\/setup\/test\/frame\?mode=real$/);
+    await expect(page.locator('iframe[title="Engelbart setup, running against the real backend"]')).toHaveAttribute("src", /\/engelbart\/setup\/test\/frame-real\?mode=real$/);
     await expect(page.locator("iframe")).toHaveCount(1);
+    await expect(page.locator('[data-mode-links] a[aria-current="page"]')).toHaveText("Real");
+    await expect(strip).toContainText("Real backend");
+    await expect(strip).toContainText("Nothing in this mode comes from a fixture; a failure shows as the failure.");
+    await expect(page.locator("[data-testcase-picker]")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Reset test environment" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Simulated" })).toHaveCount(0);
     await expect(page.getByText("real actions")).toHaveCount(0);
     await expect(page.getByText(/Model calls spend real credit/)).toHaveCount(0);
+    // The real frame carries nothing of the simulator.
+    expect(await realFrame.locator("body").evaluate(() => [typeof window.EngelbartSim, typeof window.EGB_FIXTURE, typeof window.EGB_FIXTURES])).toEqual(["undefined", "undefined", "undefined"]);
     await expect(page.locator("[data-run-picker]")).toBeVisible();
     await expect(page.locator("[data-prompt-picker]")).toHaveValue("", { timeout: 5000 });
-    await expect(page.getByText("member@example.com")).toBeVisible();
+    await expect(page.getByText("member@example.com", { exact: true })).toBeVisible();
 
     // The real product boots as the member: the open request carried the member's token, not the simulator's.
     await expect(realFrame.locator(".ob-title", { hasText: "What is your name?" })).toBeVisible();
@@ -316,6 +333,12 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(realFrame.locator(".ob-title", { hasText: "What year are you?" })).toBeVisible();
     await expect.poll(() => onboardingCalls.length).toBeGreaterThan(calls);
     await expect(page.locator("[id^=stage-]", { hasText: "onboarding · open" }).last()).toContainText("4 ops");
+
+    // The simulated frame page asked to be real refuses: the simulator is loaded there, so nothing runs.
+    await page.goto(`${stack.url}/engelbart/setup/test/frame?mode=real`);
+    await expect(page.locator('[data-egb-refused="real"]')).toContainText("Real mode refused to start: simulator scripts (fixture.js or sim-backend.js) are loaded in this frame.");
+    await expect(page.locator(".ob-err")).toContainText("Real mode refused to start", { timeout: 5000 });
+    await expect(page.locator(".ob-title")).toHaveCount(0);
 
     // And back at the plain URL: nothing is open, so the dashboard shows the environment, and opening it boots
     // the product exactly as before.

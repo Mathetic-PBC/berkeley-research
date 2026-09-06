@@ -131,10 +131,24 @@ makes and every operation the simulated server runs to answer it: the auth
 check, each Supabase read and write, the storage upload, the model call with
 its prompt, the link checks. Nothing reaches Vercel, Supabase, LiteLLM or a
 model; the page's `fetch` to `/api` is answered in-page from
-`engelbart/setup/test/sim-backend.js`, model replies come from
-`fixture.js`, and the prompts are `prompts.js`, a verbatim copy of
-`api/_lib/onboarding-prompts.js` that the debugger lets you edit per
-environment, one prompt at a time on a tab each; an edited tab is marked.
+`engelbart/setup/test/sim-backend.js`, model replies come from a **test
+case** in `fixture.js` (`EGB_FIXTURES`: one paper and the saved model outputs
+for it; *Inspectable Intent in Agentic Programming* is the one there is, and
+another is another entry in the same shapes), and the prompts are
+`prompts.js`, a verbatim copy of `api/_lib/onboarding-prompts.js` that the
+debugger lets you edit per environment, one prompt at a time on a tab each;
+an edited tab is marked. A simulated run is deterministic and is not a
+reading of anything: the PDF you drop on the Paper step is kept by name and
+size only, and the analysis, the asset hunt and everything after them are the
+test case's saved outputs whatever the file was. The strip under the top bar
+says so (*Simulated test case · Inspectable Intent in Agentic Programming ·
+Model outputs in this mode come from a saved fixture. Uploaded PDFs do not
+change the fixture.*), names the case, and lets you pick another; each
+environment is configured with one, its card names it, and changing it starts
+the environment's simulated account over. The simulator says the same in
+what it records: the paper download names the uploaded file and that its
+bytes are not read, and every model operation's meta says `answered_from:
+fixture <id>`.
 The page opens on a dashboard of test environments, each with
 its own simulated account, step recordings, notes and graph layout; nothing
 runs until one is opened. A card's Configure edits an environment and its
@@ -152,10 +166,20 @@ model received it and the reply as parsed, with the rest of the call one click
 away in the request list. **Simulated**, the plain URL, is the
 simulator above: it shows what the server is designed to do for each press,
 not what production did. **Real** (`/engelbart/setup/test?mode=real`) puts
-the same setup page in the same frame against the real endpoints, signed in
-as you (the frame uses your real Supabase session; nothing is intercepted),
-and draws beside it what the server actually did. Nothing in the page
-switches between them.
+the same setup page against the real endpoints, signed in as you (the frame
+uses your real Supabase session; nothing is intercepted), and draws beside it
+what the server actually did: the PDF you upload goes to Storage, the model
+reads that object, and the reading you see is of that paper. The two are
+named side by side in the top bar as links (the mode is the URL's; the page
+stores nothing about it), and the strip under the bar says which backend the
+product is on. They are two adapters in `frame.js` with no path between them:
+`SimulatedBackend` runs in `frame.html`, which loads the simulator and its
+test cases; `RealBackend` runs in `frame-real.html`, which loads neither, so
+nothing in that frame can answer in the model's place, and a request the
+backend fails is shown as the failure it was. Should the real backend ever
+find the simulator's scripts loaded beside it (`frame.html?mode=real`, say),
+it refuses to start rather than run beside them: every request fails with
+the reason, and the strip shows it.
 Every action's reply names the trace it produced in an `x-engelbart-trace-id`
 header; the page reads that trace from `/api/engelbart-telemetry?trace=` the
 moment the reply lands and places the recorded operations under the request
@@ -202,9 +226,10 @@ drives both modes in Chromium under the deployed headers.
 
 The page is flattened from the Claude Design file `Engelbart Debugger.dc.html`
 into `engelbart/setup/test/` (`debugger.js`, `debugger.css`, `frame.html`,
-`frame.js`), with React 18 loaded from `cdn.jsdelivr.net` under subresource
-integrity, so it runs under the Engelbart CSP without `unsafe-inline` or
-`unsafe-eval`. Only the frame page (`/engelbart/setup/test/frame`) may be
+`frame-real.html`, `frame.js`), with React 18 loaded from `cdn.jsdelivr.net`
+under subresource integrity, so it runs under the Engelbart CSP without
+`unsafe-inline` or `unsafe-eval`. Only the two frame pages
+(`/engelbart/setup/test/frame`, `/engelbart/setup/test/frame-real`) may be
 embedded, and only by this origin; the setup page itself keeps
 `frame-ancestors 'none'`. `e2e/debugger.spec.js` opens the debugger under the
 exact headers `vercel.json` deploys and fails on any CSP violation.

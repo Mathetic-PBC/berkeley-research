@@ -113,8 +113,8 @@ function scriptSources(html) {
   return out;
 }
 
-test("the debugger and its frame load only same-origin files besides the pinned React and supabase-js builds, with no inline script", () => {
-  for (const file of ["index.html", "frame.html"]) {
+test("the debugger and its frames load only same-origin files besides the pinned React and supabase-js builds, with no inline script", () => {
+  for (const file of ["index.html", "frame.html", "frame-real.html"]) {
     const html = fs.readFileSync(path.join(DIR, file), "utf8");
     const scripts = scriptSources(html);
     assert.ok(scripts.length >= 4, file + " loads its scripts");
@@ -127,6 +127,12 @@ test("the debugger and its frame load only same-origin files besides the pinned 
     }
     assert.doesNotMatch(html, /\bon[a-z]+="/, file + " has no inline event handlers");
   }
+  // The two frames are the two backends. The simulated one carries the simulator and its test cases; the real
+  // one carries neither, so nothing in it can answer for the model.
+  const srcs = (file) => scriptSources(fs.readFileSync(path.join(DIR, file), "utf8")).map((x) => x.src);
+  assert.deepEqual(srcs("frame.html").filter((x) => /fixture|sim-backend|prompts/.test(x)), ["/engelbart/setup/test/fixture.js", "/engelbart/setup/test/prompts.js", "/engelbart/setup/test/sim-backend.js"]);
+  assert.deepEqual(srcs("frame-real.html").filter((x) => x.startsWith("/")), ["/engelbart/setup/test/frame.js", "/engelbart/setup/install.js", "/engelbart/setup/setup.js"], "the real frame: the observer and the product, nothing simulated");
+  assert.ok(srcs("frame-real.html").some((x) => /@supabase\/supabase-js@/.test(x)), "and the pinned supabase-js, for the member's real session");
 });
 
 test("vercel serves the debugger and lets only the frame page be embedded, by this origin", () => {
@@ -135,14 +141,70 @@ test("vercel serves the debugger and lets only the frame page be embedded, by th
   const setup = v.headers.find((r) => r.source === "/engelbart/(.*)");
   assert.match(setup.headers.find((h) => h.key === "Content-Security-Policy").value, /frame-ancestors 'none'/, "the setup page still cannot be framed");
   assert.equal(setup.headers.find((h) => h.key === "X-Frame-Options").value, "DENY");
-  const frame = v.headers.find((r) => r.source === "/engelbart/setup/test/frame");
-  assert.ok(frame, "the frame page has its own header rule");
-  assert.ok(v.headers.indexOf(frame) > v.headers.indexOf(setup), "the frame rule comes after the general rule, so it wins");
-  const csp = frame.headers.find((h) => h.key === "Content-Security-Policy").value;
-  assert.match(csp, /frame-ancestors 'self'/);
-  assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);
-  assert.doesNotMatch(csp, /unsafe-(inline|eval)/);
-  assert.equal(frame.headers.find((h) => h.key === "X-Frame-Options").value, "SAMEORIGIN");
+  for (const source of ["/engelbart/setup/test/frame", "/engelbart/setup/test/frame-real"]) {
+    const frame = v.headers.find((r) => r.source === source);
+    assert.ok(frame, source + " has its own header rule");
+    assert.ok(v.headers.indexOf(frame) > v.headers.indexOf(setup), "the frame rule comes after the general rule, so it wins");
+    const csp = frame.headers.find((h) => h.key === "Content-Security-Policy").value;
+    assert.match(csp, /frame-ancestors 'self'/);
+    assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);
+    assert.doesNotMatch(csp, /unsafe-(inline|eval)/);
+    assert.equal(frame.headers.find((h) => h.key === "X-Frame-Options").value, "SAMEORIGIN");
+  }
+  assert.deepEqual(v.headers.find((r) => r.source === "/engelbart/setup/test/frame").headers, v.headers.find((r) => r.source === "/engelbart/setup/test/frame-real").headers, "the two frame pages are served alike");
+});
+
+// The simulated backend is a test case: deterministic, named, and never a reading of the uploaded file.
+async function uploadAndAnalyze(sim, fileName) {
+  const post = async (path, body) => { const r = await sim.handle(path, { method: "POST", body: JSON.stringify(body) }); const out = await r.json(); assert.equal(r.ok, true, JSON.stringify(out)); return out; };
+  const opened = await post("/api/engelbart-onboarding", { action: "open" });
+  await post("/api/engelbart-onboarding", { action: "step", step: 4, fields: { name: "Ada", year: "Third year", major: "Biology", depth: "some" } });
+  const paper = await post("/api/engelbart-setup", { action: "own_paper", title: fileName.replace(/\.pdf$/i, ""), wantsUpload: true });
+  await sim.handle(paper.upload.uploadUrl, { method: "PUT", body: { size: 4321 } });
+  await post("/api/engelbart-setup", { action: "own_paper_saved", id: paper.id, token: paper.token });
+  await post("/api/engelbart-onboarding", { action: "sources", paper_id: paper.id, paper_token: paper.token, paper_familiarity: 1 });
+  const out = await post("/api/engelbart-onboarding", { action: "analysis", run: true });
+  return { onboarding: opened.onboarding, paperId: paper.id, analysis: out.analysis };
+}
+
+test("the simulator answers from its test case whatever file is uploaded, says so in every operation, and names the case it was created with", async () => {
+  const w = browserish();
+  const A = [], B = [];
+  const simA = w.EngelbartSim.create({ emit: (ev) => A.push(JSON.parse(JSON.stringify(ev))), speed: 0 });
+  const simB = w.EngelbartSim.create({ emit: (ev) => B.push(JSON.parse(JSON.stringify(ev))), speed: 0 });
+  assert.deepEqual(JSON.parse(JSON.stringify(simA.fixture)), { id: "inspectable-intent", name: "Inspectable Intent in Agentic Programming", file: "Inspectable Intent in Agentic Programming.pdf" });
+  const a = await uploadAndAnalyze(simA, "TutorTrace.pdf");
+  const b = await uploadAndAnalyze(simB, "Cytokine responses.pdf");
+  assert.equal(a.analysis.title, "Inspectable Intent in Agentic Programming", "the reading is the test case's, not the file's");
+  assert.deepEqual(a.analysis, b.analysis, "deterministic: two different uploads, the same answer");
+  // The operations say where the answer came from: the download names the uploaded file and that it is not read;
+  // the model call's meta and its context name the test case.
+  const download = A.filter((e) => e.type === "op" && e.name === "download paper (service role)").pop();
+  assert.equal(download.output.uploaded_file, "TutorTrace.pdf");
+  assert.equal(download.output.object, "papers/" + a.paperId + ".pdf");
+  assert.match(download.output.simulated, /the object's bytes are not read; the model answers from the test case “Inspectable Intent in Agentic Programming”/);
+  const model = A.filter((e) => e.type === "op" && e.name === "analyze the paper").pop();
+  assert.equal(model.meta.answered_from, "fixture inspectable-intent");
+  assert.match(model.input.context.answered_from, /^the test case “Inspectable Intent in Agentic Programming” \(inspectable-intent\): saved model output; the uploaded PDF is not read$/);
+  assert.ok(A.filter((e) => e.type === "op" && e.kind === "model").every((e) => e.meta.answered_from === "fixture inspectable-intent"), "every model call says so");
+  assert.equal(simA.state().fixture, "inspectable-intent", "the record names its case");
+});
+
+test("a test case is chosen by id from the registry; an unknown id is refused, and a record made on another case starts over", async () => {
+  const w = browserish();
+  w.EGB_FIXTURES.tutortrace = { id: "tutortrace", name: "TutorTrace", file: "TutorTrace.pdf", bytes: 10,
+    data: Object.assign({}, w.EGB_FIXTURE, { PAPER: Object.assign({}, w.EGB_FIXTURE.PAPER, { title: "TutorTrace", one_liner: "Traces of tutoring." }) }) };
+  assert.throws(() => w.EngelbartSim.create({ emit() {}, speed: 0, fixture: "nope" }), /No simulated test case named “nope”/);
+  const first = w.EngelbartSim.create({ emit() {}, speed: 0, persist: "egb.sim.db.lab" });
+  await uploadAndAnalyze(first, "Anything.pdf");
+  assert.equal(first.state().onboardings.length, 1);
+  const second = w.EngelbartSim.create({ emit() {}, speed: 0, persist: "egb.sim.db.lab", fixture: "tutortrace" });
+  assert.equal(second.fixture.name, "TutorTrace");
+  assert.equal(second.state().onboardings.length, 0, "the old case's record is not this case's");
+  const out = await uploadAndAnalyze(second, "Anything.pdf");
+  assert.equal(out.analysis.title, "TutorTrace", "the second case answers with its own data");
+  const same = w.EngelbartSim.create({ emit() {}, speed: 0, persist: "egb.sim.db.lab", fixture: "tutortrace" });
+  assert.equal(same.state().onboardings.length, 1, "reopening on the same case keeps the record");
 });
 
 // A row at the brainstorm with the paper read and the resources still being fitted.

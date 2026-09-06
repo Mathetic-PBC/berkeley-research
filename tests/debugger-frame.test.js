@@ -35,7 +35,9 @@ function frame(opts) {
     fetch: opts.fetch,
   };
   if ("supabase" in opts) sandbox.supabase = opts.supabase;
-  if (opts.sim) sandbox.EngelbartSim = opts.sim;
+  // The simulator's globals, as frame.html loads them; the real page (frame-real.html) loads neither.
+  if (opts.sim) { sandbox.EngelbartSim = opts.sim; sandbox.EGB_FIXTURES = opts.fixtures || { "inspectable-intent": { id: "inspectable-intent", name: "Inspectable Intent in Agentic Programming" } }; }
+  if (opts.fixtureOnly) sandbox.EGB_FIXTURE = { PAPER: {} };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(SRC, sandbox, { filename: "frame.js" });
@@ -71,7 +73,7 @@ test("real mode: the page's request reaches the real fetch untouched, and the de
     }, { "X-Engelbart-Trace-Id": "A7552EC53C282068E729FEF8B025B8D6" });
   };
   const F = frame({ mode: "real", fetch, supabase: supabaseWith(null).lib });
-  assert.deepEqual(F.messages("ready"), [{ egb: "ready", speed: 1, mode: "real" }], "the frame announces its mode");
+  assert.deepEqual(F.messages("ready"), [{ egb: "ready", speed: 1, mode: "real", backend: "RealBackend", fixture: null, refused: null }], "the frame announces its mode and its backend: real, with no test case");
 
   const init = { method: "POST", headers: { Authorization: "Bearer " + JWT, "Content-Type": "application/json" },
     body: JSON.stringify({ action: "step", name: "Ada", key: "sk-ant-secret", token: "t0k", nested: { apikey: "anon-key", note: "fine", link: "https://x.supabase.co/f?token=abc&x=1" } }) };
@@ -186,8 +188,10 @@ test("real mode: the simulator's commands do nothing but say so; picking and rel
   const F = frame({ mode: "real", fetch: async () => reply(200, {}), supabase: supabaseWith(null).lib });
   F.command("snapshot");
   assert.deepEqual(F.messages("snapshot"), [{ egb: "snapshot", state: null }], "there is no simulator state to report");
-  F.command("reset"); F.command("dropFixture"); F.command("speed", 0.25);
-  assert.equal(F.messages("notice").length, 3);
+  F.command("reset"); F.command("speed", 0.25);
+  assert.equal(F.messages("notice").length, 2);
+  F.command("dropFixture");
+  assert.equal(F.messages("notice").length, 2, "there is no fixture paper to drop, in either mode: the command is gone");
   assert.ok(F.messages("notice").every((n) => /simulator control; it does nothing in Real mode/.test(n.text)));
   assert.equal(F.w.reloaded, 0, "reset did not reload the real page: there was nothing to reset");
   F.command("pick");
@@ -228,14 +232,16 @@ test("real mode: the edited prompts the debugger sends ride on the model actions
 
 test("simulated mode is unchanged: /api goes to the in-page simulator, the session is the fake one, and the simulator's commands work", async () => {
   const created = [], handled = [], speeds = [];
-  const sim = { create(opts) { created.push(opts); return { USER: { id: "sim-user", email: "reader@sim.local" }, isSim: (u) => /^\/api\//.test(String(u)), handle: (u, init) => { handled.push([u, init && init.method]); return Promise.resolve("simulated"); },
+  const sim = { create(opts) { created.push(opts); return { fixture: { id: "inspectable-intent", name: "Inspectable Intent in Agentic Programming", file: "Inspectable Intent in Agentic Programming.pdf" }, USER: { id: "sim-user", email: "reader@sim.local" }, isSim: (u) => /^\/api\//.test(String(u)), handle: (u, init) => { handled.push([u, init && init.method]); return Promise.resolve("simulated"); },
     local: () => Promise.resolve(), setSpeed: (v) => speeds.push(v), setPrompts() {}, state: () => ({ onboardings: 1 }), reset() { created.push("reset"); } }; } };
   const passed = [];
   const F = frame({ mode: "sim", search: "?env=lab-1&speed=4", fetch: async (u) => { passed.push(u); return "real"; }, sim });
   assert.equal(created.length, 1);
   assert.equal(created[0].persist, "egb.sim.db.lab-1", "the simulated account lives under the environment's key");
   assert.equal(created[0].speed, 4);
-  assert.deepEqual(F.messages("ready"), [{ egb: "ready", speed: 4, mode: "sim" }]);
+  assert.equal(created[0].fixture, null, "no test case named on the URL: the simulator's default");
+  assert.deepEqual(F.messages("ready"), [{ egb: "ready", speed: 4, mode: "sim", backend: "SimulatedBackend", refused: null,
+    fixture: { id: "inspectable-intent", name: "Inspectable Intent in Agentic Programming", file: "Inspectable Intent in Agentic Programming.pdf" } }], "the frame names the test case it answers from");
   assert.equal(await F.w.fetch("/api/engelbart-onboarding", { method: "POST" }), "simulated");
   assert.deepEqual(handled, [["/api/engelbart-onboarding", "POST"]]);
   assert.equal(await F.w.fetch("https://fonts.googleapis.com/css"), "real");
@@ -255,4 +261,58 @@ test("simulated mode is unchanged: /api goes to the in-page simulator, the sessi
   created.length = 0;
   frame({ mode: "sim", search: "?env=../etc", fetch: async () => "real", sim });
   assert.equal(created[0].persist, "egb.sim.db.etc", "the environment key is sanitized");
+  created.length = 0;
+  frame({ mode: "sim", search: "?env=lab-1&fixture=tutortrace", fetch: async () => "real", sim });
+  assert.equal(created[0].fixture, "tutortrace", "the test case named on the URL is the simulator's");
+});
+
+// The guarantee: the two backends are adapters with no path between them. The real one refuses to run in
+// a frame that carries the simulator, and answers nothing itself; the simulated one answers only from the
+// test case it was asked for, and refuses one it does not have rather than running another.
+test("real mode refuses to boot beside the simulator: no request is answered, the reason is posted, and the real fetch is never touched", async () => {
+  const calls = [];
+  const created = [];
+  const sim = { create(opts) { created.push(opts); return {}; } };
+  const F = frame({ mode: "real", fetch: async (u) => { calls.push(u); return reply(200, { onboarding: {} }); }, supabase: supabaseWith(null).lib, sim });
+  const ready = F.messages("ready")[0];
+  assert.equal(ready.backend, "RealBackend");
+  assert.equal(ready.fixture, null);
+  assert.match(ready.refused, /Real mode refused to start: simulator scripts .* are loaded in this frame/);
+  assert.equal(created.length, 0, "the simulator was not created");
+  await assert.rejects(F.w.fetch("/api/engelbart-onboarding", { method: "POST", body: "{}" }), /Real mode refused to start/);
+  await assert.rejects(F.w.fetch("https://x.supabase.co/storage/v1/object/upload/sign/p.pdf?token=t", { method: "PUT" }), /Real mode refused to start/);
+  await assert.rejects(F.w.supabase.createClient().auth.getSession(), /Real mode refused to start/);
+  assert.equal(calls.length, 0, "nothing reached the real backend either: the frame is unusable, not half real");
+  assert.equal(F.messages("request").length, 0, "and nothing was reported as a request");
+  F.command("reset");
+  assert.match(F.messages("notice")[0].text, /refused to start/);
+  // The fixture alone, without the simulator, is enough to refuse: nothing that could answer for the model may be present.
+  const G = frame({ mode: "real", fetch: async () => reply(200, {}), supabase: supabaseWith(null).lib, fixtureOnly: true });
+  assert.match(G.messages("ready")[0].refused, /Real mode refused to start/);
+});
+
+test("real mode: a backend failure is the failure the page sees; nothing stands in for it", async () => {
+  const F = frame({ mode: "real", fetch: async () => { throw new Error("proxy is down"); }, supabase: supabaseWith(null).lib });
+  await assert.rejects(F.w.fetch("/api/engelbart-onboarding", { method: "POST", body: JSON.stringify({ action: "analysis", run: true }) }), /proxy is down/);
+  const ended = F.messages("response");
+  assert.equal(ended.length, 1);
+  assert.equal(ended[0].ok, false);
+  assert.equal(ended[0].status, 0);
+  assert.equal(ended[0].error, "proxy is down");
+  assert.equal(ended[0].body, null, "no body was invented for the failed request");
+  const G = frame({ mode: "real", fetch: async () => reply(502, { error: "The model did not answer" }), supabase: supabaseWith(null).lib });
+  const r = await G.w.fetch("/api/engelbart-onboarding", { method: "POST", body: JSON.stringify({ action: "analysis", run: true }) });
+  assert.equal(r.status, 502, "the caller gets the real 502");
+  assert.deepEqual(G.messages("response")[0].body, { error: "The model did not answer" });
+});
+
+test("simulated mode: a test case the simulator does not have is refused, not replaced by another", async () => {
+  const sim = { create(opts) { if (opts.fixture === "nope") throw new Error("No simulated test case named “nope”"); return {}; } };
+  const F = frame({ mode: "sim", search: "?env=lab-1&fixture=nope", fetch: async () => "real", sim });
+  const ready = F.messages("ready")[0];
+  assert.equal(ready.backend, "SimulatedBackend");
+  assert.match(ready.refused, /No simulated test case named “nope”/);
+  await assert.rejects(F.w.fetch("/api/engelbart-onboarding", { method: "POST" }), /No simulated test case named/);
+  const G = frame({ mode: "sim", fetch: async () => "real" }); // frame-real.html opened without ?mode=real: no simulator to answer
+  assert.match(G.messages("ready")[0].refused, /The simulator did not load/);
 });

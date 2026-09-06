@@ -142,7 +142,20 @@ class Debugger extends React.Component {
   MAJORS() { return ["Computer Science", "Electrical Engineering & Computer Sciences", "Data Science", "Cognitive Science", "Molecular & Cell Biology", "Bioengineering", "Mechanical Engineering", "Applied Mathematics", "Statistics", "Physics", "Economics", "Business Administration", "Political Science", "Psychology", "Public Health", "English", "History", "Sociology", "Architecture", "Undeclared"]; }
   DEPTHS() { return [["everyday", "Everyday"], ["some", "Some detail"], ["technical", "Technical"], ["expert", "Expert"]]; }
   FAMS() { return ["I'm completely lost", "I wouldn't know where to start", "I can get oriented", "I can get started", "I can extend it"]; }
-  defaultConfig() { return { description: "", notes: "", prompts: {}, participant: { enabled: false, name: "", year: "Second year", major: "", depth: "some", paperFamiliarity: 1, projectUrl: "", repoUrl: "", paper: null } }; }
+  defaultConfig() { return { description: "", notes: "", prompts: {}, fixture: this.defaultFixture(), participant: { enabled: false, name: "", year: "Second year", major: "", depth: "some", paperFamiliarity: 1, projectUrl: "", repoUrl: "", paper: null } }; }
+  // The simulated test cases (fixture.js, EGB_FIXTURES): what an environment's simulated model answers from.
+  // An environment names one; the default is the registry's default. One that names a case no longer in the
+  // registry runs the default, and the strip under the bar says which case is running either way.
+  FIXTURES() { const reg = window.EGB_FIXTURES || {}; return Object.keys(reg).map(k => reg[k]); }
+  defaultFixture() { return window.EGB_DEFAULT_FIXTURE || (this.FIXTURES()[0] || {}).id || ""; }
+  fixtureOf(env) { const reg = window.EGB_FIXTURES || {}, id = env && env.config && env.config.fixture; return (id && reg[id]) || reg[this.defaultFixture()] || { id: this.defaultFixture(), name: this.defaultFixture(), file: "", description: "" }; }
+  // Changing an environment's test case starts its simulated account over: the record was the old case's answers.
+  setFixture(envId, id) {
+    if (!(window.EGB_FIXTURES || {})[id]) return;
+    const envs = this.state.envs.map(e => e.id === envId ? Object.assign({}, e, { config: Object.assign({}, this.defaultConfig(), e.config || {}, { fixture: id }) }) : e); this.persistEnvs(envs);
+    // The frame reloads on the new case and reports it on ready; until then, what it said before is stale.
+    this.setState({ envs: envs, frame: null }, () => { if (envId === this.state.envId) this.resetOpenEnv(); });
+  }
   // The popup edits a draft; Save writes it to the environment (creating it in "new" mode). A card on the
   // dashboard configures its own environment, which need not be the open one; the dropdown configures the open one.
   openConfig(mode, envId) {
@@ -156,7 +169,7 @@ class Debugger extends React.Component {
     const c = this.state.config; if (!c) return; const d = c.draft;
     const defaults = {}; this.PROMPTS().forEach(([k, l, def]) => { defaults[k] = def; });
     const prompts = {}; Object.keys(d.prompts || {}).forEach(k => { if (d.prompts[k] != null && d.prompts[k] !== defaults[k]) prompts[k] = d.prompts[k]; });
-    const config = { description: d.description, notes: d.notes, prompts: prompts, participant: d.participant };
+    const config = { description: d.description, notes: d.notes, prompts: prompts, fixture: d.fixture || this.defaultFixture(), participant: d.participant };
     if (c.mode === "new") { this.setState({ config: null }); this.createEnv(d.name, config); return; }
     const envs = this.state.envs.map(e => e.id === c.envId ? Object.assign({}, e, { name: (d.name || "").trim() || e.name, config: config }) : e); this.persistEnvs(envs);
     // The running product carries the open environment's prompts; another environment's take effect when it opens.
@@ -220,6 +233,7 @@ class Debugger extends React.Component {
   }
   // Resetting from the dashboard: the environment's simulated account and step tabs go, its name, participant,
   // prompts, notes and graph zoom stay. (The open environment resets from its own bar, where the product reloads too.)
+  resetOpenEnv() { const tabs = this.loadTabs(); this.setState({ recordings: tabs, targetId: tabs[0].id, viewing: 0, sel: null, open: {}, flowSel: null, connected: false, flowPos: {}, flowPan: { x: 0, y: 0 } }, () => this.saveEnvData()); this.cmd("reset"); }
   resetEnv(env) {
     if (!env || !window.confirm("Reset “" + env.name + "”? Its simulated account's setup is dropped and every step tab is cleared; its name, participant, prompts and notes stay.")) return;
     const d = this.loadEnvData(env.id) || {}, tabs = this.loadTabs();
@@ -236,7 +250,7 @@ class Debugger extends React.Component {
     const participant = p && p.enabled ? [p.name || "Unnamed participant", p.year, p.major].filter(Boolean).join(" · ") + " · opens at the Paper step" : "Fresh participant · opens at the Start step";
     return { id: e.id, name: e.name, meta: (e.lastUsedAt ? "Last opened " : "Created ") + dateLabel + (edited ? " · " + edited + (edited === 1 ? " prompt edited" : " prompts edited") : ""),
       hasDescription: !!(e.config && e.config.description), description: e.config && e.config.description || "",
-      participant: participant,
+      participant: participant, testCase: "Test case · " + this.fixtureOf(e).name,
       stats: [{ k: "steps", v: String(st.steps || 0) }, { k: "requests", v: String(st.requests || 0) }, { k: "model calls", v: String(st.model || 0) }, { k: "est. cost", v: st.cost ? this.fmtCost(st.cost) : "$0" }, { k: "server time", v: this.fmtMs(st.ms) === "—" ? "0 ms" : this.fmtMs(st.ms) }],
       open: () => this.openEnv(e.id),
       configure: (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); this.openConfig("edit", e.id); },
@@ -337,7 +351,7 @@ class Debugger extends React.Component {
     const f = this.frameRef.current; if (!f || e.source !== f.contentWindow) return;
     const m = e.data; if (!m || !m.egb) return;
     const real = this.isReal();
-    if (m.egb === "ready") { this.connectedAt = Date.now(); this.lastPress = null; this.setState({ connected: true, picking: false });
+    if (m.egb === "ready") { this.connectedAt = Date.now(); this.lastPress = null; this.setState({ connected: true, picking: false, frame: { backend: m.backend || (real ? "RealBackend" : "SimulatedBackend"), fixture: m.fixture || null, refused: m.refused || "" } });
       if (real) { const o = this.realOverrides(); if (o) this.cmd("prompts", o); return; } // no speed or snapshot in the real frame; only the chosen prompts
       this.cmd("speed", this.SPEEDS.find(x => x.key === this.state.speedKey).value); this.cmd("snapshot");
       const env = this.state.envs.find(e => e.id === this.state.envId); if (env && env.config && env.config.prompts) this.cmd("prompts", env.config.prompts); return; }
@@ -430,7 +444,7 @@ class Debugger extends React.Component {
   // The frame's word on the member's session. Without one the product leaves for /engelbart/signin, which
   // refuses to be framed, so the pane says what happened and how to come back.
   frameSession(m) { this.setReal({ frameSession: { signedIn: !!m.signedIn, email: m.email || "", error: m.error || "" } }); }
-  reloadFrame() { this.setState(s => ({ frameKey: s.frameKey + 1, connected: false, real: Object.assign({}, s.real, { frameSession: undefined }) })); }
+  reloadFrame() { this.setState(s => ({ frameKey: s.frameKey + 1, connected: false, frame: null, real: Object.assign({}, s.real, { frameSession: undefined }) })); }
   // A request the frame reported as it started: a row of its own until its trace arrives.
   requestStarted(m) {
     const rq = { id: m.id, at: m.at || Date.now(), method: m.method, path: m.path, where: m.where, action: m.action, request: m.body === undefined ? null : m.body, step: m.step || null, bg: !!m.bg, poll: !!m.poll, status: "running", code: null, ms: 0, response: null, trace_id: null, trace: null };
@@ -936,6 +950,8 @@ class Debugger extends React.Component {
         const vm = { open: true, title: c.mode === "new" ? "New environment" : "Configure environment", saveLabel: c.mode === "new" ? "Create environment" : "Save",
           sections: [["about", "About"], ["participant", "Participant"], ["prompts", "Prompts"]].map(([k, label]) => ({ label: label, color: sec === k ? "#171717" : "#8f8f8f", line: sec === k ? "#171717" : "transparent", select: () => this.setState({ config: Object.assign({}, c, { section: k }) }) })),
           isAbout: sec === "about", isParticipant: sec === "participant", isPrompts: sec === "prompts",
+          fixture: d.fixture || this.defaultFixture(), fixtures: this.FIXTURES().map(f => ({ value: f.id, label: f.name })), setFixture: (e) => this.setDraft("fixture", e.target.value),
+          fixtureNote: (this.FIXTURES().find(f => f.id === (d.fixture || this.defaultFixture())) || {}).description || "",
           name: d.name, setName: (e) => this.setDraft("name", e.target.value), description: d.description, setDescription: (e) => this.setDraft("description", e.target.value), notes: d.notes, setNotes: (e) => this.setDraft("notes", e.target.value),
           pEnabled: !!d.participant.enabled, pToggle: seg([[true, "Prefilled"], [false, "Blank"]], d.participant.enabled, v => this.setDraft("participant.enabled", v)),
           pName: d.participant.name, setPName: (e) => this.setDraft("participant.name", e.target.value), pMajor: d.participant.major, setPMajor: (e) => this.setDraft("participant.major", e.target.value),
@@ -955,13 +971,14 @@ class Debugger extends React.Component {
         return vm; })(),
       // The dashboard is Simulated mode with nothing open; its cards are ordered by the last opening, then creation.
       isDashboard: !real && !S.envId, envsEmpty: !S.envs.length,
+      mode: this.modeVM(),
       envCards: S.envs.slice().sort((a, b) => (b.lastUsedAt || b.createdAt || 0) - (a.lastUsedAt || a.createdAt || 0)).map(e => this.envCard(e)),
       newEnv: () => this.openConfig("new"),
       envId: S.envId || "",
       envOptions: S.envs.map(e => ({ value: e.id, label: e.name })).concat([{ value: "__all", label: "All environments…" }, { value: "__configure", label: "Configure this environment…" }, { value: "__new", label: "New environment…" }, { value: "__delete", label: "Delete this environment…" }]),
       envSelect: (e) => { const v = e.target.value; if (v === "__all") this.closeEnv(); else if (v === "__configure") this.openConfig("edit"); else if (v === "__new") this.openConfig("new"); else if (v === "__delete") { this.deleteEnv(S.envs.find(x => x.id === S.envId)); this.forceUpdate(); } else if (v && v !== S.envId) this.openEnv(v); },
       notice: S.notice,
-      resetProduct: () => { if (window.confirm("Reset the test environment? The simulated account's setup is dropped, the product reloads at step one, and every step tab is cleared.")) { const tabs = this.loadTabs(); this.setState({ recordings: tabs, targetId: tabs[0].id, viewing: 0, sel: null, open: {}, flowSel: null, connected: false, flowPos: {}, flowPan: { x: 0, y: 0 } }, () => this.saveEnvData()); this.cmd("reset"); } },
+      resetProduct: () => { if (window.confirm("Reset the test environment? The simulated account's setup is dropped, the product reloads at step one, and every step tab is cleared.")) this.resetOpenEnv(); },
       recordings: S.recordings.map((r, i) => { const on = r === live, isTarget = r === this.target(); return { id: r.id, label: r.name, title: (r.step ? "requests made while the product is on the " + r.step + " step · " : "requests made before the first step is on screen · ") + (on ? "click the name to rename" : "click to view"), on: on, off: !on, color: on ? "#171717" : "#8f8f8f", subColor: on ? "#4d4d4d" : "#c9c9c9", line: on ? "#171717" : "transparent",
         select: () => { if (!on) this.setState({ viewing: i, sel: null, stick: true, flowSel: null }); },
         rename: (e) => { r.name = e.target.value || r.step || "Start"; this.forceUpdate(); },
@@ -995,7 +1012,8 @@ class Debugger extends React.Component {
       lastRan: live.stages.length ? "Last run " + this.clock(live.stages[live.stages.length - 1].at) : "No run yet",
       // Real mode names only its mode: no environment, no prefilled participant, and never the product's test
       // switch, whose reset buttons would clear the member's real record. The dashboard mounts no frame at all.
-      frameSrc: real ? "/engelbart/setup/test/frame?mode=real" : S.envId ? "/engelbart/setup/test/frame?env=" + S.envId + (testMode ? "&test=true" : "") + this.participantParam((S.envs.find(e => e.id === S.envId) || {}).config) : "",
+      // The real page loads no simulator and no fixture; the simulated page is told which test case to answer from.
+      frameSrc: real ? "/engelbart/setup/test/frame-real?mode=real" : S.envId ? "/engelbart/setup/test/frame?env=" + S.envId + (testMode ? "&test=true" : "") + "&fixture=" + encodeURIComponent(this.fixtureOf(S.envs.find(e => e.id === S.envId)).id) + this.participantParam((S.envs.find(e => e.id === S.envId) || {}).config) : "",
       onListScroll: (e) => { const el = e.target; const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 48; if (stick !== S.stick) this.setState({ stick: stick }); },
       isLive: S.tab === "live", isCases: S.tab === "cases", isCompare: S.tab === "compare",
       liveEmpty: !visible.length, stages: visible.map((s, i) => this.stageVM(s, live.stages.indexOf(s), "live", live)),
@@ -1037,6 +1055,34 @@ class Debugger extends React.Component {
       signedOut: !!(fs && fs.signedIn === false), signedOutWhy: (fs && fs.error) || "", reloadFrame: () => this.reloadFrame(),
       viewingPicked: !!R.picked, pickedTitle: R.picked ? label(R.picked) : "" };
   }
+  // Which backend the product is on, said plainly: the links change the URL (the mode is the URL's, and the page
+  // stores nothing about it); the strip names the backend the frame reported, and for the simulator, its test case.
+  modeVM() {
+    const S = this.state, real = S.mode === "real", fr = S.frame || {};
+    let q; try { q = new URLSearchParams(window.location.search); } catch (e) { q = new URLSearchParams(""); }
+    q.delete("mode"); const simHref = "/engelbart/setup/test" + (q.toString() ? "?" + q.toString() : ""); q.set("mode", "real"); const realHref = "/engelbart/setup/test?" + q.toString();
+    const env = S.envs.find(e => e.id === S.envId), fx = !real && env ? this.fixtureOf(env) : null;
+    // The case the frame said it is running wins over the configured one, should they ever differ.
+    const running = fr.fixture && fr.fixture.name ? fr.fixture : fx;
+    const email = (S.real && S.real.session && S.real.session.email) || (S.real && S.real.frameSession && S.real.frameSession.email) || "";
+    return { isReal: real, simHref: simHref, realHref: realHref, backend: fr.backend || (real ? "RealBackend" : "SimulatedBackend"), refused: fr.refused || "",
+      isDashboard: !real && !S.envId, testCase: running ? running.name : "", testCaseId: fx ? fx.id : "", testCases: this.FIXTURES().map(f => ({ value: f.id, label: f.name })),
+      pickTestCase: (e) => this.setFixture(S.envId, e.target.value),
+      label: real ? "Real backend" : S.envId ? "Simulated test case" : "Simulated",
+      text: real ? "The setup page runs as " + (email || "you") + " against the real endpoints: the PDF you upload goes to Storage and is what the model reads, and model calls spend credit. Nothing in this mode comes from a fixture; a failure shows as the failure."
+        : S.envId ? "Model outputs in this mode come from a saved fixture. Uploaded PDFs do not change the fixture."
+        : "Every environment answers from a saved test case; nothing here reaches the real backend. Open an environment to run one." };
+  }
+  renderModeStrip(M) {
+    const PILL = "padding:4px 9px;border-radius:999px;font:500 10px/1 " + SANS + ";letter-spacing:1.2px;text-transform:uppercase;white-space:nowrap";
+    return h("div", { "data-screen-label": "Mode", style: css("flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:7px 16px;border-bottom:1px solid #eaeaea;background:" + (M.isReal ? "#fff7f7" : "#f6f9ff")) },
+      h("span", { style: css(PILL + ";color:#fff;background:" + (M.isReal ? "#e70022" : "#0070f3")) }, M.label),
+      !M.isReal && M.testCaseId ? h("select", { value: M.testCaseId, onChange: M.pickTestCase, "data-testcase-picker": "1", title: "the saved test case this environment's simulated backend answers from; changing it starts the simulated account over",
+        style: css("max-width:320px;padding:4px 22px 4px 8px;border:1px solid #eaeaea;border-radius:5px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
+        M.testCases.map(t => h("option", { key: t.value, value: t.value }, "Test case ▾ " + t.label))) : null,
+      M.refused ? h("span", { style: css("font:12px/1.4 " + SANS + ";color:#e70022;flex:1 1 200px;min-width:0") }, M.refused)
+        : h("span", { style: css("font:12px/1.4 " + SANS + ";color:#4d4d4d;flex:1 1 200px;min-width:0;text-wrap:pretty") }, M.text));
+  }
   // The product left for /engelbart/signin, which refuses to be framed: say so over the empty frame.
   renderSignedOut(R) {
     return h("div", { "data-screen-label": "Signed out", style: css("position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:#fafafa") },
@@ -1056,6 +1102,10 @@ class Debugger extends React.Component {
     const SELECT = "max-width:300px;padding:5px 24px 5px 9px;border:1px solid #eaeaea;border-radius:5px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer";
     return h("div", { "data-screen-label": "Top bar", style: css("flex:none;min-height:44px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 16px;border-bottom:1px solid #eaeaea;white-space:nowrap") },
       h("span", { style: css("font:500 15px/1 " + SANSF + ";letter-spacing:-0.2px") }, "Engelbart"),
+      h("span", { "data-mode-links": "1", style: css("display:inline-flex;padding:2px;border:1px solid #eaeaea;border-radius:999px") },
+        [["Simulated", V.mode.simHref, !V.isReal], ["Real", V.mode.realHref, V.isReal]].map(([label, href, on]) =>
+          h("a", { key: label, href: href, "aria-current": on ? "page" : undefined, title: on ? "the mode this page is in" : "open the debugger in " + label + " mode (the mode is the URL's)",
+            style: css("padding:4px 10px;border-radius:999px;font:500 11px/1 " + SANS + ";text-decoration:none;background:" + (on ? "#171717" : "transparent") + ";color:" + (on ? "#fff" : "#4d4d4d")) }, label))),
       V.isReal
         ? h("select", { value: R.pickerValue, onChange: R.pick, "data-run-picker": "1", title: "what the panel shows: this session, or one of your earlier runs", style: css(SELECT) },
           R.pickerOptions.map(o => h("option", { key: o.value, value: o.value }, o.label)))
@@ -1092,6 +1142,7 @@ class Debugger extends React.Component {
               h("button", { onClick: ec.remove, "aria-label": "delete environment", title: "Delete this environment", className: "hv-red", style: css("flex:none;padding:0 4px;border:none;background:none;font:18px/1 " + SANS + ";color:#c9c9c9") }, "×")),
             ec.hasDescription ? h("div", { style: css("font:12.5px/1.6 " + SANS + ";color:#4d4d4d;text-wrap:pretty") }, ec.description) : null,
             h("div", { style: css("font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, ec.participant),
+            h("div", { style: css("font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, ec.testCase),
             h("div", { style: css("display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:12px 10px;padding-top:14px;border-top:1px solid #f0f0f0") },
               ec.stats.map(st => h("div", { key: st.k, style: css("min-width:0") },
                 h("div", { style: css("font:500 15px/1.2 " + MONO2 + ";color:#171717") }, st.v),
@@ -1108,6 +1159,10 @@ class Debugger extends React.Component {
     const about = h("div", { style: css("display:flex;flex-direction:column;gap:22px;padding:4px 0 12px") },
       field("Name", h("input", { value: cfg.name, onChange: cfg.setName, placeholder: "e.g. Physics major, no paper links", spellCheck: false, className: "fc-blue",
         style: css("display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;border:1px solid #eaeaea;border-radius:8px;background:#fafafa;outline:none;font:500 14px/1.5 " + SANS + ";color:#171717") })),
+      field("Test case", h("div", null,
+        h("select", { value: cfg.fixture, onChange: cfg.setFixture, "data-fixture-picker": "1", style: css("display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;border:1px solid #eaeaea;border-radius:8px;background:#fafafa;outline:none;font:500 14px/1.5 " + SANS + ";color:#171717") },
+          cfg.fixtures.map(f => h("option", { key: f.value, value: f.value }, f.label))),
+        h("div", { style: css("margin-top:6px;font:11px/1.5 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, "The saved model outputs this environment's simulated backend answers with. " + cfg.fixtureNote + " Changing it starts the simulated account over."))),
       field("Description", h("textarea", { value: cfg.description, onChange: cfg.setDescription, placeholder: "What this environment is for: the scenario, the hypothesis, what to watch.", rows: 3, spellCheck: false, className: "fc-blue",
         style: css("display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;border:1px solid #eaeaea;border-radius:8px;background:#fafafa;outline:none;resize:vertical;font:13px/1.6 " + SANS + ";color:#171717") })),
       field("Notes", h("textarea", { value: cfg.notes, onChange: cfg.setNotes, placeholder: "Running notes for this environment.", rows: 5, spellCheck: false, className: "fc-blue",
@@ -1140,7 +1195,7 @@ class Debugger extends React.Component {
             h("span", { style: css("font:400 18px/1 system-ui,sans-serif;color:#8f8f8f") }, "+"),
             h("span", { style: css("font:12.5px/1.5 " + SANS + ";color:#4d4d4d") }, cfg.paperPrompt),
             h("input", { type: "file", accept: "application/pdf", onChange: cfg.setPaper, style: css("display:none") })),
-          h("div", { style: css("margin-top:6px;font:11px/1.5 " + SANS + ";color:#8f8f8f") }, "Only the file's name and size are kept; the simulated reading uses the fixture paper regardless of the PDF's contents.")),
+          h("div", { style: css("margin-top:6px;font:11px/1.5 " + SANS + ";color:#8f8f8f") }, "Only the file's name and size are kept. The simulated reading answers from the environment's test case, not from this PDF; to have a PDF read, use Real mode.")),
         h("div", { key: "links", style: css("display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px") },
           field("Project page · optional", h("input", { value: cfg.pProject, onChange: cfg.setPProject, placeholder: "https://", spellCheck: false, className: "fc-blue", style: css(FIELD.replace("font:13px/1.5 " + SANS, "font:13px/1.5 " + MONO)) })),
           field("GitHub · optional", h("input", { value: cfg.pRepo, onChange: cfg.setPRepo, placeholder: "https://", spellCheck: false, className: "fc-blue", style: css(FIELD.replace("font:13px/1.5 " + SANS, "font:13px/1.5 " + MONO)) })))
@@ -1432,6 +1487,7 @@ class Debugger extends React.Component {
     const V = this.renderVals(), R = V.real;
     return h("div", { style: css("height:100vh;display:flex;flex-direction:column;background:#fff;color:#171717;font-family:" + SANSF + ";overflow:hidden") },
       this.renderTopBar(V),
+      this.renderModeStrip(V.mode),
       this.renderConfig(V.cfg),
       V.isDashboard ? this.renderDashboard(V) : h("div", { ref: this.bodyRef, style: css("flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,56fr) 1px minmax(0,44fr)") },
         h("div", { "data-screen-label": "Product", style: css("min-width:0;min-height:0;position:relative;background:#fafafa") },
