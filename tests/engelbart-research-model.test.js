@@ -27,7 +27,7 @@ const LAB = {
 // and captures the prompt so we can assert grounding.
 function modelReturning(payload, capture) {
   return async function fetchImpl(url, options) {
-    if (capture) capture.push({ url, body: JSON.parse(options.body) });
+    if (capture) capture.push({ url, body: JSON.parse(options.body), headers: options.headers });
     return {
       ok: true, status: 200,
       async json() { return { content: [{ type: "text", text: JSON.stringify(payload) }] }; },
@@ -242,4 +242,25 @@ test("explorationToPayload survives SetupChat.normalizePayload unchanged in shap
   assert.equal(bounded.name, "P");
   assert.deepEqual(bounded.subgoals.map((s) => s.label), ["Understand", "Apply"]);
   assert.deepEqual(bounded.subgoals[0].todos, ["read x"]);
+});
+
+test("with ENGELBART_ANTHROPIC_API_KEY set, a research call goes straight to Anthropic on that key", async () => {
+  const calls = [];
+  const good = await RM.refineIdea(
+    { lab: LAB, idea: { title: "T", description: "D" }, note: "make it smaller" },
+    CREDS,
+    { fetchImpl: modelReturning({ title: "T2", description: "D2", say: "narrowed" }, calls),
+      env: { ENGELBART_ANTHROPIC_API_KEY: "sk-ant-own" } },
+  );
+  assert.equal(good.title, "T2");
+  assert.equal(calls[0].url, "https://api.anthropic.com/v1/messages");
+  assert.equal(calls[0].headers["x-api-key"], "sk-ant-own");
+  assert.equal(calls[0].headers["anthropic-version"], "2023-06-01");
+  assert.equal(calls[0].headers.Authorization, undefined);
+  // Unset, the same call is the member's key against the proxy, as before.
+  const before = [];
+  await RM.refineIdea({ lab: LAB, idea: { title: "T", description: "D" }, note: "x" }, CREDS,
+    { fetchImpl: modelReturning({ title: "T3", description: "D3", say: "s" }, before), env: {} });
+  assert.equal(before[0].url, "https://llm.example/v1/messages");
+  assert.equal(before[0].headers.Authorization, "Bearer key");
 });

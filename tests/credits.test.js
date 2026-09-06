@@ -441,3 +441,19 @@ test("a proxy that does not report blocked state still gets told what to do", as
   // proxy did not say, saying it anyway is the only safe move.
   assert.deepEqual(withheld.gate, ["unblock"]);
 });
+
+// The Anthropic bypass is a server-side routing decision for model calls, not
+// a credential: what a member (or their CLI) is handed never changes with it.
+test("the Anthropic bypass key never becomes part of a member's credentials", async () => {
+  const row = readyRow();
+  const scripted = proxyAndDatabase(row, 12.5);
+
+  const result = await credentialsFor({ id: "user-uuid", email: "m@example.com" }, {
+    env: { ...PROXY_ENV, ENGELBART_ANTHROPIC_API_KEY: "sk-ant-own-must-never-leave-the-server" },
+    fetchImpl: scripted.fetchImpl,
+  });
+
+  assert.equal(result.apiKey, "sk-member-key");
+  assert.equal(result.baseUrl, "https://proxy.example.com");
+  assert.equal(JSON.stringify(result).includes("sk-ant-own"), false);
+});

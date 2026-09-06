@@ -322,3 +322,27 @@ test("a reply with no plan and no goals is refused, not saved as an empty projec
   assert.equal(result.ok, false);
   assert.match(result.error, /did not read as a project/);
 });
+
+test("with ENGELBART_ANTHROPIC_API_KEY set, a turn goes straight to Anthropic on that key, not the member's", async () => {
+  const calls = [];
+  const result = await SetupChat.turn({
+    transcript: [{ role: "you", text: "a nuclear reactor simulator" }],
+    shown: [],
+    credentials: CREDENTIALS,
+  }, {
+    fetchImpl: modelSaying([{
+      say: "Two questions first.",
+      card: "questions",
+      questions: { eyebrow: "scope", items: [{ title: "New or existing?", type: "free" }] },
+    }], calls),
+    env: { ENGELBART_ANTHROPIC_API_KEY: "sk-ant-own" },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.card, "questions");
+  assert.equal(calls[0].url, "https://api.anthropic.com/v1/messages");
+  assert.equal(calls[0].headers["x-api-key"], "sk-ant-own");
+  assert.equal(calls[0].headers["anthropic-version"], "2023-06-01");
+  assert.equal(calls[0].headers.Authorization, undefined);
+  assert.equal(calls[0].body.model, SetupChat.FALLBACK_MODEL);
+  assert.match(calls[0].body.messages[0].content, /this is a questions card/);
+});
