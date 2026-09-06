@@ -6,12 +6,17 @@
  * <x-dc> template is written out below as React.createElement calls, and the
  * style-hover / style-focus rules live in debugger.css.
  *
- * In Simulated mode nothing here reaches a real server: the frame answers /api
- * and the fake Supabase host in-page, and state lives in this browser's
- * localStorage. Real runs mode (real-runs.js) reads the member's own recorded
- * onboarding telemetry through /api/engelbart-telemetry and shows it in the
- * same request list and inspector, read-only: it never changes an onboarding,
- * calls a model or spends credit, and the simulator is untouched by it. */
+ * Two modes, one debugger. In Simulated mode nothing here reaches a real
+ * server: the frame answers /api and the fake Supabase host in-page, and state
+ * lives in this browser's localStorage. In Real mode the same frame runs the
+ * same setup page against the real endpoints as the signed-in member, and
+ * every request it makes does real work: model calls spend real credit,
+ * writes land in the member's onboarding, uploads go to Storage. The frame
+ * reports each request as it starts and ends, with the trace id the server
+ * named in its reply; the trace's persisted telemetry is then read through
+ * /api/engelbart-telemetry (real-runs.js) and placed under that request in the
+ * same request list and inspector the simulator uses. Reading telemetry never
+ * changes anything; the simulator's own controls are not offered in Real mode. */
 (function () {
   "use strict";
   var root = document.getElementById("debugger");
@@ -67,10 +72,10 @@ class Debugger extends React.Component {
     const current = this.mostRecent(envs);
     this.state = Object.assign({ envs: envs, tab: "live", notice: "", hideKinds: {}, cases: this.loadCases(),
       caseOpen: null, knobs: Object.assign({}, window.EngelbartSim.DEFAULT_KNOBS), running: false, compare: null, cmpOpen: {}, inspTab: "output", speedKey: "1", copied: false, stick: true,
-      picking: false, flowModal: false, detailModal: false, mode: this.loadMode(),
-      real: { session: undefined, signedOut: false, runs: null, loading: false, error: "", open: null, fetching: {} } }, this.envState(current.id));
-    // Real runs mode starts with no run on screen; the simulator's tabs wait in the environment's storage.
-    if (this.state.mode === "real") Object.assign(this.state, { recordings: [], targetId: null, view: "requests", inspTab: "input" });
+      picking: false, flowModal: false, detailModal: false, mode: this.loadMode(), frameKey: 1,
+      real: this.freshReal() }, this.envState(current.id));
+    // Real mode starts on an empty session; the simulator's tabs wait in the environment's storage.
+    if (this.state.mode === "real") Object.assign(this.state, this.realRecordingState(this.state.real), { view: "requests", inspTab: "input", open: {} });
     this.realClient = window.EGB_REAL ? window.EGB_REAL.client() : null;
     this.frameRef = React.createRef(); this.bodyRef = React.createRef(); this.listRef = React.createRef(); this.flowScrollRef = React.createRef();
     this.pending = []; this.flushTimer = null;
@@ -225,7 +230,7 @@ class Debugger extends React.Component {
   pad(n) { return String(n).padStart(2, "0"); }
   clock(at) { const d = new Date(at), h = d.getHours(); return ((h % 12) || 12) + ":" + this.pad(d.getMinutes()) + ":" + this.pad(d.getSeconds()) + (h < 12 ? " AM" : " PM"); }
   // --- frame messages ---------------------------------------------------------------
-  componentDidMount() { window.addEventListener("message", this.onMessage); this.applySplit(); if (this.isReal()) this.loadRuns(); }
+  componentDidMount() { window.addEventListener("message", this.onMessage); this.applySplit(); if (this.isReal()) this.enterReal(); }
   componentWillUnmount() { window.removeEventListener("message", this.onMessage); }
   componentDidUpdate() { this.applySplit(); this.bindWheel(); }
   applySplit() { const s = Math.max(25, Math.min(80, Number(this.state.split != null ? this.state.split : (this.props.split ?? 56)))); if (this.bodyRef.current) this.bodyRef.current.style.gridTemplateColumns = "minmax(0," + s + "fr) 1px minmax(0," + (100 - s) + "fr)"; }
@@ -244,16 +249,23 @@ class Debugger extends React.Component {
     if (e.origin !== window.location.origin) return;
     const f = this.frameRef.current; if (!f || e.source !== f.contentWindow) return;
     const m = e.data; if (!m || !m.egb) return;
-    if (m.egb === "ready") { this.connectedAt = Date.now(); this.lastPress = null; this.setState({ connected: true, picking: false }); this.cmd("speed", this.SPEEDS.find(x => x.key === this.state.speedKey).value); this.cmd("snapshot");
+    const real = this.isReal();
+    if (m.egb === "ready") { this.connectedAt = Date.now(); this.lastPress = null; this.setState({ connected: true, picking: false });
+      if (real) return; // the simulator's speed, prompts and snapshot do not exist in the real frame
+      this.cmd("speed", this.SPEEDS.find(x => x.key === this.state.speedKey).value); this.cmd("snapshot");
       const env = this.state.envs.find(e => e.id === this.state.envId); if (env && env.config && env.config.prompts) this.cmd("prompts", env.config.prompts); return; }
     if (m.egb === "step") { this.stepShown(m.label); return; }
-    if (m.egb === "press") { this.pressed(m.step); return; }
-    if (m.egb === "picked") { this.setState({ picking: false }); this.addTab(m.trigger); return; }
+    if (m.egb === "press") { if (!real) this.pressed(m.step); return; }
+    if (m.egb === "picked") { this.setState({ picking: false }); if (!real) this.addTab(m.trigger); return; }
     if (m.egb === "pickCancel") { this.setState({ picking: false }); return; }
-    if (m.egb === "trigger") { this.buttonPressed(m.trigger); return; }
-    if (m.egb === "snapshot") { const r = [...this.state.recordings].reverse().find(x => !x.seed); if (r) { r.seed = m.state; this.forceUpdate(); } return; }
+    if (m.egb === "trigger") { if (!real) this.buttonPressed(m.trigger); return; }
+    if (m.egb === "snapshot") { if (real) return; const r = [...this.state.recordings].reverse().find(x => !x.seed); if (r) { r.seed = m.state; this.forceUpdate(); } return; }
     if (m.egb === "notice") { this.setState({ notice: m.text }); clearTimeout(this.noticeTimer); this.noticeTimer = setTimeout(() => this.setState({ notice: "" }), 6000); return; }
-    if (m.egb === "trace") { this.pending.push(m.event); if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(), 40); }
+    // Real mode: the frame reports the product's own requests; the simulator's events do not occur there.
+    if (m.egb === "session") { if (real) this.frameSession(m); return; }
+    if (m.egb === "request") { if (real) this.requestStarted(m); return; }
+    if (m.egb === "response") { if (real) this.requestEnded(m); return; }
+    if (m.egb === "trace") { if (real) return; this.pending.push(m.event); if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(), 40); }
   }
   flush() {
     // A new request lands in the step on screen; the rest of a request (a background reading that
@@ -269,32 +281,56 @@ class Debugger extends React.Component {
     this.forceUpdate(() => { const el = this.listRef.current; if (el && this.state.stick && this.viewed() === run) el.scrollTop = el.scrollHeight; });
   }
   cmd(cmd, value) { const f = this.frameRef.current; if (f && f.contentWindow) f.contentWindow.postMessage({ egb: "cmd", cmd: cmd, value: value }, window.location.origin); }
-  // --- Real runs: the member's recorded onboarding telemetry, read-only ------------------------------------
-  // The mode is remembered in this browser. Switching to Real runs saves the simulator's tabs first and
-  // shows the run list; switching back restores them from the environment's storage. Nothing in this
-  // mode writes anywhere: not to the environment, not to the server.
+  // --- Real mode: the same product against the real backend, each request's persisted trace beneath it -------
+  // The mode is remembered in this browser. Switching to Real saves the simulator's tabs first; switching
+  // back restores them from the environment's storage. The product on the left does, in Real mode, exactly
+  // what it does at /engelbart/setup; this side only reads what the server recorded about it.
   loadMode() { try { return window.localStorage.getItem("egb.debugger.mode") === "real" ? "real" : "sim"; } catch (e) { return "sim"; } }
   isReal() { return this.state.mode === "real"; }
   setReal(patch, after) { this.setState(s => ({ real: Object.assign({}, s.real, patch) }), after); }
+  // session: the member's session as this page reads it; frameSession: as the frame reported it; runs: the
+  // member's runs for the picker; envelope: everything recorded for the onboarding this session is on, merged
+  // trace by trace; requests: what the frame reported; picked/pickedEnvelope: an earlier run, when one is open.
+  freshReal() { return { session: undefined, frameSession: undefined, runs: null, loading: false, error: "", envelope: null, onboardingId: null, requests: [], picked: null, pickedEnvelope: null, fetching: {}, history: {}, seenAt: 0 }; }
+  // The one recording Real mode draws: this session (what was recorded for the onboarding before, then this
+  // session's requests with their traces), or the earlier run picked from the list.
+  realRecording(R) {
+    const A = window.EGB_REAL, empty = { operations: [], snapshots: [], events: [] };
+    if (R.picked) return A.adapt(R.pickedEnvelope || empty, { name: A.runLabel(R.picked, {}), onboarding: R.picked });
+    const env = R.envelope || empty;
+    return A.adapt(env, { requests: R.requests, name: env.onboarding ? A.runLabel(env.onboarding, env.run || {}) : "Current session" });
+  }
+  realRecordingState(R) { const rec = this.realRecording(R); if (!R.picked) rec.id = "real-current"; return { recordings: [rec], targetId: rec.id, viewing: 0 }; }
+  // Redraw from the envelope and the requests. A request row keeps its open state and its selection when its
+  // trace arrives and the row becomes the trace's root.
+  rebuildReal(patch, after) {
+    this.setState(s => {
+      const R = Object.assign({}, s.real, patch || {});
+      const st = this.realRecordingState(R), rec = st.recordings[0];
+      const open = Object.assign({}, s.open); let sel = s.sel;
+      rec.stages.forEach(x => { if (x.real && x.requestId) { const k = "req:" + x.requestId; if (open[k] != null && open[x.id] == null) open[x.id] = open[k]; if (sel && sel.run === "live" && sel.stage === k) sel = { run: "live", stage: x.id, op: null }; } });
+      return Object.assign({ real: R, open: open, sel: sel }, st);
+    }, () => { if (after) after(); const el = this.listRef.current; if (el && this.state.stick && !this.state.real.picked) el.scrollTop = el.scrollHeight; });
+  }
   setMode(mode) {
     if (mode === this.state.mode) return;
     try { window.localStorage.setItem("egb.debugger.mode", mode); } catch (e) {}
+    this.connectedAt = null; this.lastPress = null; this.wheelEl = null;
     if (mode === "real") {
       clearTimeout(this.saveTimer); this.saveEnvData(); this.pending.splice(0);
-      const open = this.state.real.open;
-      this.setState({ mode: "real", recordings: open ? [open.recording] : [], viewing: 0, targetId: open ? open.recording.id : null, sel: null, flowSel: null, open: {}, view: "requests", inspTab: "input", tab: "live", connected: false, picking: false },
-        () => { if (!this.state.real.runs && !this.state.real.loading) this.loadRuns(); });
+      this.setState(Object.assign({ mode: "real", sel: null, flowSel: null, open: {}, view: "requests", inspTab: "input", tab: "live", connected: false, picking: false, stick: true }, this.realRecordingState(this.state.real)), () => this.enterReal());
       return;
     }
-    this.connectedAt = null; this.lastPress = null; this.wheelEl = null;
-    this.setState(Object.assign({ mode: "sim", tab: "live" }, this.envState(this.state.envId)));
+    this.setState(Object.assign({ mode: "sim", tab: "live", connected: false }, this.envState(this.state.envId)));
   }
+  // On entering Real mode: the member's runs, for the picker. The frame boots the product by itself.
+  enterReal() { if (!this.state.real.runs && !this.state.real.loading) this.loadRuns(); }
   realToken() {
     if (!this.realClient) return Promise.resolve(null);
-    return this.realClient.session().then(s => { this.setReal({ session: s, signedOut: !s }); return s ? s.token : null; });
+    return this.realClient.session().then(s => { this.setReal({ session: s }); return s ? s.token : null; });
   }
   realFailed(e, fallback) {
-    const msg = e && e.status === 401 ? "Your Engelbart session has expired. Sign in again at /engelbart/signin, then come back." : e && e.status === 403 ? "This account is not an Engelbart member." : (e && e.message) || fallback;
+    const msg = e && e.status === 401 ? "Your Engelbart session has expired. Sign in again at /engelbart/signin, then reload the frame." : e && e.status === 403 ? "This account is not an Engelbart member." : (e && e.message) || fallback;
     this.setReal({ loading: false, error: msg });
   }
   loadRuns() {
@@ -304,27 +340,87 @@ class Debugger extends React.Component {
       return this.realClient.list(token).then(body => this.setReal({ loading: false, runs: Array.isArray(body && body.runs) ? body.runs : [] }));
     }).catch(e => this.realFailed(e, "Could not load your runs."));
   }
-  openRun(item) {
-    if (!item || !item.telemetry) return;
-    this.setReal({ loading: true, error: "" });
+  // The frame's word on the member's session. Without one the product leaves for /engelbart/signin, which
+  // refuses to be framed, so the pane says what happened and how to come back.
+  frameSession(m) { this.setReal({ frameSession: { signedIn: !!m.signedIn, email: m.email || "", error: m.error || "" } }); }
+  reloadFrame() { this.setState(s => ({ frameKey: s.frameKey + 1, connected: false, real: Object.assign({}, s.real, { frameSession: undefined }) })); }
+  // A request the frame reported as it started: a row of its own until its trace arrives.
+  requestStarted(m) {
+    const rq = { id: m.id, at: m.at || Date.now(), method: m.method, path: m.path, where: m.where, action: m.action, request: m.body === undefined ? null : m.body, step: m.step || null, bg: !!m.bg, poll: !!m.poll, status: "running", code: null, ms: 0, response: null, trace_id: null, trace: null };
+    this.rebuildReal({ requests: this.state.real.requests.concat([rq]) });
+  }
+  // The reply: status, body and, for a traced action, the trace id to read. A reply that carries the
+  // onboarding row names the onboarding this session is on.
+  requestEnded(m) {
+    const R = this.state.real; const i = R.requests.findIndex(r => r.id === m.id); if (i < 0) return;
+    const rq = Object.assign({}, R.requests[i], { status: m.ok ? "ok" : "error", code: m.status || null, ms: m.ms || 0, response: m.body === undefined ? null : m.body, trace_id: m.trace_id || null, error: m.error || null, trace: m.trace_id ? "pending" : null });
+    const requests = R.requests.slice(); requests[i] = rq;
+    const row = m.body && m.body.onboarding && m.body.onboarding.id ? String(m.body.onboarding.id) : null;
+    this.rebuildReal({ requests: requests }, () => {
+      if (row && row !== this.state.real.onboardingId) this.onboardingSeen(row);
+      if (rq.trace_id) this.fetchTrace(rq.trace_id, 0);
+    });
+  }
+  // The onboarding this session is on. What was recorded for it before this page opened is read once and
+  // drawn ahead of this session's requests; the run list is refreshed so the picker knows it.
+  onboardingSeen(id) {
+    const R = this.state.real;
+    if (R.history[id]) { this.setReal({ onboardingId: id }); return; }
+    const history = Object.assign({}, R.history); history[id] = "loading";
+    this.rebuildReal({ onboardingId: id, history: history });
+    this.realToken().then(token => token ? this.realClient.run(token, id) : null).then(env => {
+      const h = Object.assign({}, this.state.real.history); h[id] = env ? "loaded" : "none";
+      this.rebuildReal(env ? { history: h, envelope: window.EGB_REAL.mergeEnvelope(this.state.real.envelope, env) } : { history: h });
+      if (env) this.loadRuns();
+    }).catch(e => {
+      const h = Object.assign({}, this.state.real.history); h[id] = "failed"; this.rebuildReal({ history: h });
+      if (!e || e.status !== 404) this.realFailed(e, "Could not read what was recorded for this onboarding before.");
+    });
+  }
+  // The trace a reply named, read once the reply is in. The server flushes telemetry before it answers, so the
+  // trace is normally there at once; a slow store gets a few more tries before the row says it never landed.
+  fetchTrace(traceId, attempt) {
+    const DELAYS = [800, 2000, 4000];
     this.realToken().then(token => {
-      if (!token) { this.setReal({ loading: false }); return; }
-      return this.realClient.run(token, item.onboarding_id).then(env => {
-        const recording = window.EGB_REAL.adapt(env);
-        this.setState(s => ({ real: Object.assign({}, s.real, { loading: false, open: { item: item, envelope: env, recording: recording, token: token } }),
-          recordings: [recording], viewing: 0, targetId: recording.id, sel: null, flowSel: null, open: {}, view: "requests", inspTab: "input", stick: false }));
-      });
+      if (!token) { const e = new Error("Sign in to Engelbart to read telemetry"); e.status = 401; throw e; }
+      return this.realClient.trace(token, traceId);
+    }).then(env => {
+      this.rebuildReal({ envelope: window.EGB_REAL.mergeEnvelope(this.state.real.envelope, env) }, () => this.markTrace(traceId, "loaded", null));
+    }).catch(e => {
+      if (e && e.status === 404 && attempt < DELAYS.length) { setTimeout(() => this.fetchTrace(traceId, attempt + 1), DELAYS[attempt]); return; }
+      this.markTrace(traceId, "missing", e && e.status === 404 ? "The server recorded nothing under this trace id: telemetry may be off on this deployment, or its store did not take the write." : (e && e.message) || "The trace could not be read.");
+      if (e && (e.status === 401 || e.status === 403)) this.realFailed(e, "");
+    });
+  }
+  markTrace(traceId, state, why) {
+    this.rebuildReal({ requests: this.state.real.requests.map(r => r.trace_id === traceId ? Object.assign({}, r, { trace: state, traceError: why || null }) : r) });
+  }
+  // The picker: this session, or one of the member's earlier runs, opened in the same panel while the product
+  // keeps running on the left. Requests made meanwhile are counted on the way back.
+  pickRun(value) {
+    if (value === "__refresh") { this.loadRuns(); return; }
+    if (value === "__current") { this.rebuildReal({ picked: null, pickedEnvelope: null, seenAt: 0 }, () => this.setState({ sel: null, open: {}, stick: true })); return; }
+    const item = (this.state.real.runs || []).find(r => r.onboarding_id === value); if (!item) return;
+    this.rebuildReal({ picked: item, pickedEnvelope: null, loading: true, error: "", seenAt: this.state.real.requests.length }, () => this.setState({ sel: null, open: {}, stick: false }));
+    this.realToken().then(token => token ? this.realClient.run(token, item.onboarding_id) : null).then(env => {
+      if (!this.state.real.picked || this.state.real.picked.onboarding_id !== item.onboarding_id) return; // moved on meanwhile
+      this.rebuildReal({ pickedEnvelope: env, loading: false });
     }).catch(e => this.realFailed(e, "Could not load that run."));
   }
-  backToRuns() { this.setState(s => ({ real: Object.assign({}, s.real, { open: null, error: "" }), recordings: [], targetId: null, sel: null, flowSel: null, open: {} })); }
-  // A snapshot the run did not carry inline is asked for once, the first time a tab shows it.
+  // A snapshot the run did not carry inline is asked for once, the first time a tab shows it, and kept in the
+  // envelope it belongs to, so it survives every redraw.
   snapshot(id) {
-    const open = this.state.real.open; if (!open || !id) return { state: "none" };
-    const s = window.EGB_REAL.snapshotOf(open.recording, id);
+    const rec = this.viewed(); if (!rec || !rec.real || !id) return { state: "none" };
+    const s = window.EGB_REAL.snapshotOf(rec, id);
     if (s.state === "pending" && !this.state.real.fetching[id]) {
       const f = Object.assign({}, this.state.real.fetching); f[id] = true; this.setReal({ fetching: f });
-      const settle = (snap) => { open.recording.snapshots[id] = snap || Object.assign({}, open.recording.snapshots[id], { content: null, content_omitted: false, unavailable: true }); this.forceUpdate(); };
-      this.realClient.snapshot(open.token, id).then(body => settle(body && body.snapshot), () => settle(null));
+      const key = this.state.real.picked ? "pickedEnvelope" : "envelope";
+      const settle = (snap) => {
+        const env = this.state.real[key]; if (!env) return;
+        const snapshots = (env.snapshots || []).map(x => x.snapshot_id === id ? (snap || Object.assign({}, x, { content: null, content_omitted: false, unavailable: true })) : x);
+        const patch = {}; patch[key] = Object.assign({}, env, { snapshots: snapshots }); this.rebuildReal(patch);
+      };
+      this.realToken().then(token => token ? this.realClient.snapshot(token, id) : null).then(body => settle(body && body.snapshot), () => settle(null));
     }
     return s;
   }
@@ -392,8 +488,10 @@ class Debugger extends React.Component {
     const open = explicit != null ? explicit : (s.status === "running" || isLast);
     const cost = s.ops.reduce((n, o) => n + ((o.kind === "model" && o.meta && o.meta.cost) || 0), 0);
     const ops = s.ops.filter(o => !hide[o.kind]);
+    const models = s.ops.filter(o => o.kind === "model").length;
     return { id: s.id, anchor: "stage-" + s.seq, seqLabel: this.pad(index + 1), label: s.label, path: s.method + " " + s.path,
-      tag: s.bg ? "background" : s.poll ? "poll" : s.direct ? "browser → storage" : s.method === "LOCAL" ? "in page" : s.synthetic ? "no root recorded" : s.outcome ? String(s.outcome) : "",
+      tag: s.bg ? "background" : s.poll ? (s.count > 1 ? "poll ×" + s.count : "poll") : s.direct ? "browser → storage" : s.method === "LOCAL" ? "in page" : s.synthetic ? "no root recorded" : s.awaiting === "pending" ? "reading trace…" : s.awaiting === "missing" ? "trace not recorded" : s.observed && s.untraced ? "untraced" : s.earlier ? "earlier" : s.outcome ? String(s.outcome) : "",
+      modelPill: models ? (models > 1 ? models + " model" : "model") : "",
       dot: s.status === "running" ? "#0070f3" : s.status === "error" ? "#e70022" : "#c9c9c9",
       opsLabel: s.ops.length + (s.ops.length === 1 ? " op" : " ops"), msLabel: this.fmtMs(s.ms || s.ops.reduce((n, o) => n + (o.ms || 0), 0)), costLabel: this.fmtCost(cost),
       chevron: open ? "⌃" : "›", open: open, reqColor: sel && sel.stage === s.id && !sel.op ? "#0070f3" : "#8f8f8f",
@@ -650,10 +748,19 @@ class Debugger extends React.Component {
       if (o.kind === "model") { const t = o.meta.tokens || {}; meta.push({ k: "model", v: o.meta.model || o.meta.family || "—" }); if (t.input != null) meta.push({ k: "in", v: t.input.toLocaleString() }); if (t.cache_write) meta.push({ k: "cache write", v: t.cache_write.toLocaleString() }); if (t.cache_read) meta.push({ k: "cache read", v: t.cache_read.toLocaleString() }); if (t.output != null) meta.push({ k: "out", v: t.output.toLocaleString() }); if (o.meta.finish) meta.push({ k: "finish", v: o.meta.finish }); }
       if (o.meta.code != null) meta.push({ k: "http", v: String(o.meta.code) });
     } else if (found.stage && found.stage.real) {
+      // A recorded action. When this page saw the request go out, the browser's side of it is here too.
       const s = found.stage; kind = "api"; name = s.label; target = s.method + " " + s.path;
-      tabs.push(mk("attrs", "Attributes")); if (s.error) tabs.push(mk("error", "Error"));
-      json = tab === "error" && s.error ? JSON.stringify(s.error, null, 2) : JSON.stringify(s.attributes, null, 2);
-      meta.push({ k: "status", v: s.status + (s.code ? " · " + s.code : "") }, { k: "server time", v: this.fmtMs(s.ms) }, { k: "ops", v: String(s.ops.length) }, { k: "trace", v: String(s.trace_id || "").slice(0, 12) || "—" }, { k: "body", v: "not recorded" });
+      const list = [];
+      if (s.observed) list.push(["input", "Request"], ["output", "Response"]);
+      list.push(["attrs", "Attributes"]); if (s.error) list.push(["error", "Error"]);
+      const cur = list.find(t => t[0] === tab) || list[0];
+      list.forEach(t => tabs.push(mk(t[0], t[1])));
+      const show = v => v === undefined || v === null ? "—" : JSON.stringify(v, null, 2);
+      json = cur[0] === "input" ? show(s.request) : cur[0] === "output" ? show(s.response) : cur[0] === "error" ? show(s.error) : show(s.attributes);
+      meta.push({ k: "status", v: s.status + (s.code ? " · " + s.code : "") }, { k: "server time", v: this.fmtMs(s.ms) });
+      if (s.observed) meta.push({ k: "round trip", v: this.fmtMs(s.browserMs) });
+      meta.push({ k: "ops", v: String(s.ops.length) }, { k: "trace", v: String(s.trace_id || "").slice(0, 12) || "—" });
+      if (s.observed) { if (s.step) meta.push({ k: "step", v: s.step }); } else meta.push({ k: "body", v: "not recorded" });
     } else if (found.op) {
       const o = found.op; kind = o.kind; name = o.name; target = o.target;
       tabs.push(mk("input", "Input"), mk("output", "Output"));
@@ -662,11 +769,13 @@ class Debugger extends React.Component {
       meta.push({ k: "status", v: o.status }, { k: "took", v: this.fmtMs(o.ms) });
       if (o.kind === "model" && o.meta) { const t = o.meta.tokens || {}; meta.push({ k: "model", v: o.meta.model || o.meta.family }); if (t.input) meta.push({ k: "in", v: t.input.toLocaleString() }); if (t.cache_write) meta.push({ k: "cache write", v: t.cache_write.toLocaleString() }); if (t.cache_read) meta.push({ k: "cache read", v: t.cache_read.toLocaleString() }); if (t.output) meta.push({ k: "out", v: t.output.toLocaleString() }); if (t.web_searches) meta.push({ k: "searches", v: String(t.web_searches) }); meta.push({ k: "est. cost", v: this.fmtCost(o.meta.cost) || "$0" }); }
     } else {
+      // A simulated request, or a real one the server did not trace (a poll, the config read, the upload).
       const s = found.stage; kind = "api"; name = s.label; target = s.method + " " + s.path;
-      tabs.push(mk("input", "Request"), mk("output", "Response"));
-      const body = tab === "input" ? s.request : s.response; json = body === undefined || body === null ? "—" : JSON.stringify(body, null, 2);
-      meta.push({ k: "status", v: s.status + (s.code ? " · " + s.code : "") }, { k: "server time", v: this.fmtMs(s.ms) }, { k: "ops", v: String(s.ops.length) });
+      tabs.push(mk("input", "Request"), mk("output", "Response")); if (s.observed && (s.error || s.traceError)) tabs.push(mk("error", "Error"));
+      const body = tab === "input" ? s.request : tab === "error" ? { error: s.error || undefined, trace: s.traceError || undefined } : s.response; json = body === undefined || body === null ? "—" : JSON.stringify(body, null, 2);
+      meta.push({ k: "status", v: s.status + (s.code ? " · " + s.code : "") }, { k: s.observed ? "round trip" : "server time", v: this.fmtMs(s.ms) }, { k: "ops", v: String(s.ops.length) });
       if (s.direct) meta.push({ k: "route", v: "browser → Storage, no function" });
+      if (s.observed) { meta.push({ k: "trace", v: s.awaiting === "pending" ? "reading…" : s.awaiting === "missing" ? "not recorded" : "none: untraced request" }); if (s.count > 1) meta.push({ k: "polls", v: String(s.count) }); if (s.step) meta.push({ k: "step", v: s.step }); }
     }
     const redacted = (json.match(/••••|\[redacted\]/g) || []).length;
     let counterpart = null;
@@ -756,7 +865,9 @@ class Debugger extends React.Component {
       dm: S.detailModal ? { pos: "fixed", left: "8vw", top: "6vh", w: "84vw", h: "88vh", z: 70, border: "1px solid #eaeaea", radius: "12px", pad: "16px 18px 18px", preFlex: "1 1 auto", preMax: "none" } : { pos: "relative", left: "auto", top: "auto", w: "auto", h: "auto", z: "auto", border: "none", radius: "0", pad: "12px 14px 13px", preFlex: "0 1 auto", preMax: "420px" },
       anyModal: S.flowModal || S.detailModal, closeModals: () => this.setState({ flowModal: false, detailModal: false }),
       lastRan: live.stages.length ? "Last run: " + this.clock(live.stages[live.stages.length - 1].at) : "Last run: —",
-      frameSrc: "/engelbart/setup/test/frame?env=" + (S.envId || "default") + (testMode ? "&test=true" : "") + this.participantParam((S.envs.find(e => e.id === S.envId) || {}).config),
+      // Real mode names only its mode: no environment, no prefilled participant, and never the product's test
+      // switch, whose reset buttons would clear the member's real record.
+      frameSrc: real ? "/engelbart/setup/test/frame?mode=real" : "/engelbart/setup/test/frame?env=" + (S.envId || "default") + (testMode ? "&test=true" : "") + this.participantParam((S.envs.find(e => e.id === S.envId) || {}).config),
       onListScroll: (e) => { const el = e.target; const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 48; if (stick !== S.stick) this.setState({ stick: stick }); },
       isLive: S.tab === "live", isCases: S.tab === "cases", isCompare: S.tab === "compare",
       liveEmpty: !visible.length, stages: visible.map((s, i) => this.stageVM(s, live.stages.indexOf(s), "live", live)),
@@ -777,89 +888,57 @@ class Debugger extends React.Component {
       copyLabel: S.copied ? "Copied" : "Copy JSON", copyJson: () => { if (insp && navigator.clipboard) navigator.clipboard.writeText(insp.raw).then(() => this.setState({ copied: true }), () => {}); }
     };
   }
-  // The Real runs pane's view model: mode toggle, the run list, the open run.
+  // Real mode's view model: the mode toggle, the run picker, the member's session and the frame's word on it.
   realVM() {
     const S = this.state, R = S.real, real = S.mode === "real";
-    const modes = [["sim", "Simulated", "The setup page against the simulated backend, as before"], ["real", "Real runs", "Your own recorded onboarding runs, read-only"]].map(([k, label, title]) => ({ key: k, label: label, title: title, on: S.mode === k, bg: S.mode === k ? "#171717" : "transparent", color: S.mode === k ? "#fff" : "#4d4d4d", select: () => this.setMode(k) }));
-    const open = R.open;
-    const statusColor = st => st === "failed" ? "#e70022" : st === "running" ? "#0070f3" : st === "completed" ? "#1a7f37" : "#c9c9c9";
-    const runs = (R.runs || []).map(r => { const tm = r.telemetry; const title = r.project_name || r.paper_title || ("onboarding " + String(r.onboarding_id).slice(0, 8));
-      return { id: r.onboarding_id, title: title, sub: r.project_name && r.paper_title ? r.paper_title : (r.project_name || r.paper_title ? "onboarding " + String(r.onboarding_id).slice(0, 8) : ""), when: this.dateOf(tm && tm.started_at || r.created_at),
-        actions: tm && tm.actions && tm.actions.length ? tm.actions.join(" · ") : "", status: tm ? tm.status : "no telemetry", statusColor: tm ? statusColor(tm.status) : "#c9c9c9",
-        stats: tm ? [tm.counts.operations + (tm.counts.operations === 1 ? " op" : " ops"), tm.server_ms ? this.fmtMs(tm.server_ms) : null, tm.counts.failed ? tm.counts.failed + " failed" : null].filter(Boolean).join(" · ") : "nothing was recorded for this onboarding",
-        error: tm && tm.last_error ? (tm.last_error.operation ? tm.last_error.operation + ": " : "") + (tm.last_error.message || tm.last_error.name || "failed") : "",
-        rowStatus: "onboarding " + r.onboarding_status, openable: !!tm, open: () => this.openRun(r) }; });
-    const rn = open ? open.recording.run || {} : {}, ob = open ? open.recording.onboarding || {} : {};
-    return { isReal: real, modes: modes, signedOut: !!R.signedOut, loading: !!R.loading, error: R.error || "", hasRuns: !!(R.runs && R.runs.length), runsEmpty: !!(R.runs && !R.runs.length), runs: runs,
-      refresh: () => this.loadRuns(), canRefresh: !open && !R.loading, hasOpen: !!open, back: () => this.backToRuns(),
-      title: open ? open.recording.name : "", email: R.session && R.session.email || "",
-      facts: open ? [["onboarding", ob.onboarding_id || rn.run_id || "—"], ["state", ob.onboarding_status ? ob.onboarding_status + (ob.step != null ? " · step " + ob.step : "") : "—"], ["paper", ob.paper_title || "—"], ["project", ob.project_name || "—"],
-        ["run", rn.status || "—"], ["started", rn.started_at ? this.dateOf(rn.started_at) : "—"], ["ended", rn.ended_at ? this.dateOf(rn.ended_at) : "—"], ["actions", (rn.actions || []).join(", ") || "—"],
-        ["traces", rn.counts ? String(rn.counts.traces) : "—"], ["operations", rn.counts ? rn.counts.operations + (rn.counts.failed ? " · " + rn.counts.failed + " failed" : "") : "—"],
-        ["snapshots", open.recording.snapshotsInline ? "with the run" : "loaded as you open them"], ["environment", [rn.environment, rn.code_version ? "build " + String(rn.code_version).slice(0, 12) : null].filter(Boolean).join(" · ") || "—"]] : [] };
+    const modes = [["sim", "Simulated", "The setup page against the simulated backend: nothing real is touched"], ["real", "Real", "The setup page against the real backend, as the signed-in member: real requests, real telemetry"]]
+      .map(([k, label, title]) => ({ key: k, label: label, title: title, on: S.mode === k, bg: S.mode === k ? "#171717" : "transparent", color: S.mode === k ? "#fff" : "#4d4d4d", select: () => this.setMode(k) }));
+    const label = r => (r.project_name || r.paper_title || ("onboarding " + String(r.onboarding_id).slice(0, 8))) + " · " + this.dateOf(r.telemetry && r.telemetry.started_at || r.created_at) + (r.telemetry && r.telemetry.status === "failed" ? " · failed" : "");
+    // Earlier runs: the member's other onboardings that recorded something. The one the product is on is this session.
+    const earlier = (R.runs || []).filter(r => r.telemetry && r.onboarding_id !== R.onboardingId);
+    const fresh = R.picked ? Math.max(0, R.requests.length - (R.seenAt || 0)) : 0;
+    const options = [{ value: "__current", label: "Current session" + (fresh ? " · " + fresh + " new" : "") }]
+      .concat(earlier.map(r => ({ value: r.onboarding_id, label: label(r) })))
+      .concat([{ value: "__refresh", label: R.loading ? "Refreshing the list…" : (R.runs ? "Refresh the list" : "Load earlier runs") }]);
+    const fs = R.frameSession;
+    return { isReal: real, modes: modes, pickerValue: R.picked ? R.picked.onboarding_id : "__current", pickerOptions: options, pick: (e) => this.pickRun(e.target.value),
+      email: (R.session && R.session.email) || (fs && fs.email) || "", error: R.error || "", loading: !!R.loading,
+      signedOut: !!(fs && fs.signedIn === false), signedOutWhy: (fs && fs.error) || "", reloadFrame: () => this.reloadFrame(),
+      viewingPicked: !!R.picked, pickedTitle: R.picked ? label(R.picked) : "" };
   }
-  renderRealPane(V) {
-    const R = V.real;
-    const card = (children) => h("div", { style: css("border:1px solid #eaeaea;border-radius:10px;background:#fff;padding:14px 16px") }, children);
-    const note = h("div", { style: css("margin-top:14px;padding:10px 12px;border-radius:8px;background:#f2f2f2;font:11.5px/1.55 " + SANS + ";color:#4d4d4d;text-wrap:pretty") },
-      "Read-only. Nothing here can change an onboarding, call a model or spend credit; the simulator's reset, environments and prompt edits do not apply to real runs. ",
-      "Which stored values each operation read and wrote is not recorded yet, so the Data flow view stays empty and the Requests view carries everything.");
-    let body;
-    if (R.hasOpen) {
-      body = [
-        h("button", { key: "back", onClick: R.back, className: "hv-ink", style: css("padding:0;border:none;background:none;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#0070f3") }, "‹ Back to runs"),
-        h("div", { key: "title", style: css("margin-top:12px;font:500 17px/1.3 " + SANSF + ";letter-spacing:-0.2px;color:#171717;overflow-wrap:anywhere") }, R.title),
-        h("div", { key: "facts", style: css("margin-top:12px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:7px 14px") },
-          R.facts.map(([k, v]) => [h("span", { key: k + "k", style: css(EYEBROW + ";line-height:1.5") }, k), h("span", { key: k + "v", style: css("font:12px/1.5 " + MONO + ";color:#171717;overflow-wrap:anywhere") }, v)])),
-        h("div", { key: "n" }, note)];
-    } else if (R.signedOut) {
-      body = card([h("div", { key: "t", style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "Sign in to see your runs"),
-        h("div", { key: "d", style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, "Real runs are read with your own Engelbart session, which this browser does not hold. ",
-          h("a", { href: "/engelbart/signin", style: css("color:#0070f3") }, "Sign in"), ", then come back and refresh.")]);
-    } else if (R.error) {
-      body = card([h("div", { key: "t", style: css("font:500 13px/1.5 " + SANS + ";color:#e70022") }, R.error),
-        h("button", { key: "r", onClick: R.refresh, className: "hv-ink", style: css("margin-top:8px;" + LINK_BTN + ";color:#0070f3") }, "Try again")]);
-    } else if (R.loading && !R.hasRuns) {
-      body = h("div", { style: css("padding:18px 0;font:12px/1.5 " + SANS + ";color:#8f8f8f") }, "Loading your runs…");
-    } else if (R.runsEmpty) {
-      body = card([h("div", { key: "t", style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "No onboarding runs recorded for this account yet"),
-        h("div", { key: "d", style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, "Runs appear here once you have used the real setup at /engelbart/setup with telemetry on.")]);
-    } else {
-      body = h("div", { "data-screen-label": "Run list" }, R.runs.map(r => h("button", { key: r.id, onClick: r.open, disabled: !r.openable, "data-run": r.id, className: r.openable ? "hv-fafafa" : "", title: r.openable ? "open this run in the debugger" : "nothing was recorded for this onboarding",
-        style: css("display:block;width:100%;box-sizing:border-box;text-align:left;margin-bottom:8px;padding:11px 14px;border:1px solid #eaeaea;border-radius:10px;background:#fff;cursor:" + (r.openable ? "pointer" : "default") + ";opacity:" + (r.openable ? 1 : 0.6)) },
-        h("div", { style: css("display:flex;align-items:baseline;gap:10px") },
-          h("span", { style: css("width:8px;height:8px;border-radius:50%;flex:none;background:" + r.statusColor + ";align-self:center") }),
-          h("span", { style: css("flex:1 1 auto;min-width:0;font:500 13px/1.3 " + SANS + ";color:#171717;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, r.title),
-          h("span", { style: css("flex:none;font:11px/1.3 " + MONO + ";color:#8f8f8f;white-space:nowrap") }, r.when)),
-        r.sub ? h("div", { style: css("margin:3px 0 0 18px;font:11.5px/1.4 " + SANS + ";color:#8f8f8f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, r.sub) : null,
-        h("div", { style: css("margin:6px 0 0 18px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font:11px/1.4 " + MONO + ";color:#4d4d4d") },
-          h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:" + r.statusColor) }, r.status),
-          r.actions ? h("span", null, r.actions) : null,
-          h("span", { style: css("color:#8f8f8f") }, r.stats),
-          h("span", { style: css("color:#c9c9c9") }, r.rowStatus)),
-        r.error ? h("div", { style: css("margin:4px 0 0 18px;font:11px/1.4 " + SANS + ";color:#e70022;overflow-wrap:anywhere") }, r.error) : null)));
-    }
-    return h("div", { "data-screen-label": "Real runs", style: css("height:100%;box-sizing:border-box;overflow:auto;padding:16px 16px 24px") },
-      h("div", { style: css("display:flex;align-items:baseline;gap:10px;margin-bottom:12px") },
-        h("span", { style: css(EYEBROW) }, R.hasOpen ? "Real run" : "Recent onboarding runs"),
-        h("span", { style: css("flex:1") }),
-        R.email ? h("span", { style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, R.email) : null,
-        R.canRefresh ? h("button", { onClick: R.refresh, className: "hv-ink", style: css(LINK_BTN) }, R.loading ? "refreshing…" : "refresh") : null),
-      body,
-      R.hasOpen ? null : note);
+  // The product left for /engelbart/signin, which refuses to be framed: say so over the empty frame.
+  renderSignedOut(R) {
+    return h("div", { "data-screen-label": "Signed out", style: css("position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:#fafafa") },
+      h("div", { style: css("max-width:380px;border:1px solid #eaeaea;border-radius:10px;background:#fff;padding:16px 18px") },
+        h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "Sign in to Engelbart to use Real mode"),
+        h("div", { style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") },
+          "Real mode runs the setup page as you, with your own session, and this browser has none. ",
+          h("a", { href: "/engelbart/signin", target: "_blank", rel: "noopener", style: css("color:#0070f3") }, "Sign in"), " in a new tab, then reload the frame.",
+          R.signedOutWhy ? " (" + R.signedOutWhy + ")" : ""),
+        h("button", { onClick: R.reloadFrame, className: "hv-ink-line", style: css("margin-top:12px;padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px") }, "Reload the frame")));
   }
   // --- the template ------------------------------------------------------------------------------------
   renderTopBar(V) {
+    const R = V.real;
     return h("div", { "data-screen-label": "Top bar", style: css("flex:none;min-height:46px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 14px 6px 16px;border-bottom:1px solid #eaeaea;white-space:nowrap") },
       h("span", { style: css("font:500 17px/1 " + SANSF + ";letter-spacing:-0.2px") }, "Engelbart"),
       h("span", { role: "group", "aria-label": "mode", style: css("display:inline-flex;align-items:center;border:1px solid #eaeaea;border-radius:999px;padding:2px;background:#fff") },
-        V.real.modes.map(m => h("button", { key: m.key, onClick: m.select, title: m.title, "aria-pressed": m.on, style: css("padding:5px 11px;border:none;border-radius:999px;font:500 11.5px/1 " + SANS + ";background:" + m.bg + ";color:" + m.color + ";white-space:nowrap") }, m.label))),
-      V.isReal ? h("span", { title: "Real runs are inspected, never changed", style: css("padding:4px 8px;border-radius:999px;background:#f2f2f2;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#4d4d4d") }, "read-only") : null,
-      V.isReal ? null : h("select", { value: V.envId, onChange: V.envSelect, title: "switch environment", style: css("max-width:280px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
-        V.envOptions.map(eo => h("option", { key: eo.value, value: eo.value }, eo.label))),
-      h("span", { style: css("font:12px/1.4 " + SANS + ";color:#e70022;flex:1 1 40px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, V.notice),
-      V.isReal ? null : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
-        style: css("padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px;white-space:nowrap") }, "Reset test environment"));
+        R.modes.map(m => h("button", { key: m.key, onClick: m.select, title: m.title, "aria-pressed": m.on, style: css("padding:5px 11px;border:none;border-radius:999px;font:500 11.5px/1 " + SANS + ";background:" + m.bg + ";color:" + m.color + ";white-space:nowrap") }, m.label))),
+      V.isReal ? h("span", { title: "Real mode performs real actions: model calls spend real credit, onboarding writes are real, uploads are real. Nothing here can replay, rerun or reset them.", style: css("padding:4px 8px;border-radius:999px;background:oklch(0.95 0.04 25);font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:oklch(0.45 0.16 25)") }, "real actions") : null,
+      V.isReal
+        ? h("select", { value: R.pickerValue, onChange: R.pick, "data-run-picker": "1", title: "what the panel shows: this session, or one of your earlier runs", style: css("max-width:320px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
+          R.pickerOptions.map(o => h("option", { key: o.value, value: o.value }, o.label)))
+        : h("select", { value: V.envId, onChange: V.envSelect, title: "switch environment", style: css("max-width:280px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
+          V.envOptions.map(eo => h("option", { key: eo.value, value: eo.value }, eo.label))),
+      h("span", { style: css("font:12px/1.4 " + SANS + ";color:#e70022;flex:1 1 40px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, V.notice || (V.isReal ? R.error : "")),
+      V.isReal ? (R.email ? h("span", { title: "the member the product runs as", style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, R.email) : null)
+        : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
+          style: css("padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px;white-space:nowrap") }, "Reset test environment"));
+  }
+  // One line under the top bar in Real mode, because the product on the left is not a simulation there.
+  renderRealStrip() {
+    return h("div", { "data-screen-label": "Real mode notice", style: css("flex:none;padding:5px 16px;border-bottom:1px solid #eaeaea;background:oklch(0.97 0.02 25);font:11.5px/1.5 " + SANS + ";color:oklch(0.4 0.14 25);white-space:normal;text-wrap:pretty") },
+      "Real mode: the product on the left does real work as you. Model calls spend real credit, Continue writes to your onboarding, a dropped PDF is uploaded. The panel on the right only reads what the server recorded.");
   }
   renderConfig(cfg) {
     if (!cfg.open) return null;
@@ -994,6 +1073,7 @@ class Debugger extends React.Component {
     ];
   }
   renderRequests(V) {
+    const K = this.KINDS;
     return [
       h("div", { key: "chips", style: css("display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px") },
         V.kindChips.map(k => h("button", { key: k.key, onClick: k.toggle, title: k.title, style: css("display:inline-flex;align-items:center;gap:7px;padding:5px 10px 5px 8px;border:1px solid " + k.border + ";border-radius:999px;background:" + k.bg + ";opacity:" + k.opacity) },
@@ -1001,13 +1081,14 @@ class Debugger extends React.Component {
           h("span", { style: css("font:500 11px/1 " + SANS + ";color:#171717") }, k.label),
           h("span", { style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, k.count)))),
       V.liveEmpty ? h("div", { key: "empty", style: css("padding:28px 18px;border:1px dashed #e2e2e2;border-radius:10px;text-align:center") },
-        h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, V.isReal ? "No actions were recorded for this run" : "No requests on this step yet"),
-        h("div", { style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, V.isReal ? "The run has no workflow operation on record." : "Use the product on the left. Every request it makes while on this step, and every operation the server runs to answer it, lands here as it happens.")) : null,
+        h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, V.isReal ? (V.real.viewingPicked ? "No actions were recorded for this run" : "No requests yet") : "No requests on this step yet"),
+        h("div", { style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, V.isReal ? (V.real.viewingPicked ? "The run has no workflow operation on record." : "Use the product on the left. Every request it makes lands here as it happens, and the operations the server recorded to answer it follow as soon as the reply names its trace.") : "Use the product on the left. Every request it makes while on this step, and every operation the server runs to answer it, lands here as it happens.")) : null,
       V.stages.map(s => h("div", { key: s.id, id: s.anchor, style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:8px;background:#fff;overflow:hidden") },
         h("div", { onClick: s.toggle, className: "hv-fafafa", style: css("display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer") },
           h("span", { style: css("font:500 10px/1 " + MONO + ";color:#8f8f8f;width:22px") }, s.seqLabel),
           h("span", { style: css("width:8px;height:8px;border-radius:50%;flex:none;background:" + s.dot) }),
           h("span", { style: css("flex:0 1 auto;min-width:0;font:500 13px/1.3 " + SANS + ";color:#171717;white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, s.label),
+          s.modelPill ? h("span", { title: "this request called a model", style: css("flex:none;padding:3px 6px;border-radius:4px;background:" + K.model.bg + ";color:" + K.model.color + ";font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;white-space:nowrap") }, s.modelPill) : null,
           h("span", { style: css("flex:none;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#8f8f8f;white-space:nowrap") }, s.tag),
           h("span", { style: css("flex:1 1 30px;min-width:0;font:11px/1.4 " + MONO + ";color:#8f8f8f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, s.path),
           h("span", { style: css("flex:none;font:11px/1 " + SANS + ";color:#4d4d4d;white-space:nowrap") }, s.opsLabel),
@@ -1035,7 +1116,7 @@ class Debugger extends React.Component {
       h("div", { style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:14px;background:#fff;overflow:hidden") },
         h("div", { style: css("padding:16px 14px 18px;background:#fafafa") },
           h("div", { style: css("display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap") },
-            h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#8f8f8f") }, V.isReal ? "This run" : "This step"),
+            h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#8f8f8f") }, V.isReal ? (V.real.viewingPicked ? "Earlier run · " + V.real.pickedTitle : "This session") : "This step"),
             h("span", { style: css("font:11.5px/1.4 " + MONO + ";color:#4d4d4d") }, V.lastRan)),
           h("div", { style: css("margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:12px 8px") },
             V.statTiles.map(stt => h("span", { key: stt.k, title: stt.help, style: css("min-width:0") },
@@ -1051,7 +1132,7 @@ class Debugger extends React.Component {
     return h("div", { "data-screen-label": "Lineage unavailable", style: css("border:1px dashed #e2e2e2;border-radius:10px;padding:28px 18px;text-align:center;margin-bottom:14px") },
       h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "Lineage is not recorded for real runs"),
       h("div", { style: css("margin:4px auto 0;max-width:460px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") },
-        "The graph draws which stored values each operation read and wrote. Real telemetry records the operations, their timing, payloads and errors, but not that, and nothing is guessed here. Use Requests to inspect every operation."));
+        "The graph draws which stored values each operation read and wrote. Real telemetry records the operations, their timing, payloads and errors, but not yet that, and no edge is guessed here. Use Requests to inspect every operation; the graph fills in once reads and writes are instrumented."));
   }
   renderCases(V) {
     return h("div", { style: css("flex:1;min-height:0;overflow:auto;padding:12px 14px 20px") },
@@ -1158,21 +1239,19 @@ class Debugger extends React.Component {
       h("pre", { style: css("flex:1;min-height:0;overflow:auto;margin:8px 14px 12px;padding:10px 12px;background:#fff;border:1px solid #eaeaea;border-radius:8px;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word") }, insp.json));
   }
   render() {
-    const real = this.isReal(), idle = real && !this.state.recordings.length;
-    // With no run open there is nothing for the execution panel to show, so only the pane's own view model is built.
-    const V = idle ? { isReal: true, real: this.realVM(), notice: this.state.notice, cfg: { open: false }, hasInspector: false, isLive: false, isCases: false, isCompare: false } : this.renderVals();
+    const V = this.renderVals(), R = V.real;
     return h("div", { style: css("height:100vh;display:flex;flex-direction:column;background:#fff;color:#171717;font-family:" + SANSF + ";overflow:hidden") },
       this.renderTopBar(V),
+      V.isReal ? this.renderRealStrip() : null,
       this.renderConfig(V.cfg),
       h("div", { ref: this.bodyRef, style: css("flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,56fr) 1px minmax(0,44fr)") },
-        real ? h("div", { "data-screen-label": "Runs", style: css("min-width:0;min-height:0;position:relative;background:#fafafa") }, this.renderRealPane(V))
-          : h("div", { "data-screen-label": "Product", style: css("min-width:0;min-height:0;position:relative;background:#fafafa") },
-          h("iframe", { ref: this.frameRef, title: "Engelbart setup, running against the simulated backend", src: V.frameSrc, style: css("display:block;width:100%;height:100%;border:0;background:#fff") })),
+        h("div", { "data-screen-label": "Product", style: css("min-width:0;min-height:0;position:relative;background:#fafafa") },
+          h("iframe", { key: "frame-" + this.state.frameKey, ref: this.frameRef, title: V.isReal ? "Engelbart setup, running against the real backend" : "Engelbart setup, running against the simulated backend", src: V.frameSrc, style: css("display:block;width:100%;height:100%;border:0;background:#fff") }),
+          V.isReal && R.signedOut ? this.renderSignedOut(R) : null),
         h("div", { onPointerDown: (e) => this.splitDown(e), title: "drag to resize", style: css("position:relative;background:#eaeaea;cursor:col-resize;width:1px") },
           h("div", { style: css("position:absolute;left:-5px;top:0;bottom:0;width:11px;cursor:col-resize") }),
           h("div", { style: css("position:absolute;left:-2px;top:50%;width:5px;height:36px;margin-top:-18px;border-radius:3px;background:#c9c9c9") })),
         h("div", { "data-screen-label": "Execution graph", style: css("min-width:0;min-height:0;display:flex;flex-direction:column;background:#fff") },
-          idle ? h("div", { style: css("flex:1;display:flex;align-items:center;justify-content:center;padding:24px;font:12.5px/1.6 " + SANS + ";color:#8f8f8f;text-align:center;text-wrap:pretty") }, "Open a run on the left to see its actions, operations and payloads here.") : null,
           V.isLive ? this.renderLive(V) : null,
           V.isCases ? this.renderCases(V) : null,
           V.isCompare ? this.renderCompare(V) : null,

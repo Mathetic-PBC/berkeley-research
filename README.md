@@ -137,30 +137,49 @@ model; the page's `fetch` to `/api` is answered in-page from
 environment. Test environments, step recordings and notes persist in that
 browser's `localStorage`.
 
-The page has two modes, switched at the top: **Simulated** is the simulator
-above, which shows what the server is designed to do for each press, not what
-production did. **Real runs** reads the persisted telemetry in the
-`engelbart_telemetry_*` tables, the record of what production actually did,
-for the signed-in member's own onboardings: a compact list of recent runs
-(project or paper, actions, status, operations, server time), and one click
-opens a run in the same request list and inspector. A workflow root is a
-request row, the operations beneath it are its rows, and the inspector's tabs
-are the recorded snapshots (model request, raw and parsed reply, database
-request and response, page text, normalized result), attributes, events and
-error, exactly as stored. Nothing is invented: no cost is estimated, request
-bodies the server did not keep are not shown, and because the contract does
-not record which stored values an operation read and wrote, the Data flow
-view says lineage is unavailable rather than guessing edges.
+The page has two modes, switched at the top, with the same composition in
+both: the setup page on the left; the request list, the operation inspector
+and the Data flow view on the right. **Simulated** is the simulator above: it
+shows what the server is designed to do for each press, not what production
+did. **Real** puts the same setup page in the same frame against the real
+endpoints, signed in as you (the frame uses your real Supabase session;
+nothing is intercepted), and draws beside it what the server actually did.
+Every action's reply names the trace it produced in an `x-engelbart-trace-id`
+header; the page reads that trace from `/api/engelbart-telemetry?trace=` the
+moment the reply lands and places the recorded operations under the request
+row. So pressing Continue on the left shows `onboarding · step` on the right
+with the row load, the calibration and turn reads and the database write
+beneath it, and starting an analysis shows the paper download, the page
+fetches, the context construction, the model call and the persist. The
+inspector's tabs are the recorded snapshots (model request, raw and parsed
+reply, database request and response, page text, normalized result),
+attributes, events and error, exactly as stored, credentials redacted before
+storage. Requests the server does not trace (the config read, routine status
+polls, the browser's direct upload to Storage) are listed too, marked
+untraced, consecutive polls folded into one row. The run picker beside the
+mode switch opens an earlier onboarding of yours into the same panel. Nothing
+is invented: no cost is estimated, request bodies the server did not keep are
+not shown, and because the contract does not record which stored values an
+operation read and wrote, the Data flow view says lineage is unavailable
+rather than guessing edges.
 
-Real runs mode is read-only. It goes through `/api/engelbart-telemetry`
-(`GET` only; the member's own Supabase session; the service role stays on
-the server; runs are returned only for onboarding rows the member owns; the
-reads are untraced), which never changes onboarding state, calls a model or
-spends credit. The simulator's reset, environments and prompt edits are hidden
-in that mode; nothing in the debugger can replay or rerun a real action. The
-adapter is `engelbart/setup/test/real-runs.js`, tested against the example
-envelope in `docs/observability/` by `tests/debugger-real-runs.test.js`;
-the endpoint by `tests/engelbart-telemetry.test.js`.
+Real mode performs real actions: the product on the left does real work as
+you, exactly as at `/engelbart/setup`, so a model call spends real credit,
+Continue writes your onboarding and a dropped PDF is uploaded. The panel on
+the right only reads. It goes through `/api/engelbart-telemetry` (`GET` only;
+the member's own Supabase session; the service role stays on the server;
+runs and traces are returned only for the member's own onboardings; the reads
+are untraced), which never changes onboarding state, calls a model or spends
+credit. The simulator's reset, environments, speed and prompt edits are hidden
+in that mode, the setup page's own test bar is never enabled there, and
+nothing in the debugger can replay or rerun a real action. The frame
+(`frame.js`) reports each request and reply to the page with credentials,
+tokens and signed URLs redacted. The adapter is
+`engelbart/setup/test/real-runs.js`, tested against the example envelope in
+`docs/observability/` by `tests/debugger-real-runs.test.js`; the frame by
+`tests/debugger-frame.test.js`, the page by `tests/debugger-page.test.js`,
+the endpoint by `tests/engelbart-telemetry.test.js`, and `e2e/debugger.spec.js`
+drives both modes in Chromium under the deployed headers.
 
 The page is flattened from the Claude Design file `Engelbart Debugger.dc.html`
 into `engelbart/setup/test/` (`debugger.js`, `debugger.css`, `frame.html`,

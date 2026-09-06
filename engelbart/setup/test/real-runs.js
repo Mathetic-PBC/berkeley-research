@@ -1,4 +1,4 @@
-/* Real runs for the Engelbart debugger: the member's own recorded onboarding
+/* Real mode for the Engelbart debugger: the member's own recorded onboarding
  * telemetry, read through /api/engelbart-telemetry and shaped into the runs,
  * stages and operations the debugger already draws.
  *
@@ -6,10 +6,18 @@
  * data-contract.md): a workflow root becomes a request row, the operations
  * beneath it become that row's operation rows, and snapshots of every kind
  * become the inspector's tabs. Nothing is added that was not recorded: no
- * cost, no lineage, no request bodies the server did not keep. Everything
- * here is read-only, in the page as in the API.
+ * cost, no lineage, no request bodies the server did not keep.
  *
- * Loads under Node as well as in the browser, so the mapping is testable. */
+ * What the browser saw is a second source: in Real mode the frame reports
+ * every request the product makes, and the reply names its trace
+ * (x-engelbart-trace-id). A reported request joins the trace's root row by
+ * that id, carrying the request and reply as the browser sent and received
+ * them; a request the server did not trace (a status poll, the config read,
+ * the upload straight to Storage) is a row of its own with no operations,
+ * and a run of polls folds into one row.
+ *
+ * Reading telemetry never changes anything. Loads under Node as well as in
+ * the browser, so the mapping is testable. */
 (function (root) {
   "use strict";
 
@@ -19,6 +27,8 @@
   // rest keep their own tab, named by kind, so nothing recorded is hidden.
   var INPUT_KINDS = ["model_request", "database_request", "processing_input"];
   var OUTPUT_KINDS = ["model_parsed_response", "database_response", "processing_output", "normalized_result", "page_text"];
+  // The endpoints the product talks to, as the surfaces the simulator names.
+  var SURFACES = [[/engelbart-onboarding/, "onboarding"], [/engelbart-device/, "device"], [/engelbart-setup/, "setup"], [/engelbart-config/, "config"], [/engelbart-telemetry/, "telemetry"]];
 
   function kindOf(op) {
     if (op.type === "http" && /^(litellm|credit|key)\b/.test(String(op.name || ""))) return "api";
@@ -59,6 +69,7 @@
       m.model = a["gen_ai.response.model"] || a["gen_ai.request.model"] || null;
       m.family = a["engelbart.model.family"] || null;
       m.purpose = a["engelbart.model.purpose"] || null;
+      m.gateway = a["engelbart.model.gateway"] || null;
       m.tokens = tokensOf(a);
       m.finish = Array.isArray(a["gen_ai.response.finish_reasons"]) ? a["gen_ai.response.finish_reasons"].join(", ") : null;
     }
@@ -103,20 +114,65 @@
     return out;
   }
 
+  // "onboarding · analysis (run)": the surface the root name starts with, the action it recorded,
+  // and the way the simulator marks a background run or a poll.
+  function labelOf(surface, action, flags) {
+    return surface + " · " + action + (flags.bg ? " (run)" : flags.poll ? " (poll)" : "");
+  }
+  function surfaceOfPath(path) {
+    for (var i = 0; i < SURFACES.length; i++) if (SURFACES[i][0].test(String(path || ""))) return SURFACES[i][1];
+    return /storage/.test(String(path || "")) ? "storage" : "client";
+  }
+
   function stageVM(rootOp, ops, index, events) {
     var a = rootOp.attributes || {};
     var rows = descendants(rootOp, ops).map(function (x, i) { return opVM(x.op, i + 1, x.depth); });
     var byOp = {}; rows.forEach(function (r) { byOp[r.id] = r; });
     (events || []).forEach(function (ev) { var r = byOp[ev.operation_id]; if (r) r.events.push({ type: ev.type, at: ev.at, status: ev.status, progress: ev.progress || null, error: ev.error || null }); });
-    return { id: rootOp.operation_id, seq: index + 1, at: when(rootOp.started_at), path: rootOp.name, method: a["http.request.method"] || "ACTION",
-      surface: null, action: rootOp.action || a["engelbart.action"] || null, label: rootOp.action || a["engelbart.action"] || rootOp.name, bg: false,
-      poll: a["engelbart.poll"] === true, direct: false, request: null, status: statusOf(rootOp.status), ops: rows, ms: durationOf(rootOp),
+    var action = rootOp.action || a["engelbart.action"] || null;
+    var surface = String(rootOp.name || "").indexOf(".") > 0 ? String(rootOp.name).split(".")[0] : "onboarding";
+    var bg = a["engelbart.run_flag"] === true || a["engelbart.retry"] === true, poll = a["engelbart.poll"] === true;
+    // A recorded onboarding action was one POST to the endpoint; a root the server never recorded keeps its own name.
+    var endpoint = surface === "onboarding" && rootOp.synthetic !== true;
+    return { id: rootOp.operation_id, seq: index + 1, at: when(rootOp.started_at), path: endpoint ? "/api/engelbart-onboarding" : rootOp.name, method: endpoint ? "POST" : "ACTION",
+      surface: surface, action: action, label: action ? labelOf(surface, action, { bg: bg, poll: poll }) : rootOp.name, bg: bg,
+      poll: poll, direct: false, request: null, status: statusOf(rootOp.status), ops: rows, ms: durationOf(rootOp),
       code: a["http.response.status_code"] != null ? a["http.response.status_code"] : null, response: null,
-      real: true, synthetic: rootOp.synthetic === true, trace_id: rootOp.trace_id, attributes: a, error: rootOp.error || null,
-      started_at: rootOp.started_at, ended_at: rootOp.ended_at, outcome: a["engelbart.outcome"] || null };
+      real: true, synthetic: rootOp.synthetic === true, trace_id: rootOp.trace_id, root: rootOp.name, attributes: a, error: rootOp.error || null,
+      started_at: rootOp.started_at, ended_at: rootOp.ended_at, outcome: a["engelbart.outcome"] || null, modelCount: rows.filter(function (r) { return r.kind === "model"; }).length };
   }
 
-  // The envelope, as one debugger run: one stage per workflow root, in start order.
+  // A request the browser made that the server did not trace, or whose trace has not arrived: a row
+  // with what the browser sent and got back, and no operations.
+  function observedStage(rq) {
+    var surface = rq.where === "storage" ? "storage" : surfaceOfPath(rq.path);
+    var action = rq.action || (rq.method === "PUT" ? "upload" : String(rq.path || "").split("/").pop());
+    var awaiting = rq.trace_id ? (rq.trace === "missing" ? "missing" : "pending") : null;
+    return { id: "req:" + rq.id, seq: 0, at: rq.at, path: rq.path, method: rq.method, surface: surface, action: action,
+      label: labelOf(surface, action, { bg: !!rq.bg, poll: !!rq.poll }), bg: !!rq.bg, poll: !!rq.poll, direct: rq.where === "storage",
+      request: rq.request === undefined ? null : rq.request, status: rq.status || "running", ops: [], ms: rq.ms || 0, code: rq.code == null ? null : rq.code,
+      response: rq.response === undefined ? null : rq.response, real: false, observed: true, untraced: !rq.trace_id, awaiting: awaiting, trace_id: rq.trace_id || null,
+      requestId: rq.id, step: rq.step || null, error: rq.error || null, traceError: rq.traceError || null, modelCount: 0 };
+  }
+
+  // Consecutive untraced polls of one action are one row: the waiting, not the work.
+  function foldPolls(stages) {
+    var out = [];
+    stages.forEach(function (s) {
+      var prev = out[out.length - 1];
+      if (s.observed && s.untraced && s.poll && prev && prev.observed && prev.untraced && prev.poll && prev.action === s.action && prev.path === s.path) {
+        prev.polls = (prev.polls || [{ id: prev.id, at: prev.at, status: prev.status, code: prev.code, ms: prev.ms }]).concat([{ id: s.id, at: s.at, status: s.status, code: s.code, ms: s.ms }]);
+        prev.count = prev.polls.length; prev.request = s.request; prev.response = s.response; prev.status = s.status; prev.code = s.code; prev.ms = s.ms; prev.last = s.at;
+        return;
+      }
+      out.push(s);
+    });
+    return out;
+  }
+
+  // The envelope, as one debugger run: one stage per workflow root, in start order, and -- when
+  // the browser's own reports are given -- those reports joined to their traces by id, with the
+  // untraced ones as rows of their own, in the order the browser made them.
   function adapt(envelope, options) {
     var opts = options || {};
     var ops = (envelope.operations || []).filter(Boolean);
@@ -137,11 +193,49 @@
       found.forEach(function (r) { roots.push({ root: r, trace: trace }); });
     });
     roots.sort(function (a, b) { return when(a.root.started_at) - when(b.root.started_at) || String(a.root.operation_id).localeCompare(String(b.root.operation_id)); });
-    var stages = roots.map(function (x, i) { return stageVM(x.root, byTrace[x.trace], i, eventsByTrace[x.trace]); });
+    var traced = roots.map(function (x, i) { return stageVM(x.root, byTrace[x.trace], i, eventsByTrace[x.trace]); });
+    var stages = traced;
+    var requests = Array.isArray(opts.requests) ? opts.requests : null;
+    if (requests) {
+      var byTraceId = {}; traced.forEach(function (s) { if (s.trace_id && !byTraceId[s.trace_id]) byTraceId[s.trace_id] = s; });
+      var session = [], taken = {};
+      requests.forEach(function (rq) {
+        var hit = rq.trace_id && byTraceId[rq.trace_id];
+        if (hit && !taken[hit.id]) {
+          // The browser's side of the same action: what it sent, what came back, and when.
+          taken[hit.id] = true; hit.observed = true; hit.requestId = rq.id; hit.at = rq.at || hit.at; hit.step = rq.step || null;
+          hit.request = rq.request === undefined ? null : rq.request; hit.response = rq.response === undefined ? null : rq.response;
+          if (rq.code != null) hit.code = rq.code; hit.browserMs = rq.ms || 0;
+          if (rq.status === "running" && hit.status !== "running") hit.status = hit.status; // the server's word stands once the trace is in
+          session.push(hit); return;
+        }
+        session.push(observedStage(rq));
+      });
+      var earlier = traced.filter(function (s) { return !taken[s.id]; });
+      earlier.forEach(function (s) { s.earlier = session.length > 0; });
+      stages = earlier.concat(foldPolls(session));
+    }
+    stages.forEach(function (s, i) { s.seq = i + 1; });
     var snapshots = {}; (envelope.snapshots || []).forEach(function (s) { if (s && s.snapshot_id) snapshots[s.snapshot_id] = s; });
     var run = envelope.run || {}, ob = envelope.onboarding || opts.onboarding || {};
-    return { id: "real-" + (run.run_id || ob.onboarding_id || "run"), name: runLabel(ob, run), real: true, knobs: {}, stages: stages, requests: [], startedAt: when(run.started_at) || null,
+    return { id: "real-" + (run.run_id || ob.onboarding_id || "run"), name: opts.name || runLabel(ob, run), real: true, knobs: {}, stages: stages, requests: [], startedAt: when(run.started_at) || null,
       seed: null, trigger: null, presses: 0, run: run, onboarding: ob, snapshots: snapshots, snapshotsInline: envelope.snapshots_inline !== false, contract: envelope.contract_version || null };
+  }
+
+  // Two envelopes as one: a trace read after its request, folded into the run it belongs to. The
+  // later record of an operation wins; a snapshot that carries its content beats one that does not.
+  function mergeEnvelope(into, add) {
+    var a = into || {}, b = add || {};
+    var byId = function (list, key) { var m = {}; (list || []).forEach(function (x) { if (x && x[key]) m[x[key]] = x; }); return m; };
+    var ops = byId(a.operations, "operation_id"); Object.assign(ops, byId(b.operations, "operation_id"));
+    var evs = byId(a.events, "event_id"); Object.assign(evs, byId(b.events, "event_id"));
+    var snaps = byId(a.snapshots, "snapshot_id");
+    (b.snapshots || []).forEach(function (s) { if (!s || !s.snapshot_id) return; var have = snaps[s.snapshot_id]; if (!have || have.content === undefined || s.content !== undefined) snaps[s.snapshot_id] = s; });
+    var values = function (m) { return Object.keys(m).map(function (k) { return m[k]; }); };
+    var out = { contract_version: b.contract_version || a.contract_version || null, run: b.run || a.run || null, onboarding: b.onboarding || a.onboarding || null,
+      operations: values(ops), snapshots: values(snaps), events: values(evs),
+      snapshots_inline: a.snapshots_inline !== false && b.snapshots_inline !== false };
+    return out;
   }
 
   function runLabel(ob, run) {
@@ -154,6 +248,7 @@
     if (!id) return { state: "none" };
     var s = recording.snapshots[id];
     if (!s) return { state: "missing", id: id };
+    if (s.unavailable) return { state: "unavailable", id: id };
     if (s.content_omitted && s.content === undefined) return { state: "pending", id: id, bytes: s.bytes, truncated: !!s.truncated };
     return { state: "ready", id: id, content: s.content, bytes: s.bytes, truncated: !!s.truncated, redacted: s.redacted !== false, kind: s.kind };
   }
@@ -185,9 +280,10 @@
       });
     }
     return { session: session, list: function (token) { return get("", token); }, run: function (token, id) { return get("run=" + encodeURIComponent(id), token); },
+      trace: function (token, id) { return get("trace=" + encodeURIComponent(id), token); },
       snapshot: function (token, id) { return get("snapshot=" + encodeURIComponent(id), token); } };
   }
 
-  root.EGB_REAL = { adapt: adapt, kindOf: kindOf, statusOf: statusOf, targetOf: targetOf, tokensOf: tokensOf, snapsOf: snapsOf, snapshotOf: snapshotOf, runLabel: runLabel, client: client,
-    INPUT_KINDS: INPUT_KINDS, OUTPUT_KINDS: OUTPUT_KINDS };
+  root.EGB_REAL = { adapt: adapt, mergeEnvelope: mergeEnvelope, observedStage: observedStage, foldPolls: foldPolls, kindOf: kindOf, statusOf: statusOf, targetOf: targetOf, tokensOf: tokensOf,
+    snapsOf: snapsOf, snapshotOf: snapshotOf, runLabel: runLabel, surfaceOfPath: surfaceOfPath, client: client, INPUT_KINDS: INPUT_KINDS, OUTPUT_KINDS: OUTPUT_KINDS };
 })(typeof window !== "undefined" ? window : this);

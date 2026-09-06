@@ -367,6 +367,13 @@ service-role key is not redacted there, it is absent.
   (see *Joining an Event to its Operation*).
 - Concurrent requests never share context: async context is per request, and
   each request's root starts a new trace.
+- **Correlation with the request.** Every traced reply from
+  `POST /api/engelbart-onboarding` carries the root's `trace_id` in the
+  response header `x-engelbart-trace-id`, set after the flush so the trace is
+  readable by the time the reply is; a failed action still names its trace. An
+  untraced request (a routine poll with `ENGELBART_TRACE_POLLS` off) sends no
+  header. A page that made the request joins what the server did to it by that
+  id, never by time.
 
 ## Persistence
 
@@ -382,6 +389,23 @@ Under the node test runner (`NODE_TEST_CONTEXT` set) nothing is persisted or
 exported unless asked for explicitly, so a test suite that inherits real
 credentials never records itself; the fixture generator switches the store off
 the same way.
+
+### Reading a run back
+
+`GET /api/engelbart-telemetry` returns what the store holds for the signed-in
+member's own onboardings, in the shapes above, for the debugger's Real mode:
+
+| query | returns |
+|---|---|
+| none | `{ runs: [...] }`: the member's recent onboarding rows, newest first, each with `run_id`, the row's public fields (`onboarding_id`, `onboarding_status`, `step`, `project_name`, `paper_title`, `created_at`, `updated_at`) and `telemetry`: the derived Run's `status`, `started_at`, `ended_at`, `actions`, `trace_ids`, `counts`, plus `server_ms` and `last_error`; `null` when nothing was recorded |
+| `?run=<onboarding id>` | the envelope (`contract_version`, `run`, `operations`, `snapshots`, `events`) for that onboarding, plus `snapshots_inline` and `onboarding` (the row's public fields) |
+| `?trace=<32 hex>` | the envelope for one action, by the id its reply named in `x-engelbart-trace-id`, plus `trace_id`, `snapshots_inline` and `onboarding` (`null` for a trace that never read its row); 404 while the trace is not yet readable or is not the member's |
+| `?snapshot=<id>` | `{ snapshot }`: one snapshot with its content, for a run whose snapshots were too large to travel inline (`snapshots_inline: false`, each snapshot then carrying `content_omitted: true`) |
+
+The member is named by their Supabase session exactly as the onboarding
+endpoint names them; the service role stays in the function; nothing is
+written, no model is called, and the reads run untraced. It is not an admin
+view (see *Not in this contract yet*).
 
 ### Verifying a deployment
 
@@ -429,12 +453,16 @@ records before it responds, bounded by `ENGELBART_TELEMETRY_FLUSH_MS` (2000).
   Realtime on `engelbart_telemetry_events` (the CSP already allows the project's
   `wss://` origin; the table would need an admin-scoped read policy), a polling
   read endpoint keyed by `run_id` and `sequence`, or a separate test deployment
-  that tails the store. None is built.
-- **An admin read API.** `GET /api/engelbart-telemetry` reads the store for
-  the debugger's Real runs mode, but only a member's own runs: it names the
-  member by their session (`verifyUser`), lists the onboarding rows they own
-  and returns the operations, snapshots and events of those runs through
-  `bundle()`, untraced, with the service role kept server-side. It is not an
-  admin view across members; one would need `requireAdmin` and is not built.
+  that tails the store. None is built. The debugger's Real mode does without:
+  it reads each trace once the reply that produced it arrives, keyed by
+  `x-engelbart-trace-id` (see *Reading a run back*), and a background action
+  it did not see finish is read when the page next hears of its row.
+- **An admin read API.** `GET /api/engelbart-telemetry` (see *Reading a run
+  back*) serves the debugger's Real mode, but only a member's own runs: it
+  names the member by their session (`verifyUser`), lists the onboarding rows
+  they own and returns the operations, snapshots and events of those runs
+  through `bundle()`, untraced, with the service role kept server-side. It is
+  not an admin view across members; one would need `requireAdmin` and is not
+  built.
 - **CLI / claude-plugins instrumentation**, and the `engelbart-setup` function's
   own actions (only its storage helpers trace, as root spans).
