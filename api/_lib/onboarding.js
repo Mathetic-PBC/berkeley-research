@@ -13,6 +13,8 @@ const PageFetch = require("./page-fetch");
 const Curated = require("./curated");
 const SetupChat = require("./setup-chat");
 const { deleteRows, insertRows, patchRows, selectRows, rpc } = require("./supabase");
+const { telemetry } = require("./telemetry");
+const { hostOf, safeUrl } = require("./telemetry/redaction");
 
 const TABLE = "engelbart_onboardings";
 const CALIBRATIONS = "engelbart_onboarding_calibrations";
@@ -40,15 +42,26 @@ function fail(message, statusCode) {
 function eq(column, value) {
   return `${column}=eq.${encodeURIComponent(String(value))}`;
 }
+// The same options, with a semantic name for the one database operation
+// they reach: "analysis.persist" in the graph, not a generic db.patch.
+function traced(options, name) {
+  return { ...options, trace: { name } };
+}
+// How the workflow ended, on the workflow's own node.
+function outcome(status) {
+  const op = telemetry.current();
+  if (op) op.setAttribute("engelbart.outcome", status);
+  return status;
+}
 
 // --- the row ------------------------------------------------------------------
 
 async function rowsOf(user, options) {
-  return selectRows(TABLE, `${eq("user_id", user.id)}&select=*&order=created_at.desc`, options);
+  return selectRows(TABLE, `${eq("user_id", user.id)}&select=*&order=created_at.desc`, traced(options, "row.load"));
 }
 
 async function calibrationsOf(row, options) {
-  return selectRows(CALIBRATIONS, `${eq("onboarding_id", row.id)}&select=*&order=asked_at.asc`, options);
+  return selectRows(CALIBRATIONS, `${eq("onboarding_id", row.id)}&select=*&order=asked_at.asc`, traced(options, "calibrations.load"));
 }
 
 // Every write asks for the representation back, so an empty answer means the
@@ -113,7 +126,7 @@ async function open(user, body, options = {}) {
 
 async function turnsOf(row, stage, assetKey, options) {
   const key = assetKey ? `&${eq("asset_key", assetKey)}` : "";
-  return selectRows(TURNS, `${eq("onboarding_id", row.id)}&${eq("stage", stage)}${key}&select=*&order=created_at.asc`, options);
+  return selectRows(TURNS, `${eq("onboarding_id", row.id)}&${eq("stage", stage)}${key}&select=*&order=created_at.asc`, traced(options, "turns.load"));
 }
 
 function publicTurn(t) {
@@ -212,10 +225,10 @@ async function pageTexts(row, options) {
   // analysis instead of being dropped. Each fetch keeps its own 15 s bound.
   const at = { env: options && options.env, fetchImpl: options && options.fetchImpl };
   const out = [];
-  for (const url of [row.project_url, row.repo_url]) {
+  for (const [url, traceName] of [[row.project_url, "project-page.fetch"], [row.repo_url, "repo-page.fetch"]]) {
     if (!url) continue;
     let text = "";
-    try { text = await PageFetch.fetchPageText(url, at); } catch { text = "(could not be fetched)"; }
+    try { text = await PageFetch.fetchPageText(url, { ...at, traceName }); } catch { text = "(could not be fetched)"; }
     out.push({ url, text });
   }
   return out;
@@ -225,9 +238,9 @@ async function pageTexts(row, options) {
 // paper. The row is re-read at the end of the run, and a run whose paper is no
 // longer the row's paper writes nothing at all: neither its answer nor its
 // error belongs to the paper that is there now.
-async function supersededBy(row, paperId, options) {
+async function supersededBy(row, paperId, options, name = "check-superseded") {
   try {
-    const rows = await selectRows(TABLE, `${eq("id", row.id)}&select=id,paper_id&limit=1`, options);
+    const rows = await selectRows(TABLE, `${eq("id", row.id)}&select=id,paper_id&limit=1`, traced(options, name));
     const now = rows && rows[0];
     return Boolean(now) && String(now.paper_id) !== String(paperId);
   } catch (error) {
@@ -236,27 +249,43 @@ async function supersededBy(row, paperId, options) {
   }
 }
 
+// The reading, as the graph shows it: mark running, download the paper,
+// gather the page context, construct the request, call the model, normalize,
+// check the paper is still the row's, persist. Each is an operation under
+// the `onboarding.analysis` workflow; the storage, http, model and database
+// boundaries trace themselves, and the semantic database names come from
+// `traced` so the graph reads "analysis.persist" where the code says patch.
 async function runAnalysis(user, row, credentials, options) {
   const mine = row.paper_id;
-  await patch(row, { analysis_status: "running", analysis_started_at: new Date().toISOString(), analysis_error: "" }, options);
+  await patch(row, { analysis_status: "running", analysis_started_at: new Date().toISOString(), analysis_error: "" },
+    traced(options, "analysis.mark-running"));
   try {
     const pdf = await Storage.downloadObject(Storage.paperObjectPath(mine),
       { ...options, maxBytes: MAX_PDF_BYTES });
     if (pdf.length > MAX_PDF_BYTES) throw fail("That PDF is larger than 20 MB", 413);
     const familiarity = P.FAMILIARITY[Number(row.paper_familiarity) || 0];
     const depth = P.depthOf(row.depth) || P.DEPTHS[0];
+    const urls = await telemetry.runOperation({ name: "analysis.context", type: "processing",
+      attributes: { "engelbart.analysis.pages": [row.project_url, row.repo_url].filter(Boolean).length } },
+    async (op) => {
+      const texts = await pageTexts(row, options);
+      op.setAttribute("engelbart.analysis.pages_fetched", texts.filter((t) => t.text !== "(could not be fetched)").length);
+      return texts;
+    });
     const analysis = await OM.analyze({
       familiarityLabel: familiarity.label, familiarityDesc: familiarity.desc,
       depthLabel: depth.label, depthDesc: depth.desc,
       pdfBase64: pdf.toString("base64"),
-      urls: await pageTexts(row, options),
+      urls,
     }, credentials, options);
-    if (await supersededBy(row, mine, options)) return { analysis_status: "superseded" };
-    await patch(row, { analysis, analysis_status: "done", paper_title: analysis.title }, options);
-    return { analysis_status: "done", analysis };
+    if (await supersededBy(row, mine, options, "analysis.check-superseded")) return { analysis_status: outcome("superseded") };
+    await patch(row, { analysis, analysis_status: "done", paper_title: analysis.title }, traced(options, "analysis.persist"));
+    return { analysis_status: outcome("done"), analysis };
   } catch (error) {
-    if (await supersededBy(row, mine, options)) return { analysis_status: "superseded" };
-    await patch(row, { analysis_status: "error", analysis_error: one(error.message, 300) || "analysis failed" }, options);
+    if (await supersededBy(row, mine, options, "analysis.check-superseded")) return { analysis_status: outcome("superseded") };
+    await patch(row, { analysis_status: "error", analysis_error: one(error.message, 300) || "analysis failed" },
+      traced(options, "analysis.persist-error"));
+    outcome("error");
     if (error.statusCode === 409) throw error;
     return { analysis_status: "error", analysis_error: row.analysis_error };
   }
@@ -309,55 +338,82 @@ function running(row, prefix, now = Date.now()) {
   return now - started < RUNNING_STALE_MS;
 }
 
+// One link check is one http operation. It never fails: an unreachable host
+// is a verdict ("kept", the link stays), recorded as such.
 async function linkAlive(url, options) {
   const fetchImpl = (options && options.fetchImpl) || global.fetch;
-  try {
-    PageFetch.safeHttpUrl(url);
-  } catch {
-    return false;
+  return telemetry.runOperation({ name: "link.check", type: "http",
+    attributes: { "http.request.method": "HEAD", "url.full": safeUrl(url), "server.address": hostOf(url) } }, async (op) => {
+    try {
+      PageFetch.safeHttpUrl(url);
+    } catch {
+      op.setAttribute("engelbart.link.verdict", "unsafe");
+      return false;
+    }
+    try {
+      const response = await fetchImpl(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(LINK_CHECK_MS) });
+      op.setAttribute("http.response.status_code", response.status);
+      // Only a host that positively says the thing is gone loses the link; a
+      // refusal of HEAD (403, 405) or a timeout is not evidence either way.
+      const alive = !(response.status === 404 || response.status === 410);
+      op.setAttribute("engelbart.link.verdict", alive ? "alive" : "gone");
+      return alive;
+    } catch {
+      op.setAttribute("engelbart.link.verdict", "unreachable");
+      return true;
+    }
+  });
+}
+
+function countLinks(assets) {
+  let n = 0;
+  for (const asset of Array.isArray(assets) ? assets : []) {
+    n += Array.isArray(asset.links) ? asset.links.length : 0;
+    n += countLinks(asset.children);
   }
-  try {
-    const response = await fetchImpl(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(LINK_CHECK_MS) });
-    // Only a host that positively says the thing is gone loses the link; a
-    // refusal of HEAD (403, 405) or a timeout is not evidence either way.
-    return !(response.status === 404 || response.status === 410);
-  } catch {
-    return true;
-  }
+  return n;
 }
 
 async function verifyLinks(assets, options) {
-  let budget = MAX_LINK_CHECKS;
-  async function check(asset) {
-    const had = asset.links.length;
-    const verdicts = await Promise.all(asset.links.map((l) => {
-      if (budget <= 0) return Promise.resolve(true);
-      budget -= 1;
-      return linkAlive(l.url, options);
-    }));
-    asset.links = asset.links.filter((_, i) => verdicts[i]);
-    if (had && !asset.links.length && asset.availability === "usable") asset.availability = "unknown";
-    for (const child of Array.isArray(asset.children) ? asset.children : []) await check(child);
-  }
-  for (const asset of assets) await check(asset);
-  return assets;
+  return telemetry.runOperation({ name: "assets.verify-links", type: "processing",
+    attributes: { "engelbart.links.before": countLinks(assets), "engelbart.links.budget": MAX_LINK_CHECKS } }, async (op) => {
+    let budget = MAX_LINK_CHECKS;
+    async function check(asset) {
+      const had = asset.links.length;
+      const verdicts = await Promise.all(asset.links.map((l) => {
+        if (budget <= 0) return Promise.resolve(true);
+        budget -= 1;
+        return linkAlive(l.url, options);
+      }));
+      asset.links = asset.links.filter((_, i) => verdicts[i]);
+      if (had && !asset.links.length && asset.availability === "usable") asset.availability = "unknown";
+      for (const child of Array.isArray(asset.children) ? asset.children : []) await check(child);
+    }
+    for (const asset of assets) await check(asset);
+    op.setAttributes({ "engelbart.links.after": countLinks(assets), "engelbart.links.checked": MAX_LINK_CHECKS - Math.max(0, budget) });
+    op.snapshot("processing_output", assets);
+    return assets;
+  });
 }
 
 async function runAssets(user, row, credentials, options) {
   const mine = row.paper_id;
-  await patch(row, { assets_status: "running", assets_started_at: new Date().toISOString(), assets_error: "" }, options);
+  await patch(row, { assets_status: "running", assets_started_at: new Date().toISOString(), assets_error: "" },
+    traced(options, "assets.mark-running"));
   try {
     const pdf = await Storage.downloadObject(Storage.paperObjectPath(mine), { ...options, maxBytes: MAX_PDF_BYTES });
     if (pdf.length > MAX_PDF_BYTES) throw fail("That PDF is larger than 20 MB", 413);
     const found = await OM.assets({ pdfBase64: pdf.toString("base64") }, credentials, options);
     const assets = await verifyLinks(found.assets, options);
-    if (await supersededBy(row, mine, options)) return { assets_status: "superseded" };
+    if (await supersededBy(row, mine, options, "assets.check-superseded")) return { assets_status: outcome("superseded") };
     const value = { assets, searched: found.searched };
-    await patch(row, { assets: value, assets_brief: OM.briefOf(assets), assets_status: "done" }, options);
-    return { assets_status: "done", assets: value, assets_brief: row.assets_brief };
+    await patch(row, { assets: value, assets_brief: OM.briefOf(assets), assets_status: "done" }, traced(options, "assets.persist"));
+    return { assets_status: outcome("done"), assets: value, assets_brief: row.assets_brief };
   } catch (error) {
-    if (await supersededBy(row, mine, options)) return { assets_status: "superseded" };
-    await patch(row, { assets_status: "error", assets_error: one(error.message, 300) || "the asset hunt failed" }, options);
+    if (await supersededBy(row, mine, options, "assets.check-superseded")) return { assets_status: outcome("superseded") };
+    await patch(row, { assets_status: "error", assets_error: one(error.message, 300) || "the asset hunt failed" },
+      traced(options, "assets.persist-error"));
+    outcome("error");
     if (error.statusCode === 409) throw error;
     return { assets_status: "error", assets_error: row.assets_error };
   }
@@ -419,17 +475,20 @@ async function topicsDone(user, row, calibrations, body, options = {}) {
 
 async function runLeveled(user, row, calibrations, credentials, options) {
   const mine = row.paper_id;
-  await patch(row, { leveled_status: "running", leveled_started_at: new Date().toISOString(), leveled_error: "" }, options);
+  await patch(row, { leveled_status: "running", leveled_started_at: new Date().toISOString(), leveled_error: "" },
+    traced(options, "leveled.mark-running"));
   try {
     const leveled = await OM.levelAssets({ reader: readerOf(row, calibrations), assessment: row.assessment,
       assets: row.assets.assets, interest: row.interest || "" }, credentials, options);
     await verifyLinks(leveled.assets, options);
-    if (await supersededBy(row, mine, options)) return { leveled_status: "superseded" };
-    await patch(row, { leveled, leveled_status: "done" }, options);
-    return { leveled_status: "done", leveled };
+    if (await supersededBy(row, mine, options, "leveled.check-superseded")) return { leveled_status: outcome("superseded") };
+    await patch(row, { leveled, leveled_status: "done" }, traced(options, "leveled.persist"));
+    return { leveled_status: outcome("done"), leveled };
   } catch (error) {
-    if (await supersededBy(row, mine, options)) return { leveled_status: "superseded" };
-    await patch(row, { leveled_status: "error", leveled_error: one(error.message, 300) || "levelling failed" }, options);
+    if (await supersededBy(row, mine, options, "leveled.check-superseded")) return { leveled_status: outcome("superseded") };
+    await patch(row, { leveled_status: "error", leveled_error: one(error.message, 300) || "levelling failed" },
+      traced(options, "leveled.persist-error"));
+    outcome("error");
     if (error.statusCode === 409) throw error;
     return { leveled_status: "error", leveled_error: row.leveled_error };
   }

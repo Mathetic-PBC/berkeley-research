@@ -7,6 +7,8 @@
 
 const { pickModel } = require("./setup-chat");
 const P = require("./onboarding-prompts");
+const { telemetry } = require("./telemetry");
+const { hostOf, safeUrl } = require("./telemetry/redaction");
 
 const MAX_REPLY_TOKENS = 4096;
 const MODEL_TIMEOUT_MS = 90 * 1000;
@@ -32,8 +34,16 @@ function extractJson(text) {
   try { return JSON.parse(value.slice(start, end + 1)); } catch { return null; }
 }
 
+// The model boundary. One `model.<purpose>` operation per call, recording
+// the request AS SENT (the body below, byte for byte what goes over the wire,
+// minus the auth header it never sees; a PDF inside it becomes a size and a
+// digest), the provider's raw reply, and the JSON parsed out of it, as three
+// separate snapshots. The caller's normalization is a fourth, its own
+// operation. Collapsing those into "model output" is what a debugger exists
+// to undo, so they stay apart here.
 async function callModel(request, credentials, options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
+  const purpose = request.purpose || "call";
   const body = {
     model: pickModel(credentials.models, request.family || "sonnet"),
     max_tokens: request.maxTokens || MAX_REPLY_TOKENS,
@@ -41,25 +51,83 @@ async function callModel(request, credentials, options = {}) {
   };
   if (request.system) body.system = request.system;
   if (request.tools) body.tools = request.tools;
-  const response = await fetchImpl(`${credentials.baseUrl}/v1/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${credentials.apiKey}` },
-    body: JSON.stringify(body),
-    signal: options.signal || AbortSignal.timeout(request.timeoutMs || MODEL_TIMEOUT_MS),
+  const url = `${credentials.baseUrl}/v1/messages`;
+  const timeoutMs = request.timeoutMs || MODEL_TIMEOUT_MS;
+  telemetry.protect(credentials.apiKey);
+  return telemetry.runOperation({
+    name: `model.${purpose}`, type: "model",
+    attributes: {
+      "gen_ai.operation.name": "chat",
+      "gen_ai.provider.name": "anthropic",
+      "gen_ai.request.model": body.model,
+      "gen_ai.request.max_tokens": body.max_tokens,
+      "server.address": hostOf(credentials.baseUrl),
+      "engelbart.model.gateway": "litellm",
+      "engelbart.model.purpose": purpose,
+      "engelbart.model.family": request.family || "sonnet",
+      "engelbart.model.timeout_ms": timeoutMs,
+      "engelbart.model.has_system": Boolean(request.system),
+      "engelbart.model.tools": Array.isArray(request.tools) ? request.tools.map((t) => String(t && t.name)) : undefined,
+      "engelbart.model.content_blocks": Array.isArray(request.content) ? request.content.length : 1,
+      "engelbart.model.block_types": Array.isArray(request.content) ? request.content.map((b) => String(b && b.type)) : undefined,
+    },
+  }, async (op) => {
+    op.snapshot("model_request", { url: safeUrl(url), body });
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${credentials.apiKey}` },
+      body: JSON.stringify(body),
+      signal: options.signal || AbortSignal.timeout(timeoutMs),
+    });
+    const value = await response.json().catch(() => ({}));
+    const usage = value && value.usage && typeof value.usage === "object" ? value.usage : {};
+    op.setAttributes({
+      "http.response.status_code": response.status,
+      "gen_ai.response.model": value && value.model ? String(value.model) : undefined,
+      "gen_ai.response.finish_reasons": value && value.stop_reason ? [String(value.stop_reason)] : undefined,
+      "gen_ai.usage.input_tokens": usage.input_tokens,
+      "gen_ai.usage.output_tokens": usage.output_tokens,
+      "engelbart.model.cache_creation_input_tokens": usage.cache_creation_input_tokens,
+      "engelbart.model.cache_read_input_tokens": usage.cache_read_input_tokens,
+    });
+    op.snapshot("model_raw_response", value);
+    if (!response.ok) {
+      const detail = value && value.error && (value.error.message || value.error);
+      const error = new Error(one(detail, 200) || `The model gateway answered ${response.status}`);
+      // 401/429 is the member's key spent or throttled: a 409 the page can
+      // show, not a 502 that reads as our outage.
+      error.statusCode = response.status === 401 || response.status === 429 ? 409 : 502;
+      throw error;
+    }
+    const blocks = Array.isArray(value.content) ? value.content : [];
+    const text = blocks
+      .filter((block) => block && block.type === "text")
+      .map((block) => String(block.text || "")).join("\n");
+    const parsed = extractJson(text);
+    op.setAttributes({
+      "engelbart.model.response_blocks": blocks.length,
+      "engelbart.model.response_block_types": blocks.map((b) => String(b && b.type)),
+      "engelbart.model.text_chars": text.length,
+      "engelbart.model.parsed": parsed !== null,
+    });
+    op.snapshot("model_parsed_response", parsed);
+    return parsed;
   });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = value && value.error && (value.error.message || value.error);
-    const error = new Error(one(detail, 200) || `The model gateway answered ${response.status}`);
-    // 401/429 is the member's key spent or throttled: a 409 the page can
-    // show, not a 502 that reads as our outage.
-    error.statusCode = response.status === 401 || response.status === 429 ? 409 : 502;
-    throw error;
-  }
-  const text = (Array.isArray(value.content) ? value.content : [])
-    .filter((block) => block && block.type === "text")
-    .map((block) => String(block.text || "")).join("\n");
-  return extractJson(text);
+}
+
+// The parsed reply becoming the application's bounded shape, as its own
+// processing operation: what the model said and what the record will hold
+// are two different things, and the difference is visible here.
+async function normalized(purpose, raw, normalize) {
+  return telemetry.runOperation({
+    name: `${purpose}.normalize`, type: "processing",
+    attributes: { "engelbart.model.purpose": purpose, "engelbart.parsed": raw !== null && raw !== undefined },
+  }, async (op) => {
+    const out = normalize(raw);
+    op.setAttribute("engelbart.normalized", out !== null && out !== undefined);
+    op.snapshot("normalized_result", out);
+    return out;
+  });
 }
 
 function text(value) {
@@ -120,19 +188,30 @@ function normalizeAnalysis(raw) {
 // input = {familiarityLabel, familiarityDesc, depthLabel, depthDesc,
 //          pdfBase64 | pdfText, urls: [{url, text}]}
 async function analyze(input, credentials, options = {}) {
-  const { before, after } = P.analyzePrompt(input);
-  const urls = (Array.isArray(input.urls) ? input.urls : [])
-    .map((u) => `${one(u.url, 500)}\n${long(u.text, MAX_PAGE_TEXT)}`.trim()).filter(Boolean)
-    .join("\n\n") || "(none supplied)";
-  // The function form: page text we fetched is data, and $&, $` or $' in it
-  // would otherwise paste the prompt back into the tag it sits inside.
-  const tail = after.replace("%URLS%", () => urls);
-  // The paper leads, as the cached prefix the asset hunt shares; the
-  // diagnostic's own text follows verbatim, its paper tag pointing up.
-  const content = [...paperPrefix(input), text(before + "(the paper attached above)" + tail)];
+  const content = await telemetry.runOperation({
+    name: "analysis.construct-request", type: "processing",
+    attributes: {
+      "engelbart.analysis.urls": Array.isArray(input.urls) ? input.urls.length : 0,
+      "engelbart.analysis.paper_mode": input.pdfBase64 ? "pdf_base64" : "text",
+      "engelbart.analysis.pdf_base64_chars": input.pdfBase64 ? String(input.pdfBase64).length : undefined,
+      "engelbart.analysis.familiarity": input.familiarityLabel,
+      "engelbart.analysis.depth": input.depthLabel,
+    },
+  }, async () => {
+    const { before, after } = P.analyzePrompt(input);
+    const urls = (Array.isArray(input.urls) ? input.urls : [])
+      .map((u) => `${one(u.url, 500)}\n${long(u.text, MAX_PAGE_TEXT)}`.trim()).filter(Boolean)
+      .join("\n\n") || "(none supplied)";
+    // The function form: page text we fetched is data, and $&, $` or $' in it
+    // would otherwise paste the prompt back into the tag it sits inside.
+    const tail = after.replace("%URLS%", () => urls);
+    // The paper leads, as the cached prefix the asset hunt shares; the
+    // diagnostic's own text follows verbatim, its paper tag pointing up.
+    return [...paperPrefix(input), text(before + "(the paper attached above)" + tail)];
+  });
   const raw = await callModel({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS,
-    timeoutMs: ANALYZE_TIMEOUT_MS }, credentials, options);
-  const analysis = normalizeAnalysis(raw);
+    timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "analysis" }, credentials, options);
+  const analysis = await normalized("analysis", raw, normalizeAnalysis);
   if (!analysis) {
     const error = new Error("The paper analysis did not come back in a usable shape");
     error.statusCode = 502;
@@ -155,13 +234,13 @@ function normalizeGrade(raw) {
 async function grade(input, credentials, options = {}) {
   let raw;
   try {
-    raw = await callModel({ content: [text(P.gradePrompt(input))], family: "haiku", maxTokens: 300 },
+    raw = await callModel({ content: [text(P.gradePrompt(input))], family: "haiku", maxTokens: 300, purpose: "grade" },
       credentials, options);
   } catch (error) {
     if (error.statusCode === 409) throw error;
     return null;
   }
-  return normalizeGrade(raw);
+  return normalized("grade", raw, normalizeGrade);
 }
 
 function normalizeFollowUp(raw) {
@@ -177,13 +256,13 @@ function normalizeFollowUp(raw) {
 async function followUp(input, credentials, options = {}) {
   let raw;
   try {
-    raw = await callModel({ content: [text(P.followUpPrompt(input))], family: "sonnet", maxTokens: 500 },
+    raw = await callModel({ content: [text(P.followUpPrompt(input))], family: "sonnet", maxTokens: 500, purpose: "follow_up" },
       credentials, options);
   } catch (error) {
     if (error.statusCode === 409) throw error;
     return null;
   }
-  return normalizeFollowUp(raw);
+  return normalized("follow_up", raw, normalizeFollowUp);
 }
 
 // --- generation -------------------------------------------------------------
@@ -236,9 +315,10 @@ function normalizeAsk(raw) {
   return answer ? { answer } : null;
 }
 
-async function generate(prompt, normalize, credentials, options, what) {
-  const raw = await callModel({ content: [text(prompt)], family: "sonnet" }, credentials, options);
-  const out = normalize(raw);
+// `purpose` names the model operation (model.<purpose>) and its normalize step.
+async function generate(prompt, normalize, credentials, options, what, purpose) {
+  const raw = await callModel({ content: [text(prompt)], family: "sonnet", purpose }, credentials, options);
+  const out = await normalized(purpose, raw, normalize);
   if (!out) {
     const error = new Error(`The ${what} did not come back in a usable shape`);
     error.statusCode = 502;
@@ -247,10 +327,10 @@ async function generate(prompt, normalize, credentials, options, what) {
   return out;
 }
 
-const details = (input, c, o) => generate(P.detailsPrompt(input), normalizeDetails, c, o, "questions");
-const goals = (input, c, o) => generate(P.goalsPrompt(input), normalizeGoals, c, o, "goals");
-const todos = (input, c, o) => generate(P.todosPrompt(input), normalizeTodos, c, o, "todos");
-const ask = (input, c, o) => generate(P.askPrompt(input), normalizeAsk, c, o, "answer");
+const details = (input, c, o) => generate(P.detailsPrompt(input), normalizeDetails, c, o, "questions", "details");
+const goals = (input, c, o) => generate(P.goalsPrompt(input), normalizeGoals, c, o, "goals", "goals");
+const todos = (input, c, o) => generate(P.todosPrompt(input), normalizeTodos, c, o, "todos", "todos");
+const ask = (input, c, o) => generate(P.askPrompt(input), normalizeAsk, c, o, "answer", "ask");
 
 // The screen's passages at another register: Haiku, one call, the same count
 // back. A reply of the wrong shape or count is a 502, never a partial swap.
@@ -260,8 +340,8 @@ function normalizeRewrite(raw, count) {
   return texts.every(Boolean) ? { texts } : null;
 }
 async function rewrite(input, credentials, options = {}) {
-  const raw = await callModel({ content: [text(P.rewritePrompt(input))], family: "haiku", maxTokens: 6000 }, credentials, options);
-  const out = normalizeRewrite(raw, input.texts.length);
+  const raw = await callModel({ content: [text(P.rewritePrompt(input))], family: "haiku", maxTokens: 6000, purpose: "rewrite" }, credentials, options);
+  const out = await normalized("rewrite", raw, (r) => normalizeRewrite(r, input.texts.length));
   if (!out) {
     const error = new Error("The rewrite did not come back in a usable shape");
     error.statusCode = 502;
@@ -352,6 +432,11 @@ async function searched(request, credentials, options, tool) {
     return { raw: await callModel({ ...request, tools: [tool] }, credentials, options), searched: true };
   } catch (error) {
     if (error.statusCode === 409) throw error;
+    // The retry is an event inside the workflow, not a node of its own: the
+    // second model call that follows is the node.
+    const parent = telemetry.current();
+    if (parent) parent.event("model.retry-without-search", { "engelbart.model.purpose": request.purpose || "call",
+      "engelbart.model.tool": tool && tool.name, "error.message": String(error && error.message || "").slice(0, 200) });
     return { raw: await callModel(request, credentials, options), searched: false };
   }
 }
@@ -368,9 +453,9 @@ function shaped(out, what) {
 // The asset hunt: the cached paper, the prompt, and the model's own search.
 async function assets(input, credentials, options = {}) {
   const content = [...paperPrefix(input), text(P.assetsPrompt())];
-  const got = await searched({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS, timeoutMs: ANALYZE_TIMEOUT_MS },
+  const got = await searched({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS, timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "assets" },
     credentials, options, WEB_SEARCH);
-  const out = shaped(normalizeAssets(got.raw), "asset hunt");
+  const out = shaped(await normalized("assets", got.raw, normalizeAssets), "asset hunt");
   if (!out.assets.length) {
     const error = new Error("The asset hunt found nothing it could name");
     error.statusCode = 502;
@@ -381,8 +466,8 @@ async function assets(input, credentials, options = {}) {
 
 async function levelAssets(input, credentials, options = {}) {
   const got = await searched({ content: [text(P.levelPrompt(input))], family: "sonnet", maxTokens: ANALYZE_TOKENS,
-    timeoutMs: ANALYZE_TIMEOUT_MS }, credentials, options, WEB_SEARCH_SMALL);
-  return { ...shaped(normalizeLeveled(got.raw), "leveled resources"), searched: got.searched };
+    timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "leveled" }, credentials, options, WEB_SEARCH_SMALL);
+  return { ...shaped(await normalized("leveled", got.raw, normalizeLeveled), "leveled resources"), searched: got.searched };
 }
 
 // --- brainstorm, direction, subgoals -------------------------------------------
@@ -443,10 +528,10 @@ function normalizeSubgoals(raw) {
   return { subgoals };
 }
 
-const brainstorm = (input, c, o) => generate(P.brainstormPrompt(input), normalizeBrainstorm, c, o, "brainstorm turn");
-const assetAsk = (input, c, o) => generate(P.assetAskPrompt(input), normalizeAsk, c, o, "answer");
-const direction = (input, c, o) => generate(P.directionPrompt(input), normalizeDirection, c, o, "direction");
-const subgoals = (input, c, o) => generate(P.subgoalsPrompt(input), normalizeSubgoals, c, o, "subgoals");
+const brainstorm = (input, c, o) => generate(P.brainstormPrompt(input), normalizeBrainstorm, c, o, "brainstorm turn", "brainstorm");
+const assetAsk = (input, c, o) => generate(P.assetAskPrompt(input), normalizeAsk, c, o, "answer", "asset_ask");
+const direction = (input, c, o) => generate(P.directionPrompt(input), normalizeDirection, c, o, "direction", "direction");
+const subgoals = (input, c, o) => generate(P.subgoalsPrompt(input), normalizeSubgoals, c, o, "subgoals", "subgoals");
 
 module.exports = {
   LEVELS, MAX_PAGE_TEXT,
