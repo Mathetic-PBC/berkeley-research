@@ -1098,8 +1098,10 @@
     // The stored assistant turn is what it said plus what it asked, one line
     // each; only the prose is shown, the card draws the rest.
     var text = str(turn.content);
-    var cut = text.indexOf("\n(");
-    return turn.role === "assistant" && cut >= 0 ? text.slice(0, cut) : text;
+    if (turn.role !== "assistant") return text;
+    var lines = text.split("\n"), cut = -1;
+    lines.forEach(function (l, i) { if (cut < 0 && /^\((asked|offered)\) /.test(l)) cut = i; });
+    return (cut < 0 ? lines : lines.slice(0, cut)).join("\n");
   }
 
   function sendTurn(body) {
@@ -1208,9 +1210,10 @@
     if (bs.thinking) { var th = attr(el("div", "ob-bs-turn"), "data-thinking", "1"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); thread.appendChild(th); }
     box.appendChild(thread);
     var last = lastCard();
-    // The plan is offered when the model, asked only once the resources were
-    // fitted, said they are ready -- not on a timer and not by this page.
-    if (!bs.thinking && last && last.ready && r.leveled_status === "done" && !bs.planAsked) drawPlanOffer(box);
+    // The plan is offered when the model said they are ready -- on whichever
+    // turn that was, not on a timer and not by this page. Ready before the
+    // resources are fitted waits for them here rather than asking more.
+    if (!bs.thinking && last && last.ready && !bs.planAsked) { if (r.leveled_status === "done") drawPlanOffer(box); else drawPlanWait(box); }
     else if (!bs.thinking && last && last.card === "none") {
       var go_ = el("div", "ob-actions"); go_.appendChild(cta("Go on", false, function () { sendTurn({ again: true }); })); box.appendChild(go_);
     }
@@ -1310,6 +1313,16 @@
       }
       thread.appendChild(fcard);
     }
+  }
+
+  // Shown when the model has said they are ready but the resources are still
+  // being fitted: the wait is on that background work, not on the reader.
+  function drawPlanWait(box) {
+    var card = attr(el("div", "ob-bs-card ob-bs-wait"), "data-waiting", "1");
+    card.appendChild(el("div", "ob-cap", "ready to plan"));
+    card.appendChild(el("div", "ob-question", "Got it \u2014 I have enough to plan."));
+    var w = el("div", "ob-wait"); w.appendChild(dots()); w.appendChild(el("div", "ob-wait-t", "Finishing up the resources\u2026")); card.appendChild(w);
+    box.appendChild(card);
   }
 
   // Offered when the model has said they are ready.

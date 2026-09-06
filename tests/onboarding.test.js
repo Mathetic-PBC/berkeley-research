@@ -96,9 +96,9 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
         : /locus of problem solving would lie/.test(text) ? model.leveled
         : /You are brainstorming with them/.test(text) ? (typeof model.brainstorm === "function" ? model.brainstorm(text) : model.brainstorm)
         : /The thing they are asking about/.test(text) ? model.assetAsk
-        : /Choose ONE direction|Revise the direction/.test(text) ? (typeof model.direction === "function" ? model.direction(text) : model.direction)
+        : /Choose ONE meaningful direction|Revise the direction/.test(text) ? (typeof model.direction === "function" ? model.direction(text) : model.direction)
         : /exactly three subgoals|Revise the three subgoals/.test(text) ? model.subgoals
-        : /Write the TODO rows for that first piece/.test(text) ? model.todos : model.ask;
+        : /Write the TODO rows for the FIRST subgoal/.test(text) ? model.todos : model.ask;
       return json({ content: [{ type: "text", text: reply === undefined ? "I could not do that." : JSON.stringify(reply) }] });
     }
     if (u.hostname === "x.org") return { ok: true, status: 200, headers: { get: () => "text/html" }, async text() { return "<p>project page</p>"; } };
@@ -709,18 +709,66 @@ test("leveled waits for the hunt, then re-cuts the assets with children and chec
   assert.equal((await OB.leveled(USER, row, cals, {}, null, db.options)).leveled_status, "done");
 });
 
-test("once the resources are fitted the model is asked whether they are ready, and its answer rides on the turn", async () => {
+test("the model says whether they are ready on every turn, fitted resources or not, and its verdict rides on the turn", async () => {
   const asked = [];
   const db = fake({ model: { brainstorm: (text) => { asked.push(text); return { say: "You have enough to start.", card: "none", interest: "timing", ready: true }; } } });
-  const row = await ready(db, { leveled_status: "done" });
+  const row = await ready(db, { leveled_status: "running" });
   const cals = db.tables.engelbart_onboarding_calibrations;
   const out = await OB.brainstorm(USER, row, cals, { text: "I want the timing side" }, CREDS, db.options);
-  assert.match(asked[0], /"ready": true \| false/);
-  assert.match(asked[0], /`none` is allowed only with `ready` true/);
+  assert.match(asked[0], /"ready": true \| false/, "asked while the resources are still being fitted");
+  assert.match(asked[0], /do not continue asking questions merely because that is still happening/);
   assert.equal(out.ready, true);
+  assert.equal(out.leveled_status, "running", "the page is told what it is waiting on");
   assert.equal(db.tables.engelbart_onboarding_turns[1].card.ready, true);
   const again = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
   assert.equal(again.ready, true, "handing back the last card keeps its verdict");
+  assert.equal(asked.length, 1, "and asks the model nothing more");
+});
+
+test("a brainstorm gets two question rounds at most: the third is closed as ready whatever the model asked, and a ready turn carries no card", async () => {
+  const asked = [];
+  const questions = (n) => ({ say: `Round ${n}.`, card: "questions", interest: "", questions: { eyebrow: "more", items: [
+    { id: `q${n}`, type: "mcq", title: `Question ${n}?`, options: [{ label: "A" }, { label: "B" }] }] } });
+  const db = fake({ model: { brainstorm: (text) => { asked.push(text); return questions(asked.length); } } });
+  const row = await ready(db, { leveled_status: "running" });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const first = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
+  assert.equal(first.card, "questions");
+  assert.match(asked[0], /Question rounds so far: none/);
+  const second = await OB.brainstorm(USER, row, cals, { answers: { q1: "A" } }, CREDS, db.options);
+  assert.equal(second.card, "questions", "a second round is allowed");
+  assert.match(asked[1], /Question rounds so far: one\. Ask a second only if/);
+  const third = await OB.brainstorm(USER, row, cals, { answers: { q2: "B" } }, CREDS, db.options);
+  assert.match(asked[2], /Question rounds so far: two, the most allowed\. Do not ask again/);
+  assert.equal(third.card, "none", "the model asked a third time; the state refused it");
+  assert.equal(third.questions, undefined);
+  assert.equal(third.ready, true);
+  assert.equal(third.say, "Round 3.");
+  const turns = db.tables.engelbart_onboarding_turns;
+  assert.equal(OB.questionRounds(turns), 2);
+  assert.doesNotMatch(turns[turns.length - 1].content, /\(asked\)/, "no question is recorded for the closed turn");
+  // Asking on after that never reopens the questions.
+  const more = await OB.brainstorm(USER, row, cals, { again: true }, CREDS, db.options);
+  assert.equal(more.card, "none");
+  assert.equal(more.ready, true);
+  assert.equal(OB.questionRounds(db.tables.engelbart_onboarding_turns), 2);
+  // A model that says ready while still asking gets its questions dropped: ready means no card.
+  assert.deepEqual(OB.closeReply({ say: "Enough.", card: "questions", questions: { items: [] }, interest: "x", ready: true }, 0),
+    { say: "Enough.", card: "none", interest: "x", ready: true });
+  assert.equal(OB.closeReply({ say: "", card: "focus", focus: {}, ready: false }, 2).say, "I have enough to plan with.", "a closed turn with nothing said gets a line");
+  assert.equal(OB.closeReply({ say: "More?", card: "questions", questions: {}, ready: false }, 1).card, "questions", "under the cap the model's card stands");
+});
+
+test("an opening turn that only asks has no prose: the (asked) lines record the card and are not shown as what it said", async () => {
+  const db = fake({ model: { brainstorm: { say: "", card: "questions", interest: "", questions: { eyebrow: "first", items: [
+    { id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "A" }, { label: "B" }] }, { id: "end", type: "free", title: "What would you want working?" }] } } } });
+  const row = await ready(db);
+  const first = await OB.brainstorm(USER, row, db.tables.engelbart_onboarding_calibrations, {}, CREDS, db.options);
+  assert.equal(first.say, "");
+  assert.equal(first.card, "questions");
+  assert.equal(db.tables.engelbart_onboarding_turns[0].content, "(asked) What drew you?\n(asked) What would you want working?");
+  const opened = await OB.open(USER, {}, db.options);
+  assert.equal(opened.turns[0].content.startsWith("(asked)"), true, "the stored text is the record; the page cuts the prose the same way");
 });
 
 test("a brainstorm turn stores both sides, carries the card, and keeps the interest current", async () => {
@@ -748,9 +796,9 @@ test("a brainstorm turn stores both sides, carries the card, and keeps the inter
   assert.deepEqual(turns.map((t) => t.role), ["assistant", "user", "assistant"]);
   assert.deepEqual(turns[1].card, { answers: { drew: "The math" } }, "the user turn keeps the answers beside the text");
   assert.equal(turns[2].card.card, "focus");
-  // Readiness is the model's call, and only asked for once the resources are fitted.
+  // Readiness is the model's call on every turn, whether or not the resources are fitted.
   assert.match(asked[0], /opening turn/);
-  assert.doesNotMatch(asked[1], /"ready"/, "not asked while the resources are still being fitted");
+  assert.match(asked[1], /"ready": true \| false/, "asked while the resources are still being fitted");
   assert.equal(second.ready, false);
   assert.equal(turns[2].card.ready, false);
   const opened = await OB.open(USER, {}, db.options);
@@ -787,7 +835,7 @@ test("one direction, revised on feedback; three subgoals, revised on feedback; t
   await OB.chooseAsset(USER, row, { key: "Pose viewer" }, db.options);
   const first = await OB.direction(USER, row, cals, {}, CREDS, db.options);
   assert.equal(first.direction.title, "Pose to angles");
-  assert.match(seen[0], /Choose ONE direction/);
+  assert.match(seen[0], /Choose ONE meaningful direction/);
   assert.match(seen[0], /What they are drawn to: "geometry"/);
   assert.equal((await OB.direction(USER, row, cals, {}, CREDS, db.options)).direction.title, "Pose to angles");
   assert.equal(seen.length, 1, "asking again serves the stored one");

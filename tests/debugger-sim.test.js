@@ -144,3 +144,55 @@ test("vercel serves the debugger and lets only the frame page be embedded, by th
   assert.doesNotMatch(csp, /unsafe-(inline|eval)/);
   assert.equal(frame.headers.find((h) => h.key === "X-Frame-Options").value, "SAMEORIGIN");
 });
+
+// A row at the brainstorm with the paper read and the resources still being fitted.
+function brainstormSeed(w, turns) {
+  const user = w.EGB_FIXTURE.USER;
+  const t = "2026-09-06T00:00:00.000Z";
+  return { n: 10, calibrations: [], asks: [], profiles: [], papers: [], codes: [],
+    credit: { user_id: user.id, email: user.email, status: "ready", blocked: false, budget_usd: 25, spend_usd: 0, models: ["all-proxy-models"], synced_at: null },
+    onboardings: [{ id: "ob-seed", user_id: user.id, status: "open", step: 7, name: "Ada", year: "Third year", major: "Biology", depth: "some",
+      project_url: "", repo_url: "", paper_familiarity: 1, paper_id: null, paper_title: "Cytokine responses",
+      analysis: { title: "Cytokine responses", one_liner: "How innate immune cells answer cytokines.", areas: [] }, analysis_status: "done",
+      assessment: { areas: [], mean: 0, depth: "some", depth_shift: 0 }, assets_brief: [], assets_status: "running", leveled_status: "running",
+      created_at: t, updated_at: t }],
+    turns: (turns || []).map((x, i) => ({ id: "turn-" + i, onboarding_id: "ob-seed", stage: "brainstorm", asset_key: "", role: x.role, content: x.content, card: x.card || null, created_at: t })) };
+}
+
+async function brainstormTurn(sim, body) {
+  const response = await sim.handle("/api/engelbart-onboarding", { method: "POST", body: JSON.stringify({ action: "brainstorm", ...body }) });
+  const out = await response.json();
+  assert.equal(response.ok, true, JSON.stringify(out));
+  return out;
+}
+
+test("the simulated brainstorm says ready while the resources are still being fitted, and never asks a third round", async () => {
+  const w = browserish();
+  const sim = w.EngelbartSim.create({ emit() {}, speed: 0, seed: brainstormSeed(w) });
+  const opening = await brainstormTurn(sim, {});
+  assert.equal(opening.card, "questions");
+  assert.equal(opening.ready, false);
+  assert.equal(opening.leveled_status, "running");
+  const second = await brainstormTurn(sim, { answers: { pull: "Reading goals out of a transcript" } });
+  assert.equal(second.card, "focus", "a second round, because the answers changed the picture");
+  assert.equal(second.ready, false);
+  const third = await brainstormTurn(sim, { pick: "Make a wrong inferred goal easy to fix" });
+  assert.equal(third.ready, true, "ready on the turn the model said so");
+  assert.equal(third.leveled_status, "running", "the fitted list is not a condition of it; the page waits for that");
+  assert.equal(third.card, "none");
+
+  // A model that would keep asking is closed by the state: two rounds already stored, the third is refused.
+  const asked = [{ role: "assistant", content: "(asked) One?", card: { card: "questions", questions: { eyebrow: "a", items: [{ id: "one", type: "free", title: "One?" }] }, ready: false } },
+    { role: "user", content: "One? yes" },
+    { role: "assistant", content: "(offered) A / B", card: { card: "focus", focus: { title: "Which?", options: [{ label: "A" }, { label: "B" }] }, ready: false } },
+    { role: "user", content: "Focus: A" }];
+  const capped = w.EngelbartSim.create({ emit() {}, speed: 0, seed: brainstormSeed(w, asked) });
+  const more = await brainstormTurn(capped, { again: true });
+  assert.equal(more.card, "none", "the canned reply asks on; the state closes the turn");
+  assert.equal(more.ready, true);
+  assert.equal(more.leveled_status, "running");
+  const yetMore = await brainstormTurn(capped, { text: "but wait" });
+  assert.equal(yetMore.card, "none");
+  assert.equal(yetMore.ready, true);
+  assert.equal(w.EGB_PROMPTS.BRAINSTORM_ROUNDS, 2, "the debugger's copy of the cap is the server's");
+});
