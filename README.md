@@ -91,7 +91,15 @@ events are persisted to the three `engelbart_telemetry_*` tables (migration
 
 Telemetry never fails a request: a sink or exporter error is logged and
 onboarding continues. The handler flushes before it responds, within
-`ENGELBART_TELEMETRY_FLUSH_MS` (default 2000).
+`ENGELBART_TELEMETRY_FLUSH_MS` (default 2000). Under `node --test` nothing is
+persisted unless `ENGELBART_TELEMETRY_STORE=true` is set explicitly.
+
+To check what a deployment persisted for one run, read-only and without
+printing any captured content:
+
+```sh
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... RUN_ID=<onboarding id> npm run verify:telemetry
+```
 
 ## Source of truth
 

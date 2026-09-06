@@ -39,9 +39,11 @@ Everything a reader receives is one envelope:
 }
 ```
 
-`operations` are ordered by `started_at`, `events` by `sequence`. The builder
-is `bundle()` in `api/_lib/telemetry/contract.js`; `tree()` there turns the
-flat operation list into the parent/child tree a graph draws.
+`operations` are ordered by `started_at` (then `span_id`, `operation_id`),
+`snapshots` by `created_at` (then `snapshot_id`), `events` by `at`, then
+`trace_id`, then `sequence`, then `event_id` (see *Ordering* under Event). The
+builder is `bundle()` in `api/_lib/telemetry/contract.js`; `tree()` there turns
+the flat operation list into the parent/child tree a graph draws.
 
 ## Run
 
@@ -117,17 +119,39 @@ will be added to this contract.
 
 It is assigned centrally (`levelOf` in `api/_lib/telemetry/operation.js`): type
 `workflow` → `workflow`; a name matching the detail patterns above → `detail`;
-everything else → `stage`. A caller may pass `level` explicitly when the default
-is wrong for a new operation. Events carry the same `level` as their operation.
+everything else → `stage`. A caller may pass `level` explicitly in the spec of
+`runOperation()` or `startOperation()` when the default is wrong for a new
+operation; an explicit `workflow`/`stage`/`detail` wins, an unknown value falls
+back to the default. Events carry the same `level` as their operation.
 
 ### Attribute namespaces
 
 - `engelbart.*` — application metadata: `run_id`, `onboarding_id`, `test_run_id`, `action`, `user_hash`, `poll`, `retry`, `outcome`, `model.*`, `db.*`, `storage.*`, `analysis.*`, `links.*`, `link.verdict`, `page.*`.
-- `gen_ai.*`, `http.*`, `url.*`, `server.address`, `db.*` — OpenTelemetry semantic conventions where they fit (`gen_ai.request.model`, `gen_ai.usage.input_tokens`, `http.response.status_code`, `url.full`, `db.operation.name`).
+- `gen_ai.*`, `http.*`, `url.*`, `server.address`, `db.*` — OpenTelemetry semantic conventions where they fit (`gen_ai.request.model`, `gen_ai.usage.input_tokens`, `http.response.status_code`, `url.full`, `db.operation.name`, `db.query.summary`).
 - `bart.*` — the telemetry layer itself: `bart.operation_id`, `bart.type`, `bart.snapshot.<kind>`, `bart.waiting_reason`, `bart.error.status_code`.
 
 Strings in attributes are capped at 2000 characters and redacted. Payloads
 never go in attributes; they are Snapshots.
+
+### Database operations: structure in attributes, values in snapshots
+
+A `database` operation's attributes describe the query's **structure**, never
+its values: `db.collection.name` (table), `db.operation.name` (`select`,
+`insert`, `upsert`, `patch`, `delete`, `rpc`), `db.query.summary` (the filter
+with every value replaced by `?`, e.g. `user_id=eq.?&select=*`; `select`,
+`order`, `limit`, `offset`, `on_conflict` and `columns` keep their values, which
+are column names, directions and counts), `engelbart.db.filter_fields` and
+`engelbart.db.filter_operators` (parallel arrays: `["user_id"]`, `["eq"]`;
+`not.eq`, `in`, `or` appear as written), `http.request.method`, `url.path`,
+`http.response.status_code`, `engelbart.db.rows`. There is no `url.query`
+attribute.
+
+The actual filter values (row ids, user ids, e-mail addresses), the request
+body and the rows returned are the operation's `database_request` /
+`database_response` Snapshots. They are application data and are kept for
+debugging; redaction removes credentials from them (keys and patterns listed
+under *Redaction*), not application state. The requests themselves are
+unchanged by any of this.
 
 ### Names emitted today
 
@@ -156,7 +180,7 @@ filter them as a group.
 | `run_id`, `onboarding_id`, `test_run_id` | | the run |
 | `kind` | string | see below |
 | `content` | JSON | redacted, then bounded by the size rules below |
-| `bytes` | integer | UTF-8 size of the stored `content` as JSON |
+| `bytes` | integer | UTF-8 size of the stored `content` as JSON, i.e. `Buffer.byteLength(JSON.stringify(content))`, wrapper included; never above 262,144 |
 | `truncated` | boolean | `true` when rule 2 or rule 3 below applied |
 | `redacted` | boolean | always `true` |
 | `created_at` | ISO 8601 | |
@@ -175,8 +199,16 @@ Applied in this order, as implemented in `redaction.js` and `snapshots.js`:
    suffix; if that fits, the shortened content is stored with `truncated: true`.
 3. **Preview fallback.** If the shortened content still exceeds the cap,
    `content` becomes
-   `{ "[truncated]": true, "original_bytes": <redacted size>, "shrunk_bytes": <shortened size>, "preview": <first 131,072 characters of the shortened JSON> }`
-   with `truncated: true` and `bytes` the size of the preview.
+   `{ "[truncated]": true, "original_bytes": <redacted size>, "shrunk_bytes": <shortened size>, "preview": <head of the shortened JSON> }`
+   with `truncated: true`. The preview starts at 131,072 UTF-16 units of the
+   shortened JSON and is cut shorter until the **whole wrapper**, serialized,
+   fits in 262,144 bytes: the preview is a JSON string inside a JSON document, so
+   its quotes and backslashes are escaped again and each non-ASCII unit is
+   several bytes. It never ends inside a surrogate pair. `bytes` is the size of
+   the serialized wrapper, not of the preview alone.
+
+In every case `bytes` equals the UTF-8 size of `JSON.stringify(content)` and is
+at most 262,144.
 
 Operation attribute strings are separate: they are capped at 2,000 characters
 with a trailing `…` and never hold payloads.
@@ -259,11 +291,17 @@ Operation record by `operation_id`, taking run fields from the record.
   come from separate requests, often separate instances, whose counters are
   unrelated, and two instances may emit the same `sequence` value.
 - `at` is the wall-clock timestamp of emission, from the emitting instance's clock.
+- `bundle()` orders Events by `at`, then `trace_id`, then `sequence`, then
+  `event_id`. That is deterministic (the last key is unique) and never lets one
+  trace's counter outrank another's. Within one trace it agrees with `sequence`.
+  Two Events from **different** traces with the same `at` sort by `trace_id`,
+  which says nothing about which happened first: equal-time cross-trace order
+  does not imply causality.
 - Consumers should order primarily by per-operation lifecycle (`started` before
   `progress` before `completed`/`failed`, for one `operation_id`), then by `at`
   across operations and traces, and use `sequence` only to break ties among
   Events from the same trace. Do not assume `sequence` is monotonic across an
-  entire Run.
+  entire Run, or comparable between traces at all.
 - No distributed sequencing exists or is planned in this contract version.
 
 The example fixture is a clean run, so it holds only `started` and `completed`
@@ -329,6 +367,27 @@ verbatim) wherever `SUPABASE_SERVICE_ROLE_KEY` is configured, unless
 of happening; operations and snapshots at the flush the request handler awaits
 before responding. The tables are service-role only.
 
+Under the node test runner (`NODE_TEST_CONTEXT` set) nothing is persisted or
+exported unless asked for explicitly, so a test suite that inherits real
+credentials never records itself; the fixture generator switches the store off
+the same way.
+
+### Verifying a deployment
+
+`scripts/verify-telemetry.mjs` reads the three tables for one run and reports,
+read-only, without printing captured content: the latest attempt's outcome,
+the operation hierarchy and levels, the lifecycle events and their join to
+operations, the expected snapshots and their size fields, and any credential
+or PDF-byte leakage.
+
+```sh
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... RUN_ID=<onboarding id | test:<name>> npm run verify:telemetry
+```
+
+Events and snapshots are fetched by `trace_id` and joined by `operation_id`, so
+the early events emitted with `run_id: null` are included. Exit 0 means every
+check passed (warnings allowed), 1 means a failure or nothing found.
+
 ## Export
 
 OpenTelemetry is initialised once per function on first use
@@ -345,7 +404,7 @@ records before it responds, bounded by `ENGELBART_TELEMETRY_FLUSH_MS` (2000).
 |---|---|---|
 | `ENGELBART_TRACE_CONTENT` | on | `false` stops storing Snapshots (prompts, replies, page text, row bodies) |
 | `ENGELBART_TRACE_POLLS` | off | trace routine status polls as `onboarding.<action>.poll` |
-| `ENGELBART_TELEMETRY_STORE` | on when the service role is set | `false` persists nothing to Supabase |
+| `ENGELBART_TELEMETRY_STORE` | on when the service role is set, off under `node --test` | `false` persists nothing to Supabase; `true` forces it on, tests included |
 | `ENGELBART_TELEMETRY_LOG` | off | one JSON line per finished operation in the function log |
 | `ENGELBART_TELEMETRY_FLUSH_MS` | 2000 | bound on the pre-response flush |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `_TRACES_ENDPOINT` | unset | OTLP/HTTP span export |

@@ -11,7 +11,8 @@
     "test:e2e:compat": "playwright test --project=firefox-compat --project=webkit-compat",
     "verify:proxy": "node scripts/verify-proxy.mjs",
     "verify:exhaustion": "node scripts/verify-exhaustion.mjs",
-    "verify:pdf": "node scripts/verify-pdf.mjs"
+    "verify:pdf": "node scripts/verify-pdf.mjs",
+    "verify:telemetry": "node scripts/verify-telemetry.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0"

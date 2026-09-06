@@ -73,14 +73,32 @@ function deriveRun(operations = [], options = {}) {
   };
 }
 
-// The envelope, ordered: operations by start, events by sequence.
+const text = (value) => String(value == null ? "" : value);
+
+// Events in a deterministic order that does not trust `sequence` across
+// traces: `sequence` is a counter local to the process that emitted the
+// event, and a run's traces come from separate requests whose counters
+// overlap. So: wall-clock `at` first, then `trace_id` to keep a trace's
+// same-millisecond events together, then `sequence` (meaningful within one
+// trace), then `event_id` so equal keys still sort the same way every time.
+// Same-time events from different traces sort by trace id, which says nothing
+// about which happened first.
+function compareEvents(a, b) {
+  return text(a.at).localeCompare(text(b.at))
+    || text(a.trace_id).localeCompare(text(b.trace_id))
+    || (Number(a.sequence) || 0) - (Number(b.sequence) || 0)
+    || text(a.event_id).localeCompare(text(b.event_id));
+}
+
+// The envelope, ordered: operations by start, snapshots by creation, events
+// by compareEvents; every order has a unique final key.
 function bundle(records = {}, options = {}) {
   const operations = [...(records.operations || [])].filter(Boolean)
-    .sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)) || String(a.span_id).localeCompare(String(b.span_id)));
+    .sort((a, b) => text(a.started_at).localeCompare(text(b.started_at)) || text(a.span_id).localeCompare(text(b.span_id))
+      || text(a.operation_id).localeCompare(text(b.operation_id)));
   const snapshots = [...(records.snapshots || [])].filter(Boolean)
-    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
-  const events = [...(records.events || [])].filter(Boolean)
-    .sort((a, b) => Number(a.sequence) - Number(b.sequence));
+    .sort((a, b) => text(a.created_at).localeCompare(text(b.created_at)) || text(a.snapshot_id).localeCompare(text(b.snapshot_id)));
+  const events = [...(records.events || [])].filter(Boolean).sort(compareEvents);
   return {
     contract_version: CONTRACT_VERSION,
     run: deriveRun(operations, options),
@@ -106,4 +124,4 @@ function tree(operations = []) {
   return out;
 }
 
-module.exports = { CONTRACT_VERSION, bundle, deriveRun, tree };
+module.exports = { CONTRACT_VERSION, bundle, compareEvents, deriveRun, tree };

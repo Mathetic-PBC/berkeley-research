@@ -47,8 +47,11 @@ function flag(env, name, fallback = false) {
 }
 
 // Persistence needs the service role; without it there is nowhere to write.
+// Under the node test runner (which sets NODE_TEST_CONTEXT in every test
+// process) nothing is written by default either: a test suite that inherits
+// real credentials from its shell must not record itself into production.
 function canStore(env) {
-  return Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY);
+  return Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !env.NODE_TEST_CONTEXT);
 }
 
 // Everything the environment decides. Capture and persistence are on wherever
@@ -224,8 +227,9 @@ class Telemetry {
 
   // --- operations ---------------------------------------------------------------------
 
-  // spec = { name, type, attributes?, parent? }. `parent` is an Operation, for
-  // the manual form when the caller is not inside runOperation.
+  // spec = { name, type, level?, attributes?, parent? }. `parent` is an
+  // Operation, for the manual form when the caller is not inside
+  // runOperation; `level` overrides the central default (levelOf).
   startOperation(spec) {
     if (this.suppressed()) return new NoopOperation();
     try {
@@ -236,7 +240,7 @@ class Telemetry {
       const run = (spec.parent && spec.parent.run) || ctx.getValue(this.RUN_KEY) || runDefaults(this.env);
       const span = this.otel.tracer.startSpan(String(spec.name), {}, ctx);
       const op = new Operation(this, {
-        span, name: spec.name, type: spec.type, run,
+        span, name: spec.name, type: spec.type, level: spec.level, run,
         parentSpanId: parentSpan ? parentSpan.spanContext().spanId : null,
         attributes: { ...runAttributes(run), ...(spec.attributes || {}) },
       });
@@ -340,8 +344,10 @@ module.exports = {
   SNAPSHOT_KINDS: Snapshots.KINDS,
   CONTRACT_VERSION: Contract.CONTRACT_VERSION,
   bundle: Contract.bundle,
+  compareEvents: Contract.compareEvents,
   deriveRun: Contract.deriveRun,
   tree: Contract.tree,
+  MAX_SNAPSHOT_BYTES: Snapshots.MAX_SNAPSHOT_BYTES,
   createTelemetry,
   readSettings,
   telemetry,

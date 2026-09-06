@@ -196,9 +196,26 @@ test("the PostgREST boundary records the operation, table, filter, status and ro
     assert.equal(select.attributes["db.collection.name"], "engelbart_onboardings");
     assert.equal(select.attributes["db.operation.name"], "select");
     assert.equal(select.attributes["url.path"], "/rest/v1/engelbart_onboardings");
-    assert.equal(select.attributes["url.query"], `user_id=eq.${USER.id}&select=*`);
+    // Attributes hold the query's structure, never its values...
+    assert.equal(select.attributes["url.query"], undefined);
+    assert.equal(select.attributes["db.query.summary"], "user_id=eq.?&select=*");
+    assert.deepEqual(select.attributes["engelbart.db.filter_fields"], ["user_id"]);
+    assert.deepEqual(select.attributes["engelbart.db.filter_operators"], ["eq"]);
+    assert.doesNotMatch(JSON.stringify(sink.operations.map((o) => o.attributes)), new RegExp(USER.id));
+    assert.doesNotMatch(JSON.stringify(sink.events.map((e) => e.attributes)), new RegExp(USER.id));
+    // ...while the snapshots keep the real filter and the rows it returned, for debugging.
+    const selectRequest = sink.snapshots.find((s) => s.operation_id === select.operation_id && s.kind === "database_request");
+    assert.equal(selectRequest.content.query, `user_id=eq.${USER.id}&select=*`);
+    const selectResponse = sink.snapshots.find((s) => s.operation_id === select.operation_id && s.kind === "database_response");
+    assert.equal(selectResponse.content[0].user_id, USER.id);
     assert.equal(select.attributes["http.response.status_code"], 200);
     assert.equal(select.attributes["engelbart.db.rows"], 1);
+    // The structure of harder filters, with modifiers kept and values gone.
+    assert.deepEqual(Supabase.describeQuery("id=in.(a,b)&status=not.eq.done&order=created_at.desc&limit=1&select=id,status"),
+      { querySummary: "id=in.?&status=not.eq.?&order=created_at.desc&limit=1&select=id,status", filterFields: ["id", "status"], filterOperators: ["in", "not.eq"] });
+    assert.deepEqual(Supabase.describeQuery("or=(a.eq.1,b.eq.2)&email=ilike.*%40x.org"),
+      { querySummary: "or=?&email=ilike.?", filterFields: ["or", "email"], filterOperators: ["or", "ilike"] });
+    assert.deepEqual(Supabase.describeQuery(""), { querySummary: "", filterFields: [], filterOperators: [] });
     assert.equal(sink.one("db.patch").attributes["http.request.method"], "PATCH");
     assert.equal(sink.one("db.upsert").attributes["db.collection.name"], "engelbart_onboarding_turns");
     assert.equal(sink.one("db.rpc").attributes["engelbart.db.rpc"], "engelbart_save_pending_setup");
