@@ -137,6 +137,8 @@ function page(options = {}) {
     React, ReactDOM: { createRoot: () => ({ render(el) { mounted = new el.type(el.props); mounted.componentDidMount(); } }) },
   };
   if (options.mode) store.set("egb.debugger.mode", options.mode);
+  // What this browser already held: environments, their saved state, simulated accounts.
+  Object.entries(options.seed || {}).forEach(([k, v]) => store.set(k, typeof v === "string" ? v : JSON.stringify(v)));
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const file of ["fixture.js", "prompts.js", "sim-backend.js", "real-runs.js", "debugger.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), sandbox, { filename: file });
@@ -171,11 +173,159 @@ test("the stored mode decides how the page starts; Real mode never hands the fra
 
   const S = page({});
   assert.equal(S.d.isReal(), false);
+  assert.equal(S.d.renderVals().isDashboard, true, "Simulated mode lands on the environments dashboard");
+  S.d.createEnv("Lab"); await settle();
   const VS = S.d.renderVals();
   assert.match(VS.frameSrc, /^\/engelbart\/setup\/test\/frame\?env=env-[a-z0-9]+&test=true$/, "Simulated mode still passes the test switch through");
   const sbar = texts(S.d.renderTopBar(VS));
   assert.ok(sbar.includes("Reset test environment") && !sbar.includes("real actions"));
   assert.equal(S.server.telemetry().length, 0, "the simulator never reads telemetry");
+});
+
+test("Simulated mode lands on the environments dashboard: no frame and no simulated backend until one is opened; New environment creates one and opens it", async () => {
+  const P = page({});
+  let V = P.d.renderVals();
+  assert.equal(V.isDashboard, true);
+  assert.equal(V.envsEmpty, true);
+  assert.equal(P.store.has("egb.debugger.envs.v1"), false, "no environment is invented on load");
+  assert.equal(V.frameSrc, "", "no frame source without an environment");
+  let tree = P.d.render();
+  assert.equal(find(tree, (n) => n.type === "iframe").length, 0, "no product frame is mounted");
+  assert.equal(find(tree, (n) => n.props && n.props["data-screen-label"] === "Product").length, 0);
+  assert.equal(find(tree, (n) => n.props && n.props["data-screen-label"] === "Execution graph").length, 0);
+  const dash = find(tree, (n) => n.props && n.props["data-screen-label"] === "Environments");
+  assert.equal(dash.length, 1);
+  const copy = texts(dash[0]);
+  assert.ok(copy.includes("Test environments"));
+  assert.ok(copy.includes("Each environment is isolated: its own simulated account, step tabs, notes and graph layout. Open one to pick up where you left off, or start a new one with its own participant and prompts."));
+  assert.ok(copy.includes("New environment"));
+  assert.ok(copy.includes("No environments yet. Create one to open the product against a fresh simulated account."), "the empty state");
+  const bar = texts(P.d.renderTopBar(V));
+  assert.ok(bar.includes("Engelbart") && bar.includes("Simulated") && bar.includes("Real"), "the wordmark and the mode toggle");
+  assert.ok(!bar.includes("Reset test environment") && !bar.includes("switch environment"), "no environment controls on the dashboard");
+  // New environment: the popup in "new" mode; Create makes the environment and opens it.
+  V.newEnv(); await flush();
+  V = P.d.renderVals();
+  same([V.cfg.open, V.cfg.title, V.cfg.saveLabel, P.d.state.config.envId], [true, "New environment", "Create environment", null]);
+  V.cfg.setName({ target: { value: "Physics major" } }); await flush();
+  P.d.renderVals().cfg.save(); await settle();
+  V = P.d.renderVals();
+  assert.equal(V.cfg.open, false);
+  assert.equal(V.isDashboard, false, "the new environment is open");
+  let envs = JSON.parse(P.store.get("egb.debugger.envs.v1"));
+  assert.equal(envs.length, 1);
+  assert.equal(envs[0].name, "Physics major");
+  assert.equal(P.d.state.envId, envs[0].id);
+  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?env=" + envs[0].id + "&test=true", "the frame runs against this environment's simulated account");
+  tree = P.d.render();
+  assert.equal(find(tree, (n) => n.type === "iframe").length, 1);
+  assert.equal(find(tree, (n) => n.props && n.props["data-screen-label"] === "Environments").length, 0);
+  const inBar = texts(P.d.renderTopBar(V));
+  assert.ok(inBar.includes("Reset test environment") && inBar.includes("switch environment"), "inside an environment the bar has its controls");
+  same(V.envOptions.map((o) => o.label), ["Physics major", "All environments…", "Configure this environment…", "New environment…", "Delete this environment…"]);
+  assert.equal(V.envId, envs[0].id);
+  // New environment… from the dropdown, left unnamed: Environment {n}, opened; the first was saved on the way out.
+  V.envSelect({ target: { value: "__new" } }); await flush();
+  P.d.renderVals().cfg.save(); await settle();
+  envs = JSON.parse(P.store.get("egb.debugger.envs.v1"));
+  same(envs.map((e) => e.name), ["Environment 2", "Physics major"], "prepended");
+  assert.equal(P.d.state.envId, envs[0].id);
+  assert.ok(P.store.has("egb.debugger.env." + envs[1].id), "the environment that was open was saved");
+  assert.equal(P.server.telemetry().length, 0, "the simulator never reads telemetry");
+});
+
+test("the dashboard's cards: most recently opened first, saying when, how the participant starts and what was recorded; the card opens, Configure edits without opening, × deletes", async () => {
+  const opened = Date.now() - 60_000, older = new Date(2025, 2, 4, 15, 9, 0).getTime();
+  const fresh = { id: "env-a", name: "Fresh", createdAt: opened - 60_000, lastUsedAt: opened, stats: { steps: 0, requests: 0, model: 0, cost: 0, ms: 0 }, config: { description: "", notes: "", prompts: {}, participant: { enabled: false } } };
+  const prefilled = { id: "env-b", name: "Ada, third year", createdAt: older, lastUsedAt: 0, stats: { steps: 3, requests: 12, model: 4, cost: 0.0042, ms: 1900 },
+    config: { description: "Skips the profile steps.", notes: "", prompts: { analyzePrompt: "custom", gradePrompt: "custom" }, participant: { enabled: true, name: "Ada", year: "Third year", major: "", depth: "some", paperFamiliarity: 2, projectUrl: "", repoUrl: "", paper: null } } };
+  const P = page({ seed: { "egb.debugger.envs.v1": [prefilled, fresh], "egb.debugger.env.env-b": { recordings: [], notes: { start: "kept" } }, "egb.sim.db.env-b": { accounts: 1 } } });
+  let V = P.d.renderVals();
+  same([V.isDashboard, V.envsEmpty], [true, false]);
+  same(V.envCards.map((c) => c.name), ["Fresh", "Ada, third year"], "most recently opened first, then by creation");
+  const [a, b] = V.envCards;
+  assert.match(a.meta, /^Last opened \d{1,2}:\d\d:\d\d [AP]M$/, "opened today: the time, with seconds");
+  assert.equal(a.meta, "Last opened " + P.d.clock(opened));
+  assert.equal(a.participant, "Fresh participant · opens at the Start step");
+  assert.equal(a.hasDescription, false);
+  same(a.stats, [{ k: "steps", v: "0" }, { k: "requests", v: "0" }, { k: "model calls", v: "0" }, { k: "est. cost", v: "$0" }, { k: "server time", v: "0 ms" }]);
+  assert.ok(b.meta.startsWith("Created ") && b.meta.endsWith(", 3:09 PM · 2 prompts edited"), "never opened: the creation date, without seconds: " + b.meta);
+  assert.equal(b.participant, "Ada · Third year · opens at the Paper step", "empty parts are skipped");
+  same([b.hasDescription, b.description], [true, "Skips the profile steps."]);
+  same(b.stats.map((s) => s.v), ["3", "12", "4", "$0.0042", "1.9 s"]);
+  same(P.d.envCard({ id: "x", name: "x", createdAt: older, stats: { cost: 0.123, ms: 128 }, config: { prompts: { askPrompt: "y" } } }).stats.map((s) => s.v), ["0", "0", "0", "$0.123", "128 ms"]);
+  assert.ok(P.d.envCard({ id: "x", name: "x", createdAt: older, config: { prompts: { askPrompt: "y" } } }).meta.endsWith(" · 1 prompt edited"));
+  const copy = texts(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Environments")[0]);
+  ["Fresh", "Ada, third year", "Skips the profile steps.", "Open ›", "Configure", "×", "Delete this environment"].forEach((t) => assert.ok(copy.includes(t), t));
+  assert.ok(!copy.includes("No environments yet. Create one to open the product against a fresh simulated account."));
+  // Configure on a card edits that environment, open or not; the click does not open the card.
+  let stopped = 0; const ev = { stopPropagation() { stopped += 1; } };
+  b.configure(ev); await flush();
+  assert.equal(stopped, 1);
+  V = P.d.renderVals();
+  same([V.cfg.open, V.cfg.title, V.cfg.name, V.isDashboard, P.d.state.config.envId], [true, "Configure environment", "Ada, third year", true, "env-b"]);
+  V.cfg.setName({ target: { value: "Ada, third year, no links" } }); await flush();
+  P.d.renderVals().cfg.save(); await flush();
+  V = P.d.renderVals();
+  same([V.cfg.open, V.isDashboard], [false, true], "saved, still on the dashboard");
+  assert.equal(JSON.parse(P.store.get("egb.debugger.envs.v1")).find((e) => e.id === "env-b").name, "Ada, third year, no links");
+  assert.equal(V.envCards[1].name, "Ada, third year, no links");
+  same(P.cmds(), [], "no prompts were pushed: no product is running");
+  // × asks first, in the environment's name; declining keeps everything.
+  const asked = []; P.w.confirm = (msg) => { asked.push(msg); return false; };
+  V.envCards[1].remove(ev); await flush();
+  same(asked, ["Delete “Ada, third year, no links”? Its simulated account, steps and notes are removed."]);
+  assert.equal(P.d.renderVals().envCards.length, 2);
+  P.w.confirm = () => true;
+  P.d.renderVals().envCards[1].remove(ev); await flush();
+  same(JSON.parse(P.store.get("egb.debugger.envs.v1")).map((e) => e.id), ["env-a"]);
+  assert.equal(P.store.has("egb.debugger.env.env-b"), false, "its saved state is gone");
+  assert.equal(P.store.has("egb.sim.db.env-b"), false, "and its simulated account");
+  assert.equal(P.d.renderVals().isDashboard, true);
+  // The card opens its environment; All environments… saves it and comes back.
+  P.d.renderVals().envCards[0].open(); await flush();
+  V = P.d.renderVals();
+  same([V.isDashboard, P.d.state.envId], [false, "env-a"]);
+  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?env=env-a&test=true");
+  assert.ok(JSON.parse(P.store.get("egb.debugger.envs.v1"))[0].lastUsedAt > opened, "opening is what Last opened means");
+  V.envSelect({ target: { value: "__all" } }); await flush();
+  V = P.d.renderVals();
+  same([V.isDashboard, P.d.state.envId], [true, null]);
+  assert.ok(P.store.has("egb.debugger.env.env-a"), "saved on the way out");
+  assert.equal(find(P.d.render(), (n) => n.type === "iframe").length, 0);
+  // Delete this environment… on the open one returns to the dashboard, and invents nothing in its place.
+  P.d.renderVals().envCards[0].open(); await flush();
+  P.d.renderVals().envSelect({ target: { value: "__delete" } }); await flush();
+  V = P.d.renderVals();
+  same([V.isDashboard, V.envsEmpty, P.d.state.envId], [true, true, null]);
+  assert.equal(P.store.get("egb.debugger.envs.v1"), "[]");
+  assert.equal(P.store.has("egb.debugger.env.env-a"), false);
+  // Configure this environment… on the open one pushes its prompts to the running product at once.
+  P.d.createEnv("Lab"); await settle();
+  P.d.renderVals().envSelect({ target: { value: "__configure" } }); await flush();
+  assert.equal(P.d.state.config.envId, P.d.state.envId);
+  P.d.renderVals().cfg.save(); await flush();
+  same(P.cmds(), ["prompts"]);
+});
+
+test("leaving an environment keeps what the frame had just reported: pending events are drawn and saved before the dashboard comes back", async () => {
+  const P = page({});
+  P.d.createEnv("Lab"); await settle();
+  const id = P.d.state.envId;
+  P.send({ egb: "ready", speed: 1, mode: "sim" }); await flush();
+  const events = [];
+  const sim = P.w.EngelbartSim.create({ emit: (ev) => events.push(plain(ev)), speed: 0 });
+  await sim.handle("/api/engelbart-onboarding", { method: "POST", body: JSON.stringify({ action: "open" }) });
+  events.forEach((ev) => P.send({ egb: "trace", event: ev }));
+  P.d.closeEnv(); await flush();
+  assert.equal(P.d.renderVals().isDashboard, true);
+  const saved = JSON.parse(P.store.get("egb.debugger.env." + id));
+  assert.equal(saved.recordings[0].stages.length, 1, "the request the frame had just reported was saved, not lost to the flush timer");
+  const card = P.d.renderVals().envCards[0];
+  assert.equal(card.stats.find((s) => s.k === "requests").v, "1", "and the card counts it");
+  card.open(); await flush();
+  assert.equal(P.stages().length, 1, "reopening restores it");
+  assert.equal(P.stages()[0].path, "/api/engelbart-onboarding");
 });
 
 test("a request the frame reports is a row at once; when the reply names a trace, the trace is read and the row becomes the recorded action with its operations", async () => {
@@ -436,6 +586,7 @@ test("the run picker opens an earlier run in the same panel and comes back to th
 
 test("switching modes keeps each side's state: the simulator's tabs survive a visit to Real mode, and Real mode's session survives a visit back", async () => {
   const P = page({});
+  P.d.createEnv("Lab"); await settle();
   P.send({ egb: "ready", speed: 1, mode: "sim" });
   await flush();
   same(P.cmds(), ["speed", "snapshot", "prompts"], "the simulated frame is configured on ready");

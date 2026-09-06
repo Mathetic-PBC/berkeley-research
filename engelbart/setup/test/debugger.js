@@ -68,12 +68,12 @@ class Debugger extends React.Component {
       { key: "reconcileBlock", label: "Reconcile the LiteLLM gate", desc: "credits.js reconcileBlock(): /key/info carries no `blocked`, so the verdict is asserted on every credential read.", options: [[true, "on"], [false, "off"]] }
     ];
     this.SPEEDS = [{ key: "1", label: "1×", value: 1 }, { key: "4", label: "4×", value: 0.25 }, { key: "i", label: "instant", value: 0.02 }];
-    let envs = this.loadEnvs(); if (!envs.length) { envs = [this.blankEnv("Environment 1")]; this.persistEnvs(envs); }
-    const current = this.mostRecent(envs);
-    this.state = Object.assign({ envs: envs, tab: "live", notice: "", hideKinds: {}, cases: this.loadCases(),
+    // Simulated mode opens on the environments dashboard: nothing is open, so no product frame is mounted and
+    // no simulated backend runs until an environment is chosen. Real mode has no environments; its frame boots by itself.
+    this.state = Object.assign({ envs: this.loadEnvs(), tab: "live", notice: "", hideKinds: {}, cases: this.loadCases(),
       caseOpen: null, knobs: Object.assign({}, window.EngelbartSim.DEFAULT_KNOBS), running: false, compare: null, cmpOpen: {}, inspTab: "output", speedKey: "1", copied: false, stick: true,
       picking: false, flowModal: false, detailModal: false, mode: this.loadMode(), frameKey: 1,
-      real: this.freshReal() }, this.envState(current.id));
+      real: this.freshReal() }, this.envState(null));
     // Real mode starts on an empty session; the simulator's tabs wait in the environment's storage.
     if (this.state.mode === "real") Object.assign(this.state, this.realRecordingState(this.state.real), { view: "requests", inspTab: "input", open: {} });
     this.realClient = window.EGB_REAL ? window.EGB_REAL.client() : null;
@@ -96,12 +96,13 @@ class Debugger extends React.Component {
   DEPTHS() { return [["everyday", "Everyday"], ["some", "Some detail"], ["technical", "Technical"], ["expert", "Expert"]]; }
   FAMS() { return ["I'm completely lost", "I wouldn't know where to start", "I can get oriented", "I can get started", "I can extend it"]; }
   defaultConfig() { return { description: "", notes: "", prompts: {}, participant: { enabled: false, name: "", year: "Second year", major: "", depth: "some", paperFamiliarity: 1, projectUrl: "", repoUrl: "", paper: null } }; }
-  // The popup edits a draft; Save writes it to the environment (creating it in "new" mode).
-  openConfig(mode) {
-    const env = this.state.envs.find(e => e.id === this.state.envId);
+  // The popup edits a draft; Save writes it to the environment (creating it in "new" mode). A card on the
+  // dashboard configures its own environment, which need not be the open one; the dropdown configures the open one.
+  openConfig(mode, envId) {
+    const id = envId || this.state.envId, env = this.state.envs.find(e => e.id === id);
     const base = mode === "new" ? Object.assign({ name: "" }, this.defaultConfig()) : Object.assign({ name: env ? env.name : "" }, this.defaultConfig(), env && env.config || {});
     base.participant = Object.assign(this.defaultConfig().participant, base.participant || {}); base.prompts = Object.assign({}, base.prompts || {});
-    this.setState({ config: { mode: mode, draft: base, section: "about" } });
+    this.setState({ config: { mode: mode, envId: id, draft: base, section: "about" } });
   }
   setDraft(path, value) { const c = this.state.config; if (!c) return; const d = JSON.parse(JSON.stringify(c.draft)); let o = d; const parts = path.split("."); for (let i = 0; i < parts.length - 1; i++) o = o[parts[i]]; o[parts[parts.length - 1]] = value; this.setState({ config: Object.assign({}, c, { draft: d }) }); }
   saveConfig() {
@@ -110,11 +111,14 @@ class Debugger extends React.Component {
     const prompts = {}; Object.keys(d.prompts || {}).forEach(k => { if (d.prompts[k] != null && d.prompts[k] !== defaults[k]) prompts[k] = d.prompts[k]; });
     const config = { description: d.description, notes: d.notes, prompts: prompts, participant: d.participant };
     if (c.mode === "new") { this.setState({ config: null }); this.createEnv(d.name, config); return; }
-    const envs = this.state.envs.map(e => e.id === this.state.envId ? Object.assign({}, e, { name: (d.name || "").trim() || e.name, config: config }) : e); this.persistEnvs(envs);
-    this.setState({ envs: envs, config: null }); this.cmd("prompts", config.prompts);
+    const envs = this.state.envs.map(e => e.id === c.envId ? Object.assign({}, e, { name: (d.name || "").trim() || e.name, config: config }) : e); this.persistEnvs(envs);
+    // The running product carries the open environment's prompts; another environment's take effect when it opens.
+    this.setState({ envs: envs, config: null }); if (c.envId === this.state.envId) this.cmd("prompts", config.prompts);
   }
   participantParam(config) { const p = config && config.participant; return p && p.enabled ? "&p=" + encodeURIComponent(JSON.stringify({ name: p.name, year: p.year, major: p.major, depth: p.depth, paperFamiliarity: Number(p.paperFamiliarity) || 0, projectUrl: p.projectUrl, repoUrl: p.repoUrl, paper: p.paper || null })) : ""; }
   // --- test environments: each has its own simulated account, steps, notes and layout -----------------------
+  // The dashboard lists them as cards and is where Simulated mode lands; envId null means the dashboard is on
+  // screen and nothing runs. Opening one restores its state and mounts the product against its account.
   loadEnvs() { try { return JSON.parse(window.localStorage.getItem("egb.debugger.envs.v1") || "[]"); } catch (e) { return []; } }
   persistEnvs(envs) { try { window.localStorage.setItem("egb.debugger.envs.v1", JSON.stringify(envs)); } catch (e) {} }
   envKey(id) { return "egb.debugger.env." + id; }
@@ -130,32 +134,56 @@ class Debugger extends React.Component {
   scheduleSave() { if (this.state.mode === "real") return; clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => this.saveEnvData(), 800); }
   envStats(recs) { const all = []; recs.forEach(r => r.stages.forEach(s => all.push(s))); const t = this.totals(all); return { steps: recs.filter(r => r.step && r.stages.length).length, requests: t.requests, model: t.model, cost: t.cost, ms: t.ms }; }
   loadEnvData(id) { try { return JSON.parse(window.localStorage.getItem(this.envKey(id)) || "null"); } catch (e) { return null; } }
-  mostRecent(envs) { return envs.slice().sort((a, b) => (b.lastUsedAt || 0) - (a.lastUsedAt || 0))[0]; }
   blankEnv(name, config) { return { id: "env-" + Date.now().toString(36), name: (name || "").trim() || "Environment", createdAt: Date.now(), lastUsedAt: Date.now(), stats: { steps: 0, requests: 0, model: 0, cost: 0, ms: 0 }, config: config || this.defaultConfig() }; }
-  // The state slice an environment restores: its step tabs, notes and graph layout.
+  // The state slice an environment restores: its step tabs, notes and graph layout. With no id, the dashboard's:
+  // nothing open, and a blank Start tab so the panel has something to draw.
   envState(id) {
-    const d = this.loadEnvData(id), tabs = d && Array.isArray(d.recordings) && d.recordings.length ? d.recordings : this.loadTabs();
+    const d = id ? this.loadEnvData(id) : null, tabs = d && Array.isArray(d.recordings) && d.recordings.length ? d.recordings : this.loadTabs();
     return { envId: id, recordings: tabs, targetId: d && d.targetId || tabs[0].id, viewing: Math.min(d && d.viewing || 0, tabs.length - 1), notes: d && d.notes || {}, flowPos: d && d.flowPos || {}, flowPan: d && d.flowPan || { x: 0, y: 0 }, flowZoom: d && d.flowZoom || 1, flowHeight: d && d.flowHeight || null,
       sel: null, flowSel: null, open: {}, connected: false, view: "flow" };
   }
-  openEnv(id) {
-    if (this.state.envId) this.saveEnvData();
-    this.connectedAt = null; this.lastPress = null; this.wheelEl = null;
-    this.setState(this.envState(id));
+  // Leaving the open environment: events the frame reported but has not yet drawn are drawn, then everything it
+  // has is saved; the connection bookkeeping is cleared for whatever frame comes next.
+  leaveEnv() {
+    if (this.state.envId && !this.isReal()) { clearTimeout(this.flushTimer); this.flushTimer = null; if (this.pending.length) this.flush(); clearTimeout(this.saveTimer); this.saveEnvData(); }
+    this.pending.splice(0); this.connectedAt = null; this.lastPress = null; this.wheelEl = null;
   }
+  // Opening one saves whatever was open, restores the chosen environment's state and mounts the product against
+  // its simulated account; the moment it was opened is what the dashboard orders its cards by.
+  openEnv(id) {
+    this.leaveEnv();
+    const envs = this.state.envs.map(e => e.id === id ? Object.assign({}, e, { lastUsedAt: Date.now() }) : e); this.persistEnvs(envs);
+    this.setState(Object.assign({ envs: envs }, this.envState(id)));
+  }
+  // All environments…: save what is open and return to the dashboard; the product frame unmounts with it.
+  closeEnv() { this.leaveEnv(); this.setState(this.envState(null)); }
   createEnv(name, config) {
     const env = this.blankEnv(name || ("Environment " + (this.state.envs.length + 1)), config);
     const envs = [env].concat(this.state.envs); this.persistEnvs(envs); this.setState({ envs: envs }, () => this.openEnv(env.id));
   }
-  // Deleting the open environment moves to the next most recent one, or a fresh one when it was the last.
+  // Deleting removes the record, the saved state and the simulated account. Deleting the open environment
+  // returns to the dashboard; nothing of it is saved on the way out.
   deleteEnv(env) {
     if (!env || !window.confirm("Delete “" + env.name + "”? Its simulated account, steps and notes are removed.")) return;
+    const open = this.state.envId === env.id;
+    if (open) { clearTimeout(this.flushTimer); this.flushTimer = null; clearTimeout(this.saveTimer); this.pending.splice(0); this.connectedAt = null; this.lastPress = null; this.wheelEl = null; }
     try { window.localStorage.removeItem(this.envKey(env.id)); window.localStorage.removeItem("egb.sim.db." + env.id); } catch (e) {}
-    let envs = this.state.envs.filter(e => e.id !== env.id);
-    if (this.state.envId !== env.id) { this.persistEnvs(envs); this.setState({ envs: envs }); return; }
-    if (!envs.length) envs = [this.blankEnv("Environment 1")];
-    this.persistEnvs(envs); this.connectedAt = null; this.lastPress = null; this.wheelEl = null;
-    this.setState(Object.assign({ envs: envs }, this.envState(this.mostRecent(envs).id)));
+    const envs = this.state.envs.filter(e => e.id !== env.id); this.persistEnvs(envs);
+    this.setState(open ? Object.assign({ envs: envs }, this.envState(null)) : { envs: envs });
+  }
+  // A card on the dashboard: what the environment is set up as, and what it has recorded so far.
+  envCard(e) {
+    const p = e.config && e.config.participant, st = e.stats || {}, edited = Object.keys(e.config && e.config.prompts || {}).length;
+    const when = e.lastUsedAt || e.createdAt, sameDay = new Date(when).toDateString() === new Date().toDateString();
+    const dateLabel = sameDay ? this.clock(when) : new Date(when).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + this.clock(when).replace(/:\d\d (AM|PM)$/, " $1");
+    const participant = p && p.enabled ? [p.name || "Unnamed participant", p.year, p.major].filter(Boolean).join(" · ") + " · opens at the Paper step" : "Fresh participant · opens at the Start step";
+    return { id: e.id, name: e.name, meta: (e.lastUsedAt ? "Last opened " : "Created ") + dateLabel + (edited ? " · " + edited + (edited === 1 ? " prompt edited" : " prompts edited") : ""),
+      hasDescription: !!(e.config && e.config.description), description: e.config && e.config.description || "",
+      participant: participant,
+      stats: [{ k: "steps", v: String(st.steps || 0) }, { k: "requests", v: String(st.requests || 0) }, { k: "model calls", v: String(st.model || 0) }, { k: "est. cost", v: st.cost ? this.fmtCost(st.cost) : "$0" }, { k: "server time", v: this.fmtMs(st.ms) === "—" ? "0 ms" : this.fmtMs(st.ms) }],
+      open: () => this.openEnv(e.id),
+      configure: (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); this.openConfig("edit", e.id); },
+      remove: (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); this.deleteEnv(e); } };
   }
   // One tab per onboarding step. The product reports which step is on screen; requests made while it
   // is there land in that step's tab. "Start" holds what happens before the first step is drawn.
@@ -858,9 +886,13 @@ class Debugger extends React.Component {
           participantNote: c.mode === "new" ? "A prefilled participant has finished a setup before: the product opens at the Paper step with name, year, major and register on record, and the links and familiarity below already entered." : "Participant changes take effect after Reset test environment; prompt changes apply to the next model call.",
           prompts: P.map(([key, label, def]) => { const cur = d.prompts[key]; const changed = cur != null && cur !== def; return { key: key, label: label, changed: changed, badge: changed ? "edited" : "", value: cur != null ? cur : def, set: (e) => this.setDraft("prompts." + key, e.target.value), reset: () => { const p = Object.assign({}, d.prompts); delete p[key]; this.setDraft("prompts", p); }, resetLabel: changed ? "reset to default" : "" }; }),
           cancel: () => this.setState({ config: null }), save: () => this.saveConfig() }; })(),
+      // The dashboard is Simulated mode with nothing open; its cards are ordered by the last opening, then creation.
+      isDashboard: !real && !S.envId, envsEmpty: !S.envs.length,
+      envCards: S.envs.slice().sort((a, b) => (b.lastUsedAt || b.createdAt || 0) - (a.lastUsedAt || a.createdAt || 0)).map(e => this.envCard(e)),
+      newEnv: () => this.openConfig("new"),
       envId: S.envId || "",
-      envOptions: S.envs.map(e => ({ value: e.id, label: e.name })).concat([{ value: "__configure", label: "Configure this environment…" }, { value: "__new", label: "New environment…" }, { value: "__delete", label: "Delete this environment…" }]),
-      envSelect: (e) => { const v = e.target.value; if (v === "__configure") this.openConfig("edit"); else if (v === "__new") this.openConfig("new"); else if (v === "__delete") { this.deleteEnv(S.envs.find(x => x.id === S.envId)); this.forceUpdate(); } else if (v && v !== S.envId) this.openEnv(v); },
+      envOptions: S.envs.map(e => ({ value: e.id, label: e.name })).concat([{ value: "__all", label: "All environments…" }, { value: "__configure", label: "Configure this environment…" }, { value: "__new", label: "New environment…" }, { value: "__delete", label: "Delete this environment…" }]),
+      envSelect: (e) => { const v = e.target.value; if (v === "__all") this.closeEnv(); else if (v === "__configure") this.openConfig("edit"); else if (v === "__new") this.openConfig("new"); else if (v === "__delete") { this.deleteEnv(S.envs.find(x => x.id === S.envId)); this.forceUpdate(); } else if (v && v !== S.envId) this.openEnv(v); },
       notice: S.notice,
       resetProduct: () => { if (window.confirm("Reset the test environment? The simulated account's setup is dropped, the product reloads at step one, and every step tab is cleared.")) { const tabs = this.loadTabs(); this.setState({ recordings: tabs, targetId: tabs[0].id, viewing: 0, sel: null, open: {}, flowSel: null, connected: false, flowPos: {}, flowPan: { x: 0, y: 0 } }, () => this.saveEnvData()); this.cmd("reset"); } },
       recordings: S.recordings.map((r, i) => { const on = r === live, isTarget = r === this.target(); return { id: r.id, label: r.name, title: (r.step ? "requests made while the product is on the " + r.step + " step · " : "requests made before the first step is on screen · ") + (on ? "click the name to rename" : "click to view"), on: on, off: !on, color: on ? "#171717" : "#8f8f8f", subColor: on ? "#4d4d4d" : "#c9c9c9", line: on ? "#171717" : "transparent", dot: isTarget ? "#0070f3" : "transparent",
@@ -889,8 +921,8 @@ class Debugger extends React.Component {
       anyModal: S.flowModal || S.detailModal, closeModals: () => this.setState({ flowModal: false, detailModal: false }),
       lastRan: live.stages.length ? "Last run: " + this.clock(live.stages[live.stages.length - 1].at) : "Last run: —",
       // Real mode names only its mode: no environment, no prefilled participant, and never the product's test
-      // switch, whose reset buttons would clear the member's real record.
-      frameSrc: real ? "/engelbart/setup/test/frame?mode=real" : "/engelbart/setup/test/frame?env=" + (S.envId || "default") + (testMode ? "&test=true" : "") + this.participantParam((S.envs.find(e => e.id === S.envId) || {}).config),
+      // switch, whose reset buttons would clear the member's real record. The dashboard mounts no frame at all.
+      frameSrc: real ? "/engelbart/setup/test/frame?mode=real" : S.envId ? "/engelbart/setup/test/frame?env=" + S.envId + (testMode ? "&test=true" : "") + this.participantParam((S.envs.find(e => e.id === S.envId) || {}).config) : "",
       onListScroll: (e) => { const el = e.target; const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 48; if (stick !== S.stick) this.setState({ stick: stick }); },
       isLive: S.tab === "live", isCases: S.tab === "cases", isCompare: S.tab === "compare",
       liveEmpty: !visible.length, stages: visible.map((s, i) => this.stageVM(s, live.stages.indexOf(s), "live", live)),
@@ -941,6 +973,9 @@ class Debugger extends React.Component {
         h("button", { onClick: R.reloadFrame, className: "hv-ink-line", style: css("margin-top:12px;padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px") }, "Reload the frame")));
   }
   // --- the template ------------------------------------------------------------------------------------
+  // On the dashboard the bar carries the wordmark, the mode toggle and the notice; the environment dropdown and
+  // the reset belong to an open environment. (The design's bar shows the wordmark alone there; the mode toggle
+  // stays because Real mode, which has no environments, is reached from it.)
   renderTopBar(V) {
     const R = V.real;
     return h("div", { "data-screen-label": "Top bar", style: css("flex:none;min-height:46px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 14px 6px 16px;border-bottom:1px solid #eaeaea;white-space:nowrap") },
@@ -951,17 +986,48 @@ class Debugger extends React.Component {
       V.isReal
         ? h("select", { value: R.pickerValue, onChange: R.pick, "data-run-picker": "1", title: "what the panel shows: this session, or one of your earlier runs", style: css("max-width:320px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
           R.pickerOptions.map(o => h("option", { key: o.value, value: o.value }, o.label)))
-        : h("select", { value: V.envId, onChange: V.envSelect, title: "switch environment", style: css("max-width:280px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
+        : V.isDashboard ? null : h("select", { value: V.envId, onChange: V.envSelect, title: "switch environment", style: css("max-width:280px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
           V.envOptions.map(eo => h("option", { key: eo.value, value: eo.value }, eo.label))),
       h("span", { style: css("font:12px/1.4 " + SANS + ";color:#e70022;flex:1 1 40px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, V.notice || (V.isReal ? R.error : "")),
       V.isReal ? (R.email ? h("span", { title: "the member the product runs as", style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, R.email) : null)
-        : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
+        : V.isDashboard ? null : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
           style: css("padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px;white-space:nowrap") }, "Reset test environment"));
   }
   // One line under the top bar in Real mode, because the product on the left is not a simulation there.
   renderRealStrip() {
     return h("div", { "data-screen-label": "Real mode notice", style: css("flex:none;padding:5px 16px;border-bottom:1px solid #eaeaea;background:oklch(0.97 0.02 25);font:11.5px/1.5 " + SANS + ";color:oklch(0.4 0.14 25);white-space:normal;text-wrap:pretty") },
       "Real mode: the product on the left does real work as you. Model calls spend real credit, Continue writes to your onboarding, a dropped PDF is uploaded. The panel on the right only reads what the server recorded.");
+  }
+  // The environments dashboard, Simulated mode's landing screen. Every environment is a card: the whole card
+  // opens it, its × deletes it, Configure edits it without opening it. Hover changes borders only (debugger.css).
+  renderDashboard(V) {
+    const PILL = "padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;border-radius:999px;white-space:nowrap";
+    return h("div", { "data-screen-label": "Environments", style: css("flex:1;min-height:0;overflow:auto;padding:32px 32px 48px") },
+      h("div", { style: css("max-width:920px;margin:0 auto") },
+        h("div", { style: css("display:flex;align-items:flex-start;gap:16px 24px;flex-wrap:wrap") },
+          h("div", { style: css("flex:1 1 320px;min-width:0") },
+            h("div", { style: css("font:500 22px/1.2 " + SANS + ";letter-spacing:-0.3px;color:#171717") }, "Test environments"),
+            h("div", { style: css("margin-top:8px;font:12.5px/1.7 " + SANS + ";color:#8f8f8f;text-wrap:pretty;max-width:560px") },
+              "Each environment is isolated: its own simulated account, step tabs, notes and graph layout. Open one to pick up where you left off, or start a new one with its own participant and prompts.")),
+          h("button", { onClick: V.newEnv, className: "hv-black", style: css("flex:none;padding:10px 16px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#fff;background:#171717;border:1px solid #171717;border-radius:999px;white-space:nowrap") }, "New environment")),
+        V.envsEmpty ? h("div", { style: css("margin-top:28px;padding:40px 24px;border:1px dashed #dedede;border-radius:12px;text-align:center;font:13px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") },
+          "No environments yet. Create one to open the product against a fresh simulated account.") : null,
+        h("div", { style: css("margin-top:28px;display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px") },
+          V.envCards.map(ec => h("div", { key: ec.id, onClick: ec.open, className: "hv-line-c9", style: css("display:flex;flex-direction:column;gap:14px;padding:18px 18px 16px;border:1px solid #eaeaea;border-radius:12px;background:#fff;cursor:pointer;min-width:0") },
+            h("div", { style: css("display:flex;align-items:flex-start;gap:10px") },
+              h("div", { style: css("flex:1;min-width:0") },
+                h("div", { style: css("font:500 15px/1.3 " + SANS + ";color:#171717;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, ec.name),
+                h("div", { style: css("margin-top:4px;font:11.5px/1.5 " + SANS + ";color:#8f8f8f") }, ec.meta)),
+              h("button", { onClick: ec.remove, "aria-label": "delete environment", title: "Delete this environment", className: "hv-red", style: css("flex:none;padding:0 4px;border:none;background:none;font:18px/1 " + SANS + ";color:#c9c9c9") }, "×")),
+            ec.hasDescription ? h("div", { style: css("font:12.5px/1.6 " + SANS + ";color:#4d4d4d;text-wrap:pretty") }, ec.description) : null,
+            h("div", { style: css("font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, ec.participant),
+            h("div", { style: css("display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:12px 10px;padding-top:14px;border-top:1px solid #f0f0f0") },
+              ec.stats.map(st => h("div", { key: st.k, style: css("min-width:0") },
+                h("div", { style: css("font:500 15px/1.2 " + MONO2 + ";color:#171717") }, st.v),
+                h("div", { style: css("margin-top:4px;font:500 9px/1 " + SANS + ";letter-spacing:1.2px;text-transform:uppercase;color:#8f8f8f;white-space:nowrap") }, st.k)))),
+            h("div", { style: css("display:flex;align-items:center;gap:8px;margin-top:2px") },
+              h("span", { style: css(PILL + ";color:#fff;background:#171717") }, "Open ›"),
+              h("button", { onClick: ec.configure, className: "hv-ink-line", style: css(PILL + ";color:#4d4d4d;background:transparent;border:1px solid #eaeaea") }, "Configure")))))));
   }
   renderConfig(cfg) {
     if (!cfg.open) return null;
@@ -1268,7 +1334,7 @@ class Debugger extends React.Component {
       this.renderTopBar(V),
       V.isReal ? this.renderRealStrip() : null,
       this.renderConfig(V.cfg),
-      h("div", { ref: this.bodyRef, style: css("flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,56fr) 1px minmax(0,44fr)") },
+      V.isDashboard ? this.renderDashboard(V) : h("div", { ref: this.bodyRef, style: css("flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,56fr) 1px minmax(0,44fr)") },
         h("div", { "data-screen-label": "Product", style: css("min-width:0;min-height:0;position:relative;background:#fafafa") },
           h("iframe", { key: "frame-" + this.state.frameKey, ref: this.frameRef, title: V.isReal ? "Engelbart setup, running against the real backend" : "Engelbart setup, running against the simulated backend", src: V.frameSrc, style: css("display:block;width:100%;height:100%;border:0;background:#fff") }),
           V.isReal && R.signedOut ? this.renderSignedOut(R) : null),
