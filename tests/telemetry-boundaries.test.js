@@ -92,6 +92,9 @@ function everything(sink) {
   return JSON.stringify({ operations: sink.operations, snapshots: sink.snapshots, events: sink.events });
 }
 
+// Boundaries record only under a workflow root, as they run in the handler.
+const inWorkflow = (fn) => telemetry.runOperation({ name: "onboarding.test", type: "workflow" }, fn);
+
 test("a model call is a model child of the workflow, completed, with the four stages kept apart", async () => {
   const { sink, done } = observe();
   try {
@@ -174,7 +177,7 @@ test("a model failure marks the model and workflow spans failed and the applicat
     assert.equal(sink.byName("direction.normalize").length, 0);     // never reached, so never a node
     assert.equal(sink.snapshots.length, 0);                           // capture off: no error_detail either
     // grade() swallows a non-409 failure by design and answers null; the span still says failed.
-    const graded = await OM.grade({ area: "a", question: "q", level: 50, sample: "s", answer: "a" }, CREDS, db.options);
+    const graded = await inWorkflow(() => OM.grade({ area: "a", question: "q", level: 50, sample: "s", answer: "a" }, CREDS, db.options));
     assert.equal(graded, null);
     assert.equal(sink.one("model.grade").status, "failed");
   } finally { done(); }
@@ -185,13 +188,20 @@ test("the PostgREST boundary records the operation, table, filter, status and ro
   try {
     const db = fake();
     db.tables.engelbart_onboardings.push({ id: "row-1", user_id: USER.id, status: "open" });
-    const rows = await Supabase.selectRows("engelbart_onboardings", `user_id=eq.${USER.id}&select=*`, db.options);
-    assert.equal(rows.length, 1);
-    await Supabase.patchRows("engelbart_onboardings", "id=eq.row-1", { step: 3 }, db.options);
-    await Supabase.insertRows("engelbart_onboarding_turns", [{ content: "hi" }], { ...db.options, query: "on_conflict=id", prefer: "resolution=merge-duplicates,return=representation" });
-    await Supabase.rpc("engelbart_save_pending_setup", { p_user_id: USER.id }, { ...db.options, fetchImpl: async () => ({ ok: true, status: 200, async text() { return '"abc"'; } }) });
-    await Supabase.selectRows("engelbart_onboardings", "id=eq.row-1", { ...db.options, trace: { name: "analysis.check-superseded" } });
+    // Outside a workflow the boundary is untraced: no operation, no event, no snapshot.
+    const rootless = await Supabase.selectRows("engelbart_onboardings", `user_id=eq.${USER.id}&select=*`, db.options);
+    assert.equal(rootless.length, 1);
+    assert.deepEqual([sink.started.length, sink.operations.length, sink.events.length, sink.snapshots.length], [0, 0, 0, 0]);
+    await inWorkflow(async () => {
+      const rows = await Supabase.selectRows("engelbart_onboardings", `user_id=eq.${USER.id}&select=*`, db.options);
+      assert.equal(rows.length, 1);
+      await Supabase.patchRows("engelbart_onboardings", "id=eq.row-1", { step: 3 }, db.options);
+      await Supabase.insertRows("engelbart_onboarding_turns", [{ content: "hi" }], { ...db.options, query: "on_conflict=id", prefer: "resolution=merge-duplicates,return=representation" });
+      await Supabase.rpc("engelbart_save_pending_setup", { p_user_id: USER.id }, { ...db.options, fetchImpl: async () => ({ ok: true, status: 200, async text() { return '"abc"'; } }) });
+      await Supabase.selectRows("engelbart_onboardings", "id=eq.row-1", { ...db.options, trace: { name: "analysis.check-superseded" } });
+    });
     const select = sink.one("db.select");
+    assert.equal(select.parent_span_id, sink.one("onboarding.test").span_id);
     assert.equal(select.type, "database");
     assert.equal(select.attributes["db.collection.name"], "engelbart_onboardings");
     assert.equal(select.attributes["db.operation.name"], "select");
@@ -226,14 +236,14 @@ test("the PostgREST boundary records the operation, table, filter, status and ro
     assert.doesNotMatch(all, new RegExp(SERVICE_KEY));
     assert.doesNotMatch(all, /Authorization|apikey|Bearer/);
     // A 500 is a failed database operation with the status on it, and the error unchanged.
-    await assert.rejects(Supabase.selectRows("t", "", { ...db.options, fetchImpl: async () => ({ ok: false, status: 500, async text() { return '{"message":"boom"}'; } }) }),
-      (e) => e.statusCode === 500 && e.name === "ServiceError");
+    await inWorkflow(() => assert.rejects(Supabase.selectRows("t", "", { ...db.options, fetchImpl: async () => ({ ok: false, status: 500, async text() { return '{"message":"boom"}'; } }) }),
+      (e) => e.statusCode === 500 && e.name === "ServiceError"));
     const failed = sink.operations.find((o) => o.status === "failed");
     assert.equal(failed.attributes["http.response.status_code"], 500);
-    // Untraced requests leave no trace at all.
+    // Untraced requests leave no trace at all, even under a workflow.
     const before = sink.operations.length;
-    await Supabase.selectRows("engelbart_onboardings", "id=eq.row-1", { ...db.options, trace: false });
-    assert.equal(sink.operations.length, before);
+    await inWorkflow(() => Supabase.selectRows("engelbart_onboardings", "id=eq.row-1", { ...db.options, trace: false }));
+    assert.equal(sink.operations.length, before + 1);   // the wrapper only
     // The describer alone.
     assert.equal(Supabase.describe("/rest/v1/rpc/f", "POST", {}).name, "db.rpc");
     assert.equal(Supabase.describe("/rest/v1/t?x=1", "DELETE", {}).name, "db.delete");
@@ -245,7 +255,7 @@ test("storage operations reference the PDF by path, size and digest and copy nei
   const { sink, done } = observe();
   try {
     const db = fake();
-    const bytes = await Storage.downloadObject(Storage.paperObjectPath(PAPER), { ...db.options, maxBytes: 20 * 1024 * 1024 });
+    const bytes = await inWorkflow(() => Storage.downloadObject(Storage.paperObjectPath(PAPER), { ...db.options, maxBytes: 20 * 1024 * 1024 }));
     assert.equal(bytes.length, PDF.length);
     const download = sink.one("paper.download");
     assert.equal(download.type, "storage");
@@ -257,7 +267,7 @@ test("storage operations reference the PDF by path, size and digest and copy nei
     assert.equal(download.attributes["engelbart.storage.sha256"], crypto.createHash("sha256").update(PDF).digest("hex"));
     assert.equal(download.attributes["http.response.status_code"], 200);
     assert.deepEqual(download.snapshots, {});
-    const signed = await Storage.signedUploadUrl("papers/x.pdf", db.options);
+    const signed = await inWorkflow(() => Storage.signedUploadUrl("papers/x.pdf", db.options));
     assert.match(signed.uploadUrl, /token=/);                       // the app still gets the real URL
     assert.equal(sink.one("storage.sign-upload").attributes["engelbart.storage.signed"], true);
     assert.equal(sink.byName("db.request").length + sink.byName("storage.request").length, 0);   // no generic child under it
@@ -268,7 +278,7 @@ test("storage operations reference the PDF by path, size and digest and copy nei
     assert.doesNotMatch(all, new RegExp(SERVICE_KEY));
     assert.ok(Buffer.byteLength(all) < 20000);                        // a 2 KB PDF did not become a 2 KB record
     // Too large by its declared length: a failed storage op, the same 413 the page sees.
-    await assert.rejects(Storage.downloadObject("papers/big.pdf", { ...db.options, maxBytes: 100 }), (e) => e.statusCode === 413);
+    await inWorkflow(() => assert.rejects(Storage.downloadObject("papers/big.pdf", { ...db.options, maxBytes: 100 }), (e) => e.statusCode === 413));
     assert.equal(sink.byName("paper.download")[1].status, "failed");
   } finally { done(); }
 });
@@ -277,7 +287,7 @@ test("a page fetch is an http operation with the URL stripped of its query, and 
   const { sink, done } = observe();
   try {
     const db = fake();
-    const text = await PageFetch.fetchPageText("https://x.org/p?utm=1", { ...db.options, traceName: "project-page.fetch" });
+    const text = await inWorkflow(() => PageFetch.fetchPageText("https://x.org/p?utm=1", { ...db.options, traceName: "project-page.fetch" }));
     assert.equal(text, "project & page");
     const fetch = sink.one("project-page.fetch");
     assert.equal(fetch.type, "http");
@@ -291,7 +301,7 @@ test("a page fetch is an http operation with the URL stripped of its query, and 
     assert.equal(extract.attributes["engelbart.page.output_chars"], text.length);
     assert.equal(sink.snapshots.find((s) => s.kind === "page_text").content, text);
     assert.equal(everything(sink).includes("<script>"), false);       // the HTML is never recorded
-    await assert.rejects(PageFetch.fetchPageText("https://x.org/p", { env: ENV, fetchImpl: async () => ({ ok: false, status: 503 }) }), (e) => e.statusCode === 502);
+    await inWorkflow(() => assert.rejects(PageFetch.fetchPageText("https://x.org/p", { env: ENV, fetchImpl: async () => ({ ok: false, status: 503 }) }), (e) => e.statusCode === 502));
     assert.equal(sink.byName("page.fetch")[0].status, "failed");
     assert.equal(sink.byName("page.fetch")[0].attributes["http.response.status_code"], 503);
   } finally { done(); }

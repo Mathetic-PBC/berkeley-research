@@ -89,6 +89,8 @@ events are persisted to the three `engelbart_telemetry_*` tables (migration
 - `ENGELBART_TELEMETRY_LOG=true` — one JSON line per finished operation in the function log (off by default)
 - `OTEL_EXPORTER_OTLP_ENDPOINT` (+ `OTEL_EXPORTER_OTLP_HEADERS`) — export spans over OTLP/HTTP (unset by default)
 
+Only the onboarding endpoint is traced: the shared database, storage, page and
+model boundaries record nothing unless a workflow root is open above them.
 Telemetry never fails a request: a sink or exporter error is logged and
 onboarding continues. The handler flushes before it responds, within
 `ENGELBART_TELEMETRY_FLUSH_MS` (default 2000). Under `node --test` nothing is

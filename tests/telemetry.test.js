@@ -59,10 +59,20 @@ test("operations nest through async context: children carry the parent's span id
   assert.equal(T.levelOf("db.select", "database", "huge"), "detail");   // an unknown one does not
   assert.deepEqual(T.LEVELS, ["workflow", "stage", "detail"]);
   // The manual form: started by hand, parented explicitly, completed by hand.
-  const parent = telemetry.startOperation({ name: "manual.parent", type: "processing" });
+  const parent = telemetry.startOperation({ name: "manual.parent", type: "workflow" });
   const child = telemetry.startOperation({ name: "manual.child", type: "processing", parent });
   child.complete(); parent.complete();
   assert.equal(sink.one("manual.child").parent_span_id, parent.span_id);
+  // Every trace has a workflow root: a boundary operation with nothing above it is untraced,
+  // so an endpoint that opens no workflow (and awaits no flush) records nothing at all.
+  const before = { ops: sink.started.length, events: sink.events.length };
+  for (const type of ["database", "storage", "http", "model", "processing"]) {
+    const out = await telemetry.runOperation({ name: `rootless.${type}`, type }, async (op) => { assert.equal(op.enabled, false); return type; });
+    assert.equal(out, type);
+    assert.equal(telemetry.startOperation({ name: `rootless.${type}`, type }).enabled, false);
+  }
+  assert.deepEqual({ ops: sink.started.length, events: sink.events.length }, before);
+  assert.equal(sink.operations.some((o) => o.name.startsWith("rootless.")), false);
   // The tree the graph draws.
   const tree = T.tree(sink.operations);
   const analysis = tree.find((n) => n.name === "onboarding.analysis");
@@ -157,11 +167,12 @@ test("redaction strips credentials by key, by pattern and by known value, and re
 
 test("detailed capture respects the flag: off records metadata only, on records redacted bounded snapshots", async () => {
   const off = make({ captureContent: false });
-  await off.telemetry.runOperation({ name: "model.analysis", type: "model" }, async (op) => {
+  const root = (t, fn) => t.runOperation({ name: "onboarding.analysis", type: "workflow" }, fn);
+  await root(off.telemetry, () => off.telemetry.runOperation({ name: "model.analysis", type: "model" }, async (op) => {
     assert.equal(op.snapshot("model_request", { body: { messages: [] } }), null);
     op.setAttribute("gen_ai.request.model", "claude-sonnet");
     throw Object.assign(new Error("shape"), { statusCode: 502 });
-  }).catch(() => {});
+  })).catch(() => {});
   const quiet = off.sink.one("model.analysis");
   assert.deepEqual(quiet.snapshots, {});
   assert.equal(off.sink.snapshots.length, 0);
@@ -169,12 +180,12 @@ test("detailed capture respects the flag: off records metadata only, on records 
   assert.equal(quiet.error.message, "shape");
 
   const on = make({ captureContent: true });
-  await on.telemetry.runOperation({ name: "model.analysis", type: "model" }, async (op) => {
+  await root(on.telemetry, () => on.telemetry.runOperation({ name: "model.analysis", type: "model" }, async (op) => {
     // Six 60 KiB strings survive the per-string cap and together pass the 256 KiB bound.
     const id = op.snapshot("model_request", { headers: { Authorization: "Bearer sk-1234567890" }, body: { big: Array.from({ length: 6 }, () => "y".repeat(60000)) } });
     assert.match(id, /^[0-9a-f-]{36}$/);
     op.snapshot("model_raw_response", { content: [{ type: "text", text: "{}" }] });
-  });
+  }));
   const loud = on.sink.one("model.analysis");
   assert.deepEqual(Object.keys(loud.snapshots), ["model_request", "model_raw_response"]);
   assert.equal(loud.attributes["bart.snapshot.model_request"], loud.snapshots.model_request);
@@ -241,9 +252,9 @@ test("untraced work produces nothing, and events share the operation's ids in li
   assert.equal(sink.operations.length, 0);
   assert.equal(sink.events.length, 0);
 
-  await telemetry.runOperation({ name: "assets.verify-links", type: "processing" }, async (op) => {
+  await telemetry.runOperation({ name: "onboarding.assets", type: "workflow" }, () => telemetry.runOperation({ name: "assets.verify-links", type: "processing" }, async (op) => {
     op.event("model.retry-without-search", { reason: "tool refused" });
-  });
+  }));
   const op = sink.one("assets.verify-links");
   const events = sink.events.filter((e) => e.operation_id === op.operation_id);
   assert.deepEqual(events.map((e) => e.type), ["operation.started", "operation.progress", "operation.completed"]);
@@ -394,7 +405,8 @@ test("a snapshot's bytes is the UTF-8 size of its stored content, and the stored
   }
   // And through the layer: the recorded snapshot says the same about itself.
   const { telemetry, sink } = make({ captureContent: true });
-  await telemetry.runOperation({ name: "model.analysis", type: "model" }, async (op) => { op.snapshot("model_raw_response", { noisy }); });
+  await telemetry.runOperation({ name: "onboarding.analysis", type: "workflow" }, () =>
+    telemetry.runOperation({ name: "model.analysis", type: "model" }, async (op) => { op.snapshot("model_raw_response", { noisy }); }));
   const recorded = sink.snapshots[0];
   assert.equal(recorded.bytes, Buffer.byteLength(JSON.stringify(recorded.content)));
   assert.ok(recorded.bytes <= CAP);
