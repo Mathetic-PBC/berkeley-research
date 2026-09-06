@@ -868,3 +868,28 @@ test("in Real mode the Prompts view reads each call's request and reply from its
   same([P.d.state.view, P.d.state.sel.op], ["requests", MODEL_OP]);
   assert.equal(P.d.inspectorVM().name, "model.analysis");
 });
+
+test("a value the product writes opens its panel in the Data flow view without scrolling the panel down to it; only the Requests list follows its newest row", async () => {
+  const P = page({});
+  P.d.createEnv("Lab"); await settle();
+  P.send({ egb: "ready", speed: 1, mode: "sim" }); await flush();
+  const list = { scrollTop: 0, scrollHeight: 1000, clientHeight: 500 };
+  P.d.listRef.current = list;
+  const at = 1_700_000_000_000;
+  const write = (id) => [
+    { type: "stage", id: "st-" + id, seq: 1, at, path: "/api/engelbart-onboarding", method: "POST", surface: "onboarding", action: "answer", label: "onboarding · answer" },
+    { type: "op", id: "op-" + id, stage: "st-" + id, seq: 2, at: at + 5, kind: "db", name: "store the answer", target: "PATCH /rest/v1/onboardings", status: "ok", input: { name: "Ada" }, output: { ok: true }, ms: 3, meta: {}, reads: ["session"], writes: ["profile"] },
+    { type: "stage.end", id: "st-" + id, at: at + 20, status: "ok", code: 200, ms: 20, response: { ok: true } },
+  ].forEach((ev) => P.send({ egb: "trace", event: ev }));
+  assert.equal(P.d.state.view, "flow");
+  write("a"); await new Promise((r) => setTimeout(r, 80));
+  let V = P.d.renderVals();
+  same([P.d.state.flowSel, V.flowHasDetail, V.flowDetail.label], ["profile", true, "Reader profile"], "the written value's panel opens by itself");
+  assert.equal(list.scrollTop, 0, "and the panel is not scrolled down to it");
+  P.d.setState({ view: "requests" }); await flush();
+  write("b"); await new Promise((r) => setTimeout(r, 80));
+  assert.equal(list.scrollTop, 1000, "the Requests list, at its end, follows the new row");
+  list.scrollTop = 100; P.d.renderVals().onListScroll({ target: list }); await flush();
+  write("c"); await new Promise((r) => setTimeout(r, 80));
+  assert.equal(list.scrollTop, 100, "scrolled up, it holds its place");
+});

@@ -359,8 +359,12 @@ class Debugger extends React.Component {
     });
     if (this.autoSel && this.autoSel !== this.state.flowSel) { const next = this.autoSel; this.autoSel = null; this.setState({ flowSel: next, flowTab: null }); } else this.autoSel = null;
     this.scheduleSave();
-    this.forceUpdate(() => { const el = this.listRef.current; if (el && this.state.stick && this.viewed() === run) el.scrollTop = el.scrollHeight; });
+    this.forceUpdate(() => this.stickToEnd(this.viewed() === run));
   }
+  // The Requests list follows its newest row when it was already at the end, like a log. The other views hold
+  // their place: the panel that opens in the Data flow view for a value the product just wrote, or a new call in
+  // the Prompts view, must not pull the panel down to itself.
+  stickToEnd(cond) { const el = this.listRef.current; if (el && cond && this.state.stick && this.state.view === "requests") el.scrollTop = el.scrollHeight; }
   cmd(cmd, value) { const f = this.frameRef.current; if (f && f.contentWindow) f.contentWindow.postMessage({ egb: "cmd", cmd: cmd, value: value }, window.location.origin); }
   // --- Real mode: the same product against the real backend, each request's persisted trace beneath it -------
   // The mode is remembered in this browser. Switching to Real saves the simulator's tabs first; switching
@@ -397,7 +401,7 @@ class Debugger extends React.Component {
       const open = Object.assign({}, s.open); let sel = s.sel;
       rec.stages.forEach(x => { if (x.real && x.requestId) { const k = "req:" + x.requestId; if (open[k] != null && open[x.id] == null) open[x.id] = open[k]; if (sel && sel.run === "live" && sel.stage === k) sel = { run: "live", stage: x.id, op: null }; } });
       return Object.assign({ real: R, open: open, sel: sel }, st);
-    }, () => { if (after) after(); const el = this.listRef.current; if (el && this.state.stick && !this.state.real.picked) el.scrollTop = el.scrollHeight; });
+    }, () => { if (after) after(); this.stickToEnd(!this.state.real.picked); });
   }
   // On entering Real mode: the member's runs, for the picker. The frame boots the product by itself.
   enterReal() { if (!this.state.real.runs && !this.state.real.loading) this.loadRuns(); }
