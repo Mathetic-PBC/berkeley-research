@@ -5,6 +5,9 @@
 // http(s) hostname -- never an IP literal, localhost, or a local suffix -- and
 // the fetched body is stripped to bounded plain text before it goes anywhere.
 
+const { telemetry } = require("./telemetry");
+const { hostOf, safeUrl } = require("./telemetry/redaction");
+
 const MAX_PAGE_BYTES = 512 * 1024;
 const MAX_PAGE_TEXT = 20000;
 const FETCH_TIMEOUT_MS = 15 * 1000;
@@ -54,33 +57,54 @@ function pageText(html) {
 }
 
 // The page, as bounded text, or a friendly failure the browser can show.
+//
+// One http operation (`options.traceName`, else "page.fetch") recording the
+// URL without its query, the host, the status and the body size -- never the
+// HTML -- with the HTML-to-text step as a processing child whose bounded
+// output is the one thing captured as a snapshot, and only when detailed
+// capture is on.
 async function fetchPageText(url, options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
-  let response;
-  try {
-    response = await fetchImpl(url, {
-      redirect: "follow",
-      headers: { Accept: "text/html,*/*" },
-      signal: options.signal || AbortSignal.timeout(options.timeoutMs || FETCH_TIMEOUT_MS),
+  return telemetry.runOperation({
+    name: options.traceName || "page.fetch", type: "http",
+    attributes: { "http.request.method": "GET", "url.full": safeUrl(url), "server.address": hostOf(url) },
+  }, async (op) => {
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        redirect: "follow",
+        headers: { Accept: "text/html,*/*" },
+        signal: options.signal || AbortSignal.timeout(options.timeoutMs || FETCH_TIMEOUT_MS),
+      });
+    } catch {
+      const error = new Error("That page could not be reached");
+      error.statusCode = 502;
+      throw error;
+    }
+    op.setAttribute("http.response.status_code", response.status);
+    if (!response.ok) {
+      const error = new Error(`That page answered ${response.status}`);
+      error.statusCode = 502;
+      throw error;
+    }
+    const body = await response.text();
+    op.setAttribute("http.response.body.size", body.length);
+    const text = await telemetry.runOperation({
+      name: "page.extract-text", type: "processing",
+      attributes: { "engelbart.page.input_chars": Math.min(body.length, MAX_PAGE_BYTES), "engelbart.page.max_chars": MAX_PAGE_TEXT },
+    }, async (extract) => {
+      const out = pageText(body.slice(0, MAX_PAGE_BYTES));
+      extract.setAttribute("engelbart.page.output_chars", out.length);
+      extract.snapshot("page_text", out);
+      return out;
     });
-  } catch {
-    const error = new Error("That page could not be reached");
-    error.statusCode = 502;
-    throw error;
-  }
-  if (!response.ok) {
-    const error = new Error(`That page answered ${response.status}`);
-    error.statusCode = 502;
-    throw error;
-  }
-  const body = await response.text();
-  const text = pageText(body.slice(0, MAX_PAGE_BYTES));
-  if (!text) {
-    const error = new Error("That page had no readable text");
-    error.statusCode = 422;
-    throw error;
-  }
-  return text;
+    if (!text) {
+      const error = new Error("That page had no readable text");
+      error.statusCode = 422;
+      throw error;
+    }
+    return text;
+  });
 }
 
 // arXiv's /pdf/ link is a PDF, and pageText() would hand the model the binary

@@ -68,6 +68,29 @@ Do not deploy this branch partially. Apply the second migration, deploy a
 healthy LiteLLM proxy, and add all server secrets before enabling
 `LITELLM_BASE_URL`; that variable is the browser-visible feature gate.
 
+## Observability
+
+The onboarding endpoint is traced: every action is one OpenTelemetry trace
+whose operations (database, storage, http, model, processing) hang from an
+`onboarding.<action>` workflow, grouped into a run by the onboarding row's id.
+The application talks only to the small Bart layer in `api/_lib/telemetry/`;
+the records it emits and the environment variables that govern them are
+documented in `docs/observability/data-contract.md`, with a real example run in
+`docs/observability/example-onboarding-analysis-run.json`
+(`node scripts/telemetry-example.js` regenerates it).
+
+All of it is optional and off by default:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (+ `OTEL_EXPORTER_OTLP_HEADERS`) — export spans over OTLP/HTTP
+- `ENGELBART_TRACE_CONTENT=true` — also capture payload snapshots (prompts, replies, page text, row bodies); redacted, bounded, never the PDF
+- `ENGELBART_TELEMETRY_STORE=true` — persist operations, snapshots and events to the three `engelbart_telemetry_*` tables (migration `20260905120000`)
+- `ENGELBART_TRACE_POLLS=true` — trace the page's routine status polls too
+- `ENGELBART_TELEMETRY_LOG=true` — one JSON line per finished operation in the function log
+
+Telemetry never fails a request: a sink or exporter error is logged and
+onboarding continues. The handler flushes before it responds, within
+`ENGELBART_TELEMETRY_FLUSH_MS` (default 2000).
+
 ## Source of truth
 
 The static pages began as hand-flattened exports from the Claude Design project *Mathetic landing page design*:

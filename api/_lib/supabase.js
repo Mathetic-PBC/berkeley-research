@@ -1,6 +1,7 @@
 "use strict";
 
 const { supabaseConfig } = require("./config");
+const { telemetry } = require("./telemetry");
 
 class ServiceError extends Error {
   constructor(message, statusCode = 502, detail = "") {
@@ -26,7 +27,7 @@ async function parseResponse(response) {
   return value;
 }
 
-async function serviceRequest(path, options = {}) {
+async function rawServiceRequest(path, options = {}) {
   const env = options.env || process.env;
   const config = supabaseConfig(env);
   const fetchImpl = options.fetchImpl || global.fetch;
@@ -43,7 +44,64 @@ async function serviceRequest(path, options = {}) {
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     signal: options.signal,
   });
-  return parseResponse(response);
+  return { value: await parseResponse(response), status: response.status };
+}
+
+// What one request is, for the record: the semantic operation, the table or
+// RPC it touches, and the path split from its filter. Nothing here has seen
+// a header: the service-role key never reaches the telemetry layer at all.
+function describe(path, method, options) {
+  const [pathname, query = ""] = String(path).split("?");
+  const rest = /^\/rest\/v1\/(?:rpc\/([^/?]+)|([^/?]+))/.exec(pathname);
+  const verb = String(method || "GET").toUpperCase();
+  const prefer = String((options.headers || {}).Prefer || options.prefer || "");
+  let name = "db.request";
+  if (rest && rest[1]) name = "db.rpc";
+  else if (rest && rest[2]) {
+    name = verb === "GET" ? "db.select"
+      : verb === "POST" ? (prefer.includes("merge-duplicates") ? "db.upsert" : "db.insert")
+        : verb === "PATCH" ? "db.patch"
+          : verb === "DELETE" ? "db.delete" : "db.request";
+  } else if (pathname.startsWith("/storage/v1/")) name = "storage.request";
+  else if (pathname.startsWith("/auth/v1/")) name = "auth.request";
+  return {
+    name, verb, pathname, query,
+    table: rest && rest[2] ? decodeURIComponent(rest[2]) : "",
+    rpc: rest && rest[1] ? decodeURIComponent(rest[1]) : "",
+  };
+}
+
+// The shared database boundary, traced. `options.trace = false` runs the
+// request untraced (the telemetry store's own writes; a storage helper that
+// is already its own operation); `options.trace = { name }` gives the
+// operation a semantic name in place of the generic db.* one.
+async function serviceRequest(path, options = {}) {
+  if (options.trace === false) return (await rawServiceRequest(path, options)).value;
+  const meta = describe(path, options.method, options);
+  const name = options.trace && options.trace.name ? String(options.trace.name) : meta.name;
+  return telemetry.runOperation({
+    name, type: "database",
+    attributes: {
+      "db.system.name": "postgrest",
+      "db.operation.name": meta.name.split(".")[1],
+      "db.collection.name": meta.table || undefined,
+      "engelbart.db.rpc": meta.rpc || undefined,
+      "http.request.method": meta.verb,
+      "url.path": meta.pathname,
+      "url.query": meta.query || undefined,
+    },
+  }, async (op) => {
+    op.snapshot("database_request", { method: meta.verb, path: meta.pathname, query: meta.query, body: options.body });
+    try {
+      const { value, status } = await rawServiceRequest(path, options);
+      op.setAttributes({ "http.response.status_code": status, "engelbart.db.rows": Array.isArray(value) ? value.length : undefined });
+      op.snapshot("database_response", value);
+      return value;
+    } catch (error) {
+      if (error && error.statusCode) op.setAttribute("http.response.status_code", error.statusCode);
+      throw error;
+    }
+  });
 }
 
 async function selectRows(table, query, options = {}) {
@@ -127,6 +185,7 @@ async function verifyUser(accessToken, options = {}) {
 module.exports = {
   ServiceError,
   deleteRows,
+  describe,
   insertRows,
   parseResponse,
   patchRows,

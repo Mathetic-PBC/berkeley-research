@@ -40,7 +40,8 @@ for file in \
   supabase/migrations/20260902110000_engelbart_onboarding.sql \
   "$HC/supabase/migrations/20260831190000_hc_reader_profile.sql" \
   "$HC/supabase/migrations/20260902120000_hc_reader_knowledge.sql" \
-  supabase/migrations/20260903120000_engelbart_onboarding_plan.sql; do
+  supabase/migrations/20260903120000_engelbart_onboarding_plan.sql \
+  supabase/migrations/20260905120000_engelbart_telemetry.sql; do
   echo "== $file"
   "$PSQL" "$url" -v ON_ERROR_STOP=1 -q -f "$file"
 done

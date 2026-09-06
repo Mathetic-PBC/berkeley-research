@@ -4,17 +4,26 @@
 // Supabase session, loads their live onboarding row, and -- for anything that
 // asks the model -- bills their own credit key, exactly as the setup
 // conversation did. The record module does the work; this file only routes.
+//
+// It is also where each action becomes one trace: `onboarding.<action>` is
+// the workflow operation every database, storage, http, model and processing
+// operation beneath it hangs from. The row id, learned once the row is read,
+// groups the traces of one setup into one run. The three background readers
+// are polled for free every few seconds; a poll is not traced unless asked
+// (ENGELBART_TRACE_POLLS), so the graph shows the work and not the waiting.
 
 const Credits = require("./_lib/credits");
 const OnboardingRecord = require("./_lib/onboarding");
 const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("./_lib/http");
 const { verifyUser } = require("./_lib/supabase");
+const { telemetry, userHash } = require("./_lib/telemetry");
 
 const MODEL_ACTIONS = new Set(["sources", "analysis", "assets", "leveled", "answer", "brainstorm", "asset_ask",
   "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"]);
 // The three background readers are polled for free; only starting or
 // retrying one bills the key.
 const POLLED = new Set(["analysis", "assets", "leveled"]);
+const TEST_RUN_HEADER = "x-engelbart-test-run";
 
 function spent(credentials) {
   return credentials.status === "exhausted" || credentials.status === "blocked";
@@ -56,12 +65,26 @@ async function creditForOpen(user, d, created) {
   return credentials;
 }
 
-// d = {OB?, credentialsFor?, options?} -- injected by tests; production uses
-// the real modules and process.env.
-async function dispatch(user, body, d = {}) {
+function isPoll(action, body) {
+  return POLLED.has(action) && !(body && (body.run || body.retry));
+}
+
+// A test harness names its run in the body or the header; bounded, optional.
+function testRunId(body, d) {
+  const given = String((body && body.test_run_id) || d.testRunId || "").trim();
+  return given ? given.slice(0, 80) : null;
+}
+
+// The row's id is the run: once the row is read, the workflow and every
+// operation started after it carry it.
+function named(row) {
+  if (row && row.id) telemetry.setRun({ onboarding_id: String(row.id) });
+  return row;
+}
+
+async function route(user, body, d, action) {
   const OB = d.OB || OnboardingRecord;
   const options = d.options || {};
-  const action = String(body.action || "");
 
   if (action === "reset") {
     // Test mode clearing the record. No model, no credit: the row is gone and
@@ -69,11 +92,14 @@ async function dispatch(user, body, d = {}) {
     await OB.reset(user, body, options);
     // Fresh: a finished setup left behind by `project` must not be shown
     // again in place of the new one the button promised.
-    return OB.open(user, { fresh: true }, options);
+    const out = await OB.open(user, { fresh: true }, options);
+    named(out.onboarding);
+    return out;
   }
   if (action === "open") {
     // The row first, because whether the credit rule applies depends on it.
     const out = await OB.open(user, body, options);
+    named(out.onboarding);
     const created = Boolean(out.onboarding && out.onboarding.status === "created");
     const credit = await creditForOpen(user, d, created);
     return { ...out, credit: { status: credit.status, budgetUsd: credit.budgetUsd, spendUsd: credit.spendUsd } };
@@ -83,9 +109,10 @@ async function dispatch(user, body, d = {}) {
   // again, bills the key. `sources` no longer reads the paper, but it is the
   // last step before the flow needs the model for everything, so the credit
   // rule still stops there rather than three screens later.
-  const needsModel = MODEL_ACTIONS.has(action) && !(POLLED.has(action) && !(body.run || body.retry));
+  const needsModel = MODEL_ACTIONS.has(action) && !isPoll(action, body);
   const credentials = needsModel ? await memberCredentials(user, d) : null;
   const { onboarding: row, calibrations } = await OB.open(user, {}, options);
+  named(row);
   if (action === "step") return OB.step(user, row, body, options);
   if (action === "sources") return OB.sources(user, row, body, credentials, options);
   if (action === "analysis") return OB.analysis(user, row, body, credentials, options);
@@ -109,16 +136,51 @@ async function dispatch(user, body, d = {}) {
   throw error;
 }
 
+// d = {OB?, credentialsFor?, options?, testRunId?, mode?} -- injected by tests
+// and harnesses; production uses the real modules and process.env.
+//
+// One action, one trace. A routine poll runs untraced unless polls are
+// switched on, in which case it is its own clearly-marked `.poll` workflow.
+async function dispatch(user, body, d = {}) {
+  const action = String((body && body.action) || "");
+  const poll = isPoll(action, body);
+  if (poll && !telemetry.settings.tracePolls) return telemetry.untraced(() => route(user, body, d, action));
+  const testRun = testRunId(body, d);
+  // A real member request is live; a harness that names its run is test; a
+  // harness may say otherwise (the fixture generator says "fixture").
+  const run = { action: action || "unknown", user_hash: userHash(user && user.id), test_run_id: testRun,
+    mode: d.mode || (testRun ? "test" : "live") };
+  return telemetry.withRun(run, () => telemetry.runOperation({
+    name: `onboarding.${action || "unknown"}${poll ? ".poll" : ""}`,
+    type: "workflow",
+    attributes: {
+      "engelbart.action": action || "unknown",
+      "engelbart.poll": poll,
+      "engelbart.run_flag": Boolean(body && body.run),
+      "engelbart.retry": Boolean(body && body.retry),
+    },
+  }, () => route(user, body, d, action)));
+}
+
 async function handler(req, res) {
   if (!allowMethods(req, res, ["POST"])) return;
+  let status = 200;
+  let payload;
   try {
     const body = await readJson(req);
-    const user = await verifyUser(bearerToken(req));
-    return sendJson(res, 200, await dispatch(user, body));
+    // Authentication is bookkeeping, not onboarding; it stays out of the graph.
+    const user = await telemetry.untraced(() => verifyUser(bearerToken(req)));
+    payload = await dispatch(user, body, { testRunId: String(req.headers[TEST_RUN_HEADER] || "") });
   } catch (error) {
     const failure = publicError(error);
-    return sendJson(res, failure.status, { error: failure.message });
+    status = failure.status;
+    payload = { error: failure.message };
   }
+  // Spans and buffered records leave before the response does: a Vercel
+  // function is frozen once it has answered, and a batch still in memory
+  // would never land. Bounded, so a slow collector cannot hold the reply.
+  await telemetry.flush();
+  return sendJson(res, status, payload);
 }
 
 module.exports = handler;
