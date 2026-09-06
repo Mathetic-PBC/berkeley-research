@@ -949,7 +949,7 @@ class Debugger extends React.Component {
       envSelect: (e) => { const v = e.target.value; if (v === "__all") this.closeEnv(); else if (v === "__configure") this.openConfig("edit"); else if (v === "__new") this.openConfig("new"); else if (v === "__delete") { this.deleteEnv(S.envs.find(x => x.id === S.envId)); this.forceUpdate(); } else if (v && v !== S.envId) this.openEnv(v); },
       notice: S.notice,
       resetProduct: () => { if (window.confirm("Reset the test environment? The simulated account's setup is dropped, the product reloads at step one, and every step tab is cleared.")) { const tabs = this.loadTabs(); this.setState({ recordings: tabs, targetId: tabs[0].id, viewing: 0, sel: null, open: {}, flowSel: null, connected: false, flowPos: {}, flowPan: { x: 0, y: 0 } }, () => this.saveEnvData()); this.cmd("reset"); } },
-      recordings: S.recordings.map((r, i) => { const on = r === live, isTarget = r === this.target(); return { id: r.id, label: r.name, title: (r.step ? "requests made while the product is on the " + r.step + " step · " : "requests made before the first step is on screen · ") + (on ? "click the name to rename" : "click to view"), on: on, off: !on, color: on ? "#171717" : "#8f8f8f", subColor: on ? "#4d4d4d" : "#c9c9c9", line: on ? "#171717" : "transparent", dot: isTarget ? "#0070f3" : "transparent",
+      recordings: S.recordings.map((r, i) => { const on = r === live, isTarget = r === this.target(); return { id: r.id, label: r.name, title: (r.step ? "requests made while the product is on the " + r.step + " step · " : "requests made before the first step is on screen · ") + (on ? "click the name to rename" : "click to view"), on: on, off: !on, color: on ? "#171717" : "#8f8f8f", subColor: on ? "#4d4d4d" : "#c9c9c9", line: on ? "#171717" : "transparent",
         select: () => { if (!on) this.setState({ viewing: i, sel: null, stick: true, flowSel: null }); },
         rename: (e) => { r.name = e.target.value || r.step || "Start"; this.forceUpdate(); },
         closable: !!r.step && !isTarget, close: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.removeTab(r); } }; }),
@@ -1161,7 +1161,6 @@ class Debugger extends React.Component {
   renderStepTabs(V) {
     return h("div", { style: css("display:flex;align-items:flex-end;gap:2px;flex-wrap:wrap;border-bottom:1px solid #eaeaea;margin:-4px 0 12px") },
       V.recordings.map(rc => h("span", { key: rc.id, onClick: rc.select, title: rc.title, className: "hv-fafafa", style: css("display:inline-flex;align-items:center;gap:7px;padding:8px 10px 9px;border-bottom:2px solid " + rc.line + ";margin-bottom:-1px;cursor:pointer;white-space:nowrap") },
-        h("span", { style: css("width:7px;height:7px;border-radius:50%;background:" + rc.dot) }),
         rc.on ? h("span", { style: css("position:relative;display:inline-block") },
           h("span", { "aria-hidden": "true", style: css("visibility:hidden;display:inline-block;padding:0 2px;font:500 12.5px/1 " + SANS + ";white-space:pre;min-width:18px;max-width:240px") }, rc.label),
           h("input", { value: rc.label, onChange: rc.rename, spellCheck: false, title: "rename this step", className: "fc-bottom-blue",
