@@ -348,6 +348,35 @@ test("an explicit level overrides the central default through runOperation and s
   }
 });
 
+test("an operation names the stored values it reads and writes, from the spec or as it goes, cleaned and deduplicated; an untraced operation takes them and records nothing", async () => {
+  const { telemetry, sink } = make();
+  await telemetry.runOperation({ name: "onboarding.analysis", type: "workflow" }, async () => {
+    await telemetry.runOperation({ name: "model.analysis", type: "model", reads: ["paper", ["links", "profile"], "paper"], writes: "analysis" }, async () => {});
+    await telemetry.runOperation({ name: "analysis.persist", type: "database" }, async (op) => {
+      op.writes("analysis");
+      assert.equal(op.writes(["analysis", " brief ", 7, null, ""]), op, "chainable");
+      op.reads();
+    });
+    const manual = telemetry.startOperation({ name: "paper.download", type: "storage", reads: ["paper"] });
+    manual.reads("paper", "links");
+    manual.complete();
+  });
+  const attributes = (name) => sink.one(name).attributes;
+  assert.deepEqual(attributes("model.analysis")["engelbart.lineage.reads"], ["paper", "links", "profile"], "nested lists flatten, a name given twice is kept once");
+  assert.deepEqual(attributes("model.analysis")["engelbart.lineage.writes"], ["analysis"], "a single name is a list of one");
+  assert.deepEqual(attributes("analysis.persist")["engelbart.lineage.writes"], ["analysis", "brief"], "names accumulate across calls, trimmed, and what is not a name is dropped");
+  assert.equal(attributes("analysis.persist")["engelbart.lineage.reads"], undefined, "declaring nothing leaves no attribute");
+  assert.deepEqual(attributes("paper.download")["engelbart.lineage.reads"], ["paper", "links"]);
+  for (const kind of ["reads", "writes"]) assert.equal(attributes("onboarding.analysis")[`engelbart.lineage.${kind}`], undefined, "the root declares nothing");
+  assert.deepEqual(T.LINEAGE_ATTRIBUTES, { reads: "engelbart.lineage.reads", writes: "engelbart.lineage.writes" });
+  // Outside a workflow a non-workflow operation is not recorded; it still takes the declarations without complaint.
+  const noop = telemetry.startOperation({ name: "db.select", type: "database", reads: ["session"] });
+  assert.equal(noop.reads("session"), noop);
+  assert.equal(noop.writes("credit"), noop);
+  noop.complete();
+  assert.equal(sink.operations.filter((o) => o.name === "db.select").length, 0);
+});
+
 test("bundle() orders events by time, trace, sequence and id, not by the process-local sequence alone", () => {
   // Two traces from two function instances whose counters overlap: trace B's
   // events carry LOWER sequence numbers although they happened LATER.

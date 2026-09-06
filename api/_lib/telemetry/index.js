@@ -31,7 +31,7 @@ const Live = require("./live");
 const Redaction = require("./redaction");
 const Sinks = require("./sinks");
 const Snapshots = require("./snapshots");
-const { LEVELS, NoopOperation, Operation, STATUS, TYPES, levelOf } = require("./operation");
+const { LEVELS, LINEAGE_ATTRIBUTES, NoopOperation, Operation, STATUS, TYPES, levelOf } = require("./operation");
 
 const MAX_LOGGED_ERRORS = 20;
 const TRUE = new Set(["1", "true", "yes", "on"]);
@@ -229,7 +229,8 @@ class Telemetry {
 
   // spec = { name, type, level?, attributes?, parent? }. `parent` is an
   // Operation, for the manual form when the caller is not inside
-  // runOperation; `level` overrides the central default (levelOf).
+  // runOperation; `level` overrides the central default (levelOf); `reads`
+  // and `writes` name the stored values the operation touches (lineage).
   startOperation(spec) {
     if (this.suppressed()) return new NoopOperation();
     // Every trace has a workflow root. A database, storage, http, model or
@@ -250,6 +251,7 @@ class Telemetry {
         span, name: spec.name, type: spec.type, level: spec.level, run,
         parentSpanId: parentSpan ? parentSpan.spanContext().spanId : null,
         attributes: { ...runAttributes(run), ...(spec.attributes || {}) },
+        reads: spec.reads, writes: spec.writes,
       });
       this.fanout("onOperationStart", op.toJSON());
       this.emit("operation.started", op);
@@ -338,6 +340,7 @@ const telemetry = new Telemetry();
 module.exports = {
   Telemetry,
   LEVELS,
+  LINEAGE_ATTRIBUTES,
   MODES,
   STATUS,
   TYPES,

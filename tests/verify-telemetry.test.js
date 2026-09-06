@@ -52,7 +52,7 @@ test("the verifier passes the example run, reports its shape, and prints no capt
   try {
     const { code, out } = await run(url, { RUN_ID: FIXTURE.run.run_id });
     assert.equal(code, 0, out);
-    for (const check of ["operations found", "onboarding.analysis outcome", "hierarchy", "levels", "expected stages", "operations ended",
+    for (const check of ["operations found", "onboarding.analysis outcome", "hierarchy", "levels", "expected stages", "lineage", "operations ended",
       "events join operations", "events share ids and level", "lifecycle", "snapshots join operations", "expected snapshots",
       "snapshot records", "paper by reference", "leakage"]) {
       assert.match(out, new RegExp(`^PASS ${check.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"), check);

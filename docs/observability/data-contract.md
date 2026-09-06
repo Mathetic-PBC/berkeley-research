@@ -137,7 +137,7 @@ changing the boundaries.
 
 ### Attribute namespaces
 
-- `engelbart.*` — application metadata: `run_id`, `onboarding_id`, `test_run_id`, `action`, `user_hash`, `poll`, `retry`, `outcome`, `model.*`, `db.*`, `storage.*`, `analysis.*`, `links.*`, `link.verdict`, `page.*`. `engelbart.model.gateway` is `litellm` (the member's key through the proxy) or `anthropic` (a key the member brought themselves, or the server-wide `ENGELBART_ANTHROPIC_API_KEY` bypass), with `server.address` the host actually called.
+- `engelbart.*` — application metadata: `run_id`, `onboarding_id`, `test_run_id`, `action`, `user_hash`, `poll`, `retry`, `outcome`, `lineage.reads`, `lineage.writes` (see *Lineage*), `model.*`, `db.*`, `storage.*`, `analysis.*`, `assessment.*`, `payload.*`, `links.*`, `link.verdict`, `page.*`. `engelbart.model.gateway` is `litellm` (the member's key through the proxy) or `anthropic` (a key the member brought themselves, or the server-wide `ENGELBART_ANTHROPIC_API_KEY` bypass), with `server.address` the host actually called.
 - `gen_ai.*`, `http.*`, `url.*`, `server.address`, `db.*` — OpenTelemetry semantic conventions where they fit (`gen_ai.request.model`, `gen_ai.usage.input_tokens`, `http.response.status_code`, `url.full`, `db.operation.name`, `db.query.summary`).
 - `bart.*` — the telemetry layer itself: `bart.operation_id`, `bart.type`, `bart.snapshot.<kind>`, `bart.waiting_reason`, `bart.error.status_code`.
 
@@ -164,6 +164,69 @@ debugging; redaction removes credentials from them (keys and patterns listed
 under *Redaction*), not application state. The requests themselves are
 unchanged by any of this.
 
+### Lineage: which stored values an operation read and wrote
+
+An operation that consumed or produced one of the setup's stored values says
+which, by name, in two attributes:
+
+| attribute | value |
+|---|---|
+| `engelbart.lineage.reads` | the stored values the operation consumed |
+| `engelbart.lineage.writes` | the stored values it produced or stored |
+
+Each is an array of names from the vocabulary below, deduplicated, in the order
+declared. An operation with nothing to declare carries neither attribute, and a
+run recorded before this section existed has none at all: a viewer must draw no
+edge for it rather than guess one (the debugger says *Lineage was not recorded
+for this run*).
+
+- A **read** is a value the operation consumed: a load reads the value it loads
+  (`row.load` reads `session`, `calibrations.load` reads `calibrations`); a model
+  call reads the values its prompt was built from (the `reader` the callers pass
+  is `profile`; the paper's title and one-liner are `analysis`); a row write cut
+  from another value reads it (`choose_asset` reads `leveled`).
+- A **write** is a value the operation produced (a model call and its
+  `<purpose>.normalize` step, `assessment.compile`, `create.payload`) or stored
+  (a row write: one write per column set to a value, by the column map below).
+  Clearing a column to `null` is not a write. The bookkeeping columns (`step`,
+  `*_status`, `*_error`, `*_started_at`, `paper_title`, `project_draft`) belong to
+  no value.
+- A revision reads the value it revises (`model.direction` with feedback reads
+  `direction`); the link checks read the list they check (`assets` or `leveled`)
+  and `assets.verify-links` writes it back with dead links dropped.
+- The workflow root declares nothing; its children do.
+
+The vocabulary and the column map live in `api/_lib/lineage.js`; the simulator
+(`engelbart/setup/test/sim-backend.js`) names the same values, so a real run and a
+simulated one draw the same graph from the same words. The debugger draws, per
+operation, an arrow from every value read to every value written.
+
+| value | what it is | `engelbart_onboardings` columns |
+|---|---|---|
+| `session` | the signed-in member; the row is theirs | — |
+| `credit` | the credit key and its ledger | — |
+| `profile` | name, year, major and register (`depth`) | `name`, `year`, `major`, `depth` |
+| `paper` | the paper: its PDF in Storage, `paper_id`, `paper_familiarity` | `paper_id`, `paper_familiarity` |
+| `links` | `project_url`, `repo_url` | `project_url`, `repo_url` |
+| `code` | the one-use connect code (the device endpoint's; not emitted by onboarding) | — |
+| `analysis` | the paper reading (`analysis`) | `analysis` |
+| `assets` | the asset hunt (`assets`) | `assets` |
+| `brief` | `assets_brief` | `assets_brief` |
+| `asks` | rows of `engelbart_onboarding_asks` | — |
+| `calibrations` | rows of `engelbart_onboarding_calibrations` | — |
+| `assessment` | `assessment` | `assessment` |
+| `turns` | rows of `engelbart_onboarding_turns` | — |
+| `interest` | `interest` | `interest` |
+| `leveled` | the fitted resources (`leveled`) | `leveled` |
+| `chosen` | `asset_chosen` | `asset_chosen` |
+| `direction` | `direction` | `direction` |
+| `subgoals` | `subgoals` | `subgoals` |
+| `details` | `details` | `details` |
+| `goals` | `goals` | `goals` |
+| `todos` | `todos`, `project_name`, `goal_chosen` | `todos`, `project_name`, `goal_chosen` |
+| `payload` | the pending setup (`engelbart_save_pending_setup`, `pending_setup_id`) | `pending_setup_id` |
+| `profileRecord` | the reader's row in `hc_profiles` | — |
+
 ### Names emitted today
 
 | workflow (root, one per action) | children in the paper-analysis path |
@@ -175,7 +238,10 @@ Other boundaries: `db.select` · `db.insert` · `db.upsert` · `db.patch` · `db
 `<purpose>.normalize` for every purpose (`analysis`, `grade`, `follow_up`, `assets`,
 `leveled`, `brainstorm`, `asset_ask`, `direction`, `subgoals`, `details`, `goals`,
 `todos`, `ask`, `rewrite`); `assets.mark-running` · `assets.verify-links` → `link.check` ·
-`assets.check-superseded` · `assets.persist`; the same four for `leveled`.
+`assets.check-superseded` · `assets.persist`; the same four for `leveled`;
+`assessment.compile` (under `onboarding.topics_done`) and `create.payload` (under
+`onboarding.create`), the two processing steps that turn stored values into
+another without a model.
 
 Routine status polls (`analysis`, `assets`, `leveled` without `run`/`retry`) are
 **not traced** by default. With `ENGELBART_TRACE_POLLS=true` each becomes its own

@@ -99,13 +99,22 @@ async function assertPoolCapacity(budgetUsd, options = {}, excludingUserId = "")
   }
 }
 
+// The credit row is one stored value of the setup (`credit`, in the telemetry
+// contract's lineage names): its reads and writes here say so. Options that
+// asked for no trace keep it that way.
+function credit(options, lineage) {
+  if (options && options.trace === false) return options;
+  const have = options && options.trace && typeof options.trace === "object" ? options.trace : {};
+  return { ...options, trace: { ...have, ...lineage } };
+}
+
 async function claimAccount(user, options = {}) {
   try {
     const result = await rpc("engelbart_claim_credit_account", {
       p_user_id: user.id,
       p_email: user.email,
       p_invite_code: options.inviteCode ? String(options.inviteCode) : null,
-    }, options);
+    }, credit(options, { writes: ["credit"] }));
     const value = Array.isArray(result) ? result[0] : result;
     if (!value || !value.account) throw new Error("Supabase returned no credit account claim");
     return { row: value.account, claimed: Boolean(value.claimed) };
@@ -158,7 +167,7 @@ async function provision(user, options = {}) {
         provisioned_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
-      options,
+      credit(options, { writes: ["credit"] }),
     );
     if (!Array.isArray(rows) || !rows.length) throw new Error("Provisioning ownership was lost");
     return rows[0];
@@ -171,7 +180,7 @@ async function provision(user, options = {}) {
         error_message: String(error.detail || error.message || "Provisioning failed").slice(0, 300),
         updated_at: new Date().toISOString(),
       },
-      options,
+      credit(options, { writes: ["credit"] }),
     ).catch(() => {});
     throw error;
   }
@@ -181,7 +190,7 @@ async function credentialsFor(user, options = {}) {
   let row = await selectOne(
     "engelbart_credit_accounts",
     `user_id=eq.${encodeURIComponent(user.id)}&select=*`,
-    options,
+    credit(options, { reads: ["credit"] }),
   );
   if (!row) row = await provision(user, options);
   if (row.status !== "ready" || row.blocked) {
@@ -347,7 +356,7 @@ async function refreshSpend(row, options = {}) {
     "engelbart_credit_accounts",
     `user_id=eq.${encodeURIComponent(row.user_id)}`,
     { spend_usd: spend, synced_at: now, updated_at: now },
-    options,
+    credit(options, { reads: ["credit"], writes: ["credit"] }),
   );
   const next = rows[0] || { ...row, spend_usd: spend, synced_at: now };
   await reconcileBlock(next, info, options);

@@ -97,8 +97,10 @@ function describeQuery(query) {
 
 // The shared database boundary, traced. `options.trace = false` runs the
 // request untraced (the telemetry store's own writes; a storage helper that
-// is already its own operation); `options.trace = { name }` gives the
-// operation a semantic name in place of the generic db.* one.
+// is already its own operation); `options.trace = { name, reads, writes }`
+// gives the operation a semantic name in place of the generic db.* one and
+// names the stored values it reads and writes (the contract's lineage
+// vocabulary); each part is optional.
 //
 // Attributes describe the query's structure: table, operation, the filter's
 // field names and operators, status and row count. The filter's values and
@@ -108,9 +110,10 @@ function describeQuery(query) {
 async function serviceRequest(path, options = {}) {
   if (options.trace === false) return (await rawServiceRequest(path, options)).value;
   const meta = describe(path, options.method, options);
-  const name = options.trace && options.trace.name ? String(options.trace.name) : meta.name;
+  const trace = options.trace && typeof options.trace === "object" ? options.trace : {};
+  const name = trace.name ? String(trace.name) : meta.name;
   return telemetry.runOperation({
-    name, type: "database",
+    name, type: "database", reads: trace.reads, writes: trace.writes,
     attributes: {
       "db.system.name": "postgrest",
       "db.operation.name": meta.name.split(".")[1],

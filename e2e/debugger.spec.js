@@ -86,7 +86,8 @@ test("the debugger runs the real setup page against the simulated backend under 
 // product did not make, or a telemetry call that is not a read, fails it.
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "docs", "observability", "example-onboarding-analysis-run.json"), "utf8"));
 const telemetryHandler = require("../api/engelbart-telemetry");
-const TRACE = { open: "da7a9b2cdab30b007e5fa8fdbdf79e32", step: "c857eb5dcb4e5dea436fea805844cba0", analysis: "a7552ec53c282068e729fef8b025b8d6" };
+// The fixture is regenerated from the real code, so its ids are read from it, never copied.
+const TRACE = {}; FIXTURE.operations.filter((o) => o.type === "workflow").forEach((o) => { TRACE[o.action] = o.trace_id; });
 const OLDER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const MEMBER_TOKEN = "member-token";
 
@@ -106,7 +107,9 @@ test("Real mode runs the setup page against the backend as the member and puts e
   const row = { id: onboardingId, user_id: "11111111-1111-1111-1111-111111111111", status: "open", step: 0, name: "", year: "", major: "", depth: "", paper_id: null, paper_title: "",
     project_url: "", repo_url: "", analysis_status: "", assets_status: "", leveled_status: "", todos: [], project_name: "", created_at: "2026-09-06T02:40:00.000Z", updated_at: "2026-09-06T02:40:00.000Z" };
   const publicRow = (id, extra) => Object.assign({ onboarding_id: id, onboarding_status: "open", step: 4, project_name: "Speculative decoding", paper_title: "Fast Inference from Transformers", created_at: "2026-09-06T02:40:00.000Z", updated_at: "2026-09-06T02:49:01.600Z" }, extra || {});
-  const subset = (filter, onboarding) => ({ contract_version: FIXTURE.contract_version, run: FIXTURE.run, onboarding, operations: FIXTURE.operations.filter(filter), snapshots: FIXTURE.snapshots, events: FIXTURE.events.filter(filter), snapshots_inline: true });
+  const subset = (filter, onboarding, map = (op) => op) => ({ contract_version: FIXTURE.contract_version, run: FIXTURE.run, onboarding, operations: FIXTURE.operations.filter(filter).map(map), snapshots: FIXTURE.snapshots, events: FIXTURE.events.filter(filter), snapshots_inline: true });
+  // The older run was recorded by a build before lineage: the same operations without their reads and writes.
+  const preLineage = (op) => { const attributes = { ...op.attributes }; delete attributes["engelbart.lineage.reads"]; delete attributes["engelbart.lineage.writes"]; return { ...op, attributes }; };
   const analysisOps = FIXTURE.operations.filter((o) => o.trace_id === TRACE.analysis);
   const listBody = { runs: [
     { run_id: onboardingId, ...publicRow(onboardingId), telemetry: telemetryHandler.summarize(FIXTURE.operations) },
@@ -137,7 +140,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
       const params = new URL(request.url()).searchParams;
       if (params.has("trace")) { const t = params.get("trace"); return FIXTURE.run.trace_ids.includes(t) ? json(route, 200, { ...subset((o) => o.trace_id === t, publicRow(onboardingId)), trace_id: t }) : json(route, 404, { error: "No trace by that id was recorded for you" }); }
       if (params.get("run") === onboardingId) return json(route, 200, subset(() => true, publicRow(onboardingId)));
-      if (params.get("run") === OLDER) return json(route, 200, subset((o) => o.trace_id === TRACE.analysis, publicRow(OLDER, { project_name: "Older project" })));
+      if (params.get("run") === OLDER) return json(route, 200, subset((o) => o.trace_id === TRACE.analysis, publicRow(OLDER, { project_name: "Older project" }), preLineage));
       if (params.has("run")) return json(route, 404, { error: "No run by that id" });
       return json(route, 200, listBody);
     });
@@ -246,9 +249,9 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await inspector.getByRole("button", { name: "Raw reply" }).click();
     await expect(inspector.locator("pre")).toContainText("end_turn");
 
-    // No lineage is guessed for a real run.
+    // A run recorded before the server kept lineage says so; no edge is guessed for it.
     await page.getByRole("button", { name: "Data flow" }).click();
-    await expect(page.getByText("Lineage is not recorded for real runs")).toBeVisible();
+    await expect(page.getByText("Lineage was not recorded for this run")).toBeVisible();
     await expect(page.locator("[data-node]")).toHaveCount(0);
     await page.getByRole("button", { name: /^Requests/ }).click();
 
@@ -257,6 +260,11 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(page.getByText("This session")).toBeVisible();
     await expect(page.locator("[id^=stage-]", { hasText: "onboarding · step" }).last()).toBeVisible();
     await expect(realFrame.locator(".ob-title", { hasText: "What year are you?" })).toBeVisible();
+    // This session's runs recorded what they read and wrote, so the graph draws them: the row load read the session, the step wrote the profile.
+    await page.getByRole("button", { name: "Data flow" }).click();
+    await expect(page.locator("[data-node]").first()).toBeVisible();
+    await expect(page.getByText("Lineage was not recorded for this run")).toHaveCount(0);
+    await page.getByRole("button", { name: /^Requests/ }).click();
 
     // The mode is remembered across a reload; the product boots again against the real backend.
     const calls = onboardingCalls.length;

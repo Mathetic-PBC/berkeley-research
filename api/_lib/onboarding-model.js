@@ -44,9 +44,37 @@ function extractJson(text) {
 // to undo, so they stay apart here. Where the request goes (the member's key
 // through LiteLLM, or one server key straight to Anthropic) is
 // resolveUpstream's decision, and the record says which.
+// What each call consumes and produces, by the contract's lineage names
+// (api/_lib/lineage.js): the stored values the caller put into the prompt,
+// and the value the reply becomes. The `reader` the callers pass is the
+// profile with the graded levels folded in; `paper` here is the analysis's
+// title and one-liner, so a call that takes them reads `analysis`. A call
+// whose prompt also carries a previous answer to revise adds that value in
+// `request.reads`.
+const LINEAGE = Object.freeze({
+  analysis: { reads: ["paper", "links", "profile"], writes: ["analysis"] },
+  assets: { reads: ["paper"], writes: ["assets"] },
+  leveled: { reads: ["assets", "assessment", "profile", "interest"], writes: ["leveled"] },
+  grade: { reads: ["analysis", "calibrations"], writes: ["calibrations"] },
+  follow_up: { reads: ["calibrations", "analysis", "profile"], writes: ["calibrations"] },
+  brainstorm: { reads: ["profile", "analysis", "assessment", "brief", "turns"], writes: ["turns", "interest"] },
+  asset_ask: { reads: ["profile", "analysis", "turns"], writes: ["turns"] },
+  direction: { reads: ["profile", "analysis", "interest", "assessment", "turns", "chosen", "leveled"], writes: ["direction"] },
+  subgoals: { reads: ["profile", "analysis", "direction", "chosen", "leveled"], writes: ["subgoals"] },
+  details: { reads: ["profile", "analysis"], writes: ["details"] },
+  goals: { reads: ["profile", "analysis", "details"], writes: ["goals"] },
+  todos: { reads: ["profile", "analysis", "direction", "subgoals", "leveled"], writes: ["todos"] },
+  ask: { reads: ["profile", "analysis"], writes: ["asks"] },
+  rewrite: { reads: ["profile"], writes: [] },
+});
+function lineageOf(purpose) {
+  return LINEAGE[purpose] || { reads: [], writes: [] };
+}
+
 async function callModel(request, credentials, options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
   const purpose = request.purpose || "call";
+  const lineage = lineageOf(purpose);
   const body = {
     model: pickModel(credentials.models, request.family || "sonnet"),
     max_tokens: request.maxTokens || MAX_REPLY_TOKENS,
@@ -61,6 +89,7 @@ async function callModel(request, credentials, options = {}) {
   telemetry.protect(upstream.apiKey);
   return telemetry.runOperation({
     name: `model.${purpose}`, type: "model",
+    reads: [lineage.reads, request.reads], writes: [lineage.writes, request.writes],
     attributes: {
       "gen_ai.operation.name": "chat",
       "gen_ai.provider.name": "anthropic",
@@ -125,7 +154,7 @@ async function callModel(request, credentials, options = {}) {
 // are two different things, and the difference is visible here.
 async function normalized(purpose, raw, normalize) {
   return telemetry.runOperation({
-    name: `${purpose}.normalize`, type: "processing",
+    name: `${purpose}.normalize`, type: "processing", writes: lineageOf(purpose).writes,
     attributes: { "engelbart.model.purpose": purpose, "engelbart.parsed": raw !== null && raw !== undefined },
   }, async (op) => {
     const out = normalize(raw);
@@ -194,7 +223,7 @@ function normalizeAnalysis(raw) {
 //          pdfBase64 | pdfText, urls: [{url, text}]}
 async function analyze(input, credentials, options = {}) {
   const content = await telemetry.runOperation({
-    name: "analysis.construct-request", type: "processing",
+    name: "analysis.construct-request", type: "processing", reads: lineageOf("analysis").reads,
     attributes: {
       "engelbart.analysis.urls": Array.isArray(input.urls) ? input.urls.length : 0,
       "engelbart.analysis.paper_mode": input.pdfBase64 ? "pdf_base64" : "text",
@@ -320,9 +349,11 @@ function normalizeAsk(raw) {
   return answer ? { answer } : null;
 }
 
-// `purpose` names the model operation (model.<purpose>) and its normalize step.
-async function generate(prompt, normalize, credentials, options, what, purpose) {
-  const raw = await callModel({ content: [text(prompt)], family: "sonnet", purpose }, credentials, options);
+// `purpose` names the model operation (model.<purpose>) and its normalize
+// step; `reads` adds to the purpose's lineage the values this one prompt
+// also carries (the previous answer a revision starts from).
+async function generate(prompt, normalize, credentials, options, what, purpose, reads) {
+  const raw = await callModel({ content: [text(prompt)], family: "sonnet", purpose, reads }, credentials, options);
   const out = await normalized(purpose, raw, normalize);
   if (!out) {
     const error = new Error(`The ${what} did not come back in a usable shape`);
@@ -534,12 +565,13 @@ function normalizeSubgoals(raw) {
 }
 
 const brainstorm = (input, c, o) => generate(P.brainstormPrompt(input), normalizeBrainstorm, c, o, "brainstorm turn", "brainstorm");
-const assetAsk = (input, c, o) => generate(P.assetAskPrompt(input), normalizeAsk, c, o, "answer", "asset_ask");
-const direction = (input, c, o) => generate(P.directionPrompt(input), normalizeDirection, c, o, "direction", "direction");
-const subgoals = (input, c, o) => generate(P.subgoalsPrompt(input), normalizeSubgoals, c, o, "subgoals", "subgoals");
+// The asset asked about came from the fitted list when there is one, else from the hunt.
+const assetAsk = (input, c, o) => generate(P.assetAskPrompt(input), normalizeAsk, c, o, "answer", "asset_ask", [input.from === "assets" ? "assets" : "leveled"]);
+const direction = (input, c, o) => generate(P.directionPrompt(input), normalizeDirection, c, o, "direction", "direction", input.previous ? ["direction"] : []);
+const subgoals = (input, c, o) => generate(P.subgoalsPrompt(input), normalizeSubgoals, c, o, "subgoals", "subgoals", input.previous ? ["subgoals"] : []);
 
 module.exports = {
-  LEVELS, MAX_PAGE_TEXT,
+  LEVELS, LINEAGE, MAX_PAGE_TEXT,
   callModel, pickModel, extractJson,
   analyze, grade, followUp, rewrite, details, goals, todos, ask, assets, levelAssets, brainstorm, assetAsk, direction, subgoals,
   paperPrefix, briefOf,

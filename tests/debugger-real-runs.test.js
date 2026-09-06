@@ -50,13 +50,46 @@ test("each workflow root becomes one request row, in start order, with its desce
     assert.equal(s.request, null, "no request body was recorded, so none is shown");
     assert.equal(s.response, null);
     assert.equal(s.ms, roots.find((op) => op.operation_id === s.id).duration_ms, "the recorded duration, not a computed one");
-    for (const o of s.ops) { assert.deepEqual(plain(o.reads), []); assert.deepEqual(plain(o.writes), []); assert.equal(o.meta.cost, undefined, "no cost is invented"); }
+    for (const o of s.ops) {
+      const src = FIXTURE.operations.find((x) => x.operation_id === o.id);
+      assert.deepEqual(plain(o.reads), src.attributes["engelbart.lineage.reads"] || [], `${o.name} reads what was recorded`);
+      assert.deepEqual(plain(o.writes), src.attributes["engelbart.lineage.writes"] || [], `${o.name} writes what was recorded`);
+      assert.equal(o.meta.cost, undefined, "no cost is invented");
+    }
   }
+  assert.equal(rec.lineage, true, "the run's operations name their reads and writes, so the graph can be drawn");
+  const named = (stage, name) => rec.stages[stage].ops.find((o) => o.name === name);
+  assert.deepEqual(plain(named(0, "row.load").reads), ["session"]);
+  assert.deepEqual(plain(named(3, "model.analysis").reads), ["paper", "links", "profile"]);
+  assert.deepEqual(plain(named(3, "model.analysis").writes), ["analysis"]);
+  assert.deepEqual(plain(named(3, "analysis.persist").writes), ["analysis"]);
+  assert.deepEqual(plain(named(2, "db.patch").writes), ["paper", "links"], "the sources write stored the paper and the links");
   const analysis = rec.stages[3];
   assert.equal(analysis.outcome, "done");
   const names = analysis.ops.map((o) => " ".repeat(o.depth) + o.name);
   assert.ok(names.indexOf(" project-page.fetch") > names.indexOf("analysis.context"), "a child follows its parent, indented");
   assert.ok(names.includes("  page.extract-text"), "a grandchild is two deep");
+});
+
+test("a run recorded before lineage has no reads or writes on any operation and says so; a malformed list keeps only its names", () => {
+  const R = load();
+  const env = envelope();
+  for (const op of env.operations) { delete op.attributes["engelbart.lineage.reads"]; delete op.attributes["engelbart.lineage.writes"]; }
+  const rec = R.adapt(env);
+  assert.equal(rec.lineage, false, "nothing was recorded, so the debugger draws no edge rather than guessing one");
+  for (const s of rec.stages) for (const o of s.ops) { assert.deepEqual(plain(o.reads), []); assert.deepEqual(plain(o.writes), []); }
+  assert.equal(rec.stages.reduce((n, s) => n + s.ops.length, 0), FIXTURE.operations.length - rec.stages.length, "every operation is still shown");
+
+  const partial = envelope();
+  for (const op of partial.operations) { delete op.attributes["engelbart.lineage.reads"]; delete op.attributes["engelbart.lineage.writes"]; }
+  const model = partial.operations.find((o) => o.type === "model");
+  model.attributes["engelbart.lineage.reads"] = ["paper", 7, "", null, "links"];
+  model.attributes["engelbart.lineage.writes"] = "analysis";
+  const some = R.adapt(partial);
+  assert.equal(some.lineage, true, "one operation that recorded lineage is enough to draw what it says");
+  const op = some.stages[3].ops.find((o) => o.kind === "model");
+  assert.deepEqual(plain(op.reads), ["paper", "links"], "only names are kept");
+  assert.deepEqual(plain(op.writes), [], "a value that is not a list is not one");
 });
 
 test("a model operation carries its recorded model, usage and the three snapshots the inspector shows", () => {
@@ -174,7 +207,9 @@ test("the browser client only ever issues GETs with the member's bearer token, a
 
 // --- what the browser reported, joined to what the server recorded --------------------------------
 
-const TRACE = { open: "da7a9b2cdab30b007e5fa8fdbdf79e32", step: "c857eb5dcb4e5dea436fea805844cba0" };
+// The fixture is regenerated from the real code, so its ids and timings are read from it, never copied.
+const TRACE = {}; FIXTURE.operations.filter((o) => o.type === "workflow").forEach((o) => { TRACE[o.action] = o.trace_id; });
+const OPEN_MS = FIXTURE.operations.find((o) => o.name === "onboarding.open").duration_ms;
 
 function request(id, over = {}) {
   return { id, at: 1_000 + id, method: "POST", path: "/api/engelbart-onboarding", where: "api", action: "open", request: { action: "open" },
@@ -218,7 +253,7 @@ test("a reported request joins the row of the trace its reply named; requests th
   assert.deepEqual(plain(open.response), { onboarding: { id: FIXTURE.run.onboarding_id } }, "what the browser got back");
   assert.equal(open.code, 200);
   assert.equal(open.browserMs, 120, "the round trip the browser measured, next to the server's own duration");
-  assert.equal(open.ms, 46.882, "the server's duration is the recorded one");
+  assert.equal(open.ms, OPEN_MS, "the server's duration is the recorded one");
   assert.equal(open.step, "Name");
   assert.ok(open.ops.length > 0, "its operations are the trace's");
 
