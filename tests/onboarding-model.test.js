@@ -150,6 +150,24 @@ test("page text cannot rewrite the prompt it is spliced into", async () => {
   assert.equal(tail.split("## Project summary").length - 1, 1);
 });
 
+test("an edited template in the options is what is sent, rendered from the call's input; without one the prompt is the function's", async () => {
+  const calls = [];
+  await OM.grade({ area: "A", question: "q", level: 50, sample: "s", answer: "a" }, CREDS,
+    { fetchImpl: modelSaying({ level: 50, confidence: 0.8, rationale: "ok" }, calls), promptOverrides: { gradePrompt: "Grade {{area}}: {{answer}} vs {{sample}} at {{level}}" } });
+  assert.equal(calls[0].body.messages[0].content[0].text, "Grade A: a vs s at 50");
+  await OM.grade({ area: "A", question: "q", level: 50, sample: "s", answer: "a" }, CREDS,
+    { fetchImpl: modelSaying({ level: 50, confidence: 0.8, rationale: "ok" }, calls), promptOverrides: { askPrompt: "another prompt's edit" } });
+  assert.equal(calls[1].body.messages[0].content[0].text, P.gradePrompt({ area: "A", question: "q", level: 50, sample: "s", answer: "a" }));
+  // analyze keeps the cached paper prefix; the edited template takes the page text in its urls slot.
+  const reply = { title: "T", one_liner: "o", date: "2024", areas: [{ area: "A", questions: fiveQuestions() }, { area: "B", questions: fiveQuestions() }] };
+  await OM.analyze({ familiarityLabel: "Lost", familiarityDesc: "", depthLabel: "Everyday", depthDesc: "plain", pdfBase64: "JVBERi0=", urls: [{ url: "https://x.org", text: "page text" }] },
+    CREDS, { fetchImpl: modelSaying(reply, calls), promptOverrides: { analyzePrompt: "Read the paper for {{familiarity}} / {{depth}}.\n{{urls}}" } });
+  const blocks = calls[2].body.messages[0].content;
+  assert.equal(blocks[1].type, "document");
+  assert.equal(blocks[2].text, "Read the paper for Lost / Everyday -- plain.\nhttps://x.org\npage text");
+  assert.deepEqual(OM.promptFor("detailsPrompt", { reader: {}, paper: { title: "T", one_liner: "o" }, draft: "", registerNote: "", resources: [] }, { promptOverrides: { detailsPrompt: "x" } }).edited, false, "a prompt that is not editable keeps its function");
+});
+
 test("grade asks haiku and analyze asks sonnet", async () => {
   const calls = [];
   const creds = { ...CREDS, models: ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"] };

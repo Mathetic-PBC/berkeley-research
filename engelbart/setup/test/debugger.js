@@ -70,7 +70,7 @@ class Debugger extends React.Component {
     this.SPEEDS = [{ key: "1", label: "1×", value: 1 }, { key: "4", label: "4×", value: 0.25 }, { key: "i", label: "instant", value: 0.02 }];
     // Simulated mode opens on the environments dashboard: nothing is open, so no product frame is mounted and
     // no simulated backend runs until an environment is chosen. Real mode has no environments; its frame boots by itself.
-    this.state = Object.assign({ envs: this.loadEnvs(), tab: "live", notice: "", hideKinds: {}, cases: this.loadCases(),
+    this.state = Object.assign({ envs: this.loadEnvs(), tab: "live", notice: "", realPrompts: this.loadRealPrompts(), promptSel: null, hideKinds: {}, cases: this.loadCases(),
       caseOpen: null, knobs: Object.assign({}, window.EngelbartSim.DEFAULT_KNOBS), running: false, compare: null, cmpOpen: {}, inspTab: "output", speedKey: "1", copied: false, stick: true,
       picking: false, flowModal: false, detailModal: false, mode: this.loadMode(), frameKey: 1,
       real: this.freshReal() }, this.envState(null));
@@ -91,6 +91,48 @@ class Debugger extends React.Component {
   // --- environment configuration: what the popup edits ------------------------------------------------------
   // The real templates, ported verbatim from api/_lib/onboarding-prompts.js; {{slots}} are what the server fills in.
   PROMPTS() { const P = window.EGB_PROMPTS; return P.ORDER.map(k => [k, P.LABELS[k], P.TEMPLATES[k]]); }
+  // Every prompt a model call can name, in the order the reader meets them: the eleven editable ones, then
+  // the three the server keeps to itself. A run recorded before prompts were named is placed by its purpose.
+  PROMPT_LABEL(key) { const P = window.EGB_PROMPTS; return P.LABELS[key] || { detailsPrompt: "Ask the project questions", goalsPrompt: "Propose the goals", assetAskPrompt: "Answer a question about a resource" }[key] || key; }
+  PROMPT_ORDER() { return window.EGB_PROMPTS.ORDER.concat(["assetAskPrompt", "detailsPrompt", "goalsPrompt"]); }
+  templateOf(o) {
+    if (!o || o.kind !== "model") return null;
+    if (o.real) { const a = o.attributes || {}; if (a["engelbart.prompt.template"]) return a["engelbart.prompt.template"]; const purpose = o.meta && o.meta.purpose; return purpose ? { analysis: "analyzePrompt", grade: "gradePrompt", follow_up: "followUpPrompt", assets: "assetsPrompt", leveled: "levelPrompt", brainstorm: "brainstormPrompt", asset_ask: "assetAskPrompt", direction: "directionPrompt", subgoals: "subgoalsPrompt", details: "detailsPrompt", goals: "goalsPrompt", todos: "todosPrompt", ask: "askPrompt", rewrite: "rewritePrompt" }[purpose] || purpose : null; }
+    return (o.input && o.input.template) || null;
+  }
+  promptEdited(o) { return !!(o.real ? (o.attributes || {})["engelbart.prompt.edited"] : o.input && o.input.template_edited); }
+  // One model call in the Prompts view: the message as the model received it (a document block stands in for
+  // the paper), and the reply as parsed; a recorded call reads both from its snapshots as the inspector does.
+  promptCallVM(st, o) {
+    const textOf = (req) => { const body = req && req.body ? req.body : req; const msgs = body && body.messages; if (!Array.isArray(msgs) || !msgs.length) return typeof req === "string" ? req : req ? JSON.stringify(req, null, 2) : "";
+      const blocks = Array.isArray(msgs[0].content) ? msgs[0].content : [{ type: "text", text: String(msgs[0].content || "") }];
+      return blocks.map(b => b.type === "text" ? String(b.text || "") : b.type === "document" ? "[the paper, as a PDF document block" + (b.source && b.source.source_ref && b.source.source_ref["[bytes]"] ? " · " + Math.round(b.source.source_ref["[bytes]"] / 1024) + " KB" : "") + "]" : "[" + (b.type || "block") + "]").join("\n\n"); };
+    const show = (v) => v === undefined || v === null ? "" : typeof v === "string" ? v : JSON.stringify(v, null, 2);
+    let input, output, note = "";
+    if (o.real) {
+      const si = o.snaps.input ? this.snapshot(o.snaps.input) : { state: "none" }, so = o.snaps.output ? this.snapshot(o.snaps.output) : { state: "none" };
+      const read = (x, what) => x.state === "ready" ? null : x.state === "pending" ? "Loading " + what + "…" : x.state === "missing" ? "This " + what + " was not stored." : x.state === "none" ? "No " + what + " was recorded." : "This " + what + " could not be read.";
+      input = read(si, "request") || textOf(si.content); output = read(so, "reply") || show(so.content);
+      if (si.state === "ready" && si.redacted) note = "credentials redacted before it was stored";
+    } else { input = textOf(o.input); output = o.status === "running" ? "…" : show(o.output); }
+    const t = (o.meta && o.meta.tokens) || {}, cost = o.meta && o.meta.cost;
+    const meta = [o.meta && (o.meta.model || o.meta.family) || "", t.input != null ? t.input.toLocaleString() + " in" : "", t.output != null ? t.output.toLocaleString() + " out" : "", cost ? this.fmtCost(cost) : "", o.status === "running" ? "running" : this.fmtMs(o.ms)].filter(Boolean).join(" · ");
+    return { id: o.id, when: this.clock(o.at), where: st.label + (st.step ? " · " + st.step : ""), meta: meta, edited: this.promptEdited(o), badge: this.promptEdited(o) ? "edited prompt" : "", status: o.status, error: o.error ? String(o.error) : "", note: note,
+      input: input, output: output, hasOutput: !!output,
+      open: () => { const open = Object.assign({}, this.state.open); open[st.id] = true; this.setState({ open: open, view: "requests", inspTab: "input" }); this.select("live", st.id, o.id); } };
+  }
+  // Real mode: which environment's edited prompts the product's model calls use, remembered in this browser;
+  // "" is the server's own. Sent to the frame when it is ready and whenever the choice changes.
+  loadRealPrompts() { try { return window.localStorage.getItem("egb.debugger.realPrompts") || ""; } catch (e) { return ""; } }
+  realOverrides(id) {
+    const env = this.state.envs.find(e => e.id === (id === undefined ? this.state.realPrompts : id)), p = env && env.config && env.config.prompts;
+    return p && Object.keys(p).length ? p : null;
+  }
+  pickRealPrompts(id) {
+    const chosen = this.state.envs.some(e => e.id === id) ? id : "";
+    try { if (chosen) window.localStorage.setItem("egb.debugger.realPrompts", chosen); else window.localStorage.removeItem("egb.debugger.realPrompts"); } catch (e) {}
+    this.setState({ realPrompts: chosen }); if (this.state.connected) this.cmd("prompts", this.realOverrides(chosen) || {});
+  }
   YEARS() { return ["First year", "Second year", "Third year", "Fourth year"]; }
   MAJORS() { return ["Computer Science", "Electrical Engineering & Computer Sciences", "Data Science", "Cognitive Science", "Molecular & Cell Biology", "Bioengineering", "Mechanical Engineering", "Applied Mathematics", "Statistics", "Physics", "Economics", "Business Administration", "Political Science", "Psychology", "Public Health", "English", "History", "Sociology", "Architecture", "Undeclared"]; }
   DEPTHS() { return [["everyday", "Everyday"], ["some", "Some detail"], ["technical", "Technical"], ["expert", "Expert"]]; }
@@ -290,7 +332,7 @@ class Debugger extends React.Component {
     const m = e.data; if (!m || !m.egb) return;
     const real = this.isReal();
     if (m.egb === "ready") { this.connectedAt = Date.now(); this.lastPress = null; this.setState({ connected: true, picking: false });
-      if (real) return; // the simulator's speed, prompts and snapshot do not exist in the real frame
+      if (real) { const o = this.realOverrides(); if (o) this.cmd("prompts", o); return; } // no speed or snapshot in the real frame; only the chosen prompts
       this.cmd("speed", this.SPEEDS.find(x => x.key === this.state.speedKey).value); this.cmd("snapshot");
       const env = this.state.envs.find(e => e.id === this.state.envId); if (env && env.config && env.config.prompts) this.cmd("prompts", env.config.prompts); return; }
     if (m.egb === "step") { this.stepShown(m.label); return; }
@@ -868,10 +910,18 @@ class Debugger extends React.Component {
     const metric = (label, fa, fb, fmt) => { const d = fb - fa; return { label: label, a: fmt(fa), b: fmt(fb), delta: d === 0 ? "—" : (d > 0 ? "+" : "−") + fmt(Math.abs(d)), deltaColor: d === 0 ? "#c9c9c9" : "#171717" }; };
     const cmpMetrics = cmp ? [metric("Requests", tA.requests, tB.requests, String), metric("Operations", tA.ops, tB.ops, String), metric("Model calls", tA.model, tB.model, String), metric("Estimated cost", tA.cost, tB.cost, v => "$" + v.toFixed(3)), metric("Server time", tA.ms, tB.ms, v => this.fmtMs(v) === "—" ? "0" : this.fmtMs(v)), metric("DB writes", tA.dbWrites, tB.dbWrites, String), metric("External calls", tA.external, tB.external, String), metric("Failed requests", tA.errors, tB.errors, String)] : [];
     const changedStages = cmp ? cmp.rows.filter(r => r.status !== "same").length : 0;
+    // The Prompts view: every model call of the recording on screen, grouped by the prompt it sent, in the
+    // order the reader meets the prompts; the selected prompt's calls with their input as sent and reply.
+    const calls = []; live.stages.forEach(st => st.ops.forEach(o => { const key = this.templateOf(o); if (key) calls.push({ key: key, stage: st, op: o }); }));
+    const promptCount = calls.length, order = this.PROMPT_ORDER();
+    const keys = Array.from(new Set(calls.map(c => c.key))).sort((a, b) => { const ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
+    const promptKey = keys.indexOf(S.promptSel) >= 0 ? S.promptSel : keys[0];
+    const promptTabs = keys.map(k => { const mine = calls.filter(c => c.key === k), on = k === promptKey; return { key: k, label: this.PROMPT_LABEL(k), count: String(mine.length), edited: mine.some(c => this.promptEdited(c.op)), on: on, bg: on ? "#171717" : "#fff", color: on ? "#fff" : "#4d4d4d", border: on ? "#171717" : "#eaeaea", select: () => this.setState({ promptSel: k }) }; });
+    const promptCalls = calls.filter(c => c.key === promptKey).map(c => this.promptCallVM(c.stage, c.op));
     return {
       cfg: (() => { const c = S.config; if (!c) return { open: false }; const d = c.draft, P = this.PROMPTS(), sec = c.section || "about";
         const seg = (list, cur, set) => list.map(([v, label]) => ({ label: label, bg: String(cur) === String(v) ? "#171717" : "transparent", color: String(cur) === String(v) ? "#fff" : "#4d4d4d", select: () => set(v) }));
-        return { open: true, title: c.mode === "new" ? "New environment" : "Configure environment", saveLabel: c.mode === "new" ? "Create environment" : "Save",
+        const vm = { open: true, title: c.mode === "new" ? "New environment" : "Configure environment", saveLabel: c.mode === "new" ? "Create environment" : "Save",
           sections: [["about", "About"], ["participant", "Participant"], ["prompts", "Prompts"]].map(([k, label]) => ({ label: label, color: sec === k ? "#171717" : "#8f8f8f", line: sec === k ? "#171717" : "transparent", select: () => this.setState({ config: Object.assign({}, c, { section: k }) }) })),
           isAbout: sec === "about", isParticipant: sec === "participant", isPrompts: sec === "prompts",
           name: d.name, setName: (e) => this.setDraft("name", e.target.value), description: d.description, setDescription: (e) => this.setDraft("description", e.target.value), notes: d.notes, setNotes: (e) => this.setDraft("notes", e.target.value),
@@ -887,7 +937,10 @@ class Debugger extends React.Component {
           pProject: d.participant.projectUrl, setPProject: (e) => this.setDraft("participant.projectUrl", e.target.value), pRepo: d.participant.repoUrl, setPRepo: (e) => this.setDraft("participant.repoUrl", e.target.value),
           participantNote: c.mode === "new" ? "A prefilled participant has finished a setup before: the product opens at the Paper step with name, year, major and register on record, and the links and familiarity below already entered." : "Participant changes take effect after Reset test environment; prompt changes apply to the next model call.",
           prompts: P.map(([key, label, def]) => { const cur = d.prompts[key]; const changed = cur != null && cur !== def; return { key: key, label: label, changed: changed, badge: changed ? "edited" : "", value: cur != null ? cur : def, set: (e) => this.setDraft("prompts." + key, e.target.value), reset: () => { const p = Object.assign({}, d.prompts); delete p[key]; this.setDraft("prompts", p); }, resetLabel: changed ? "reset to default" : "" }; }),
-          cancel: () => this.setState({ config: null }), save: () => this.saveConfig() }; })(),
+          promptTabs: P.map(([key, label, def]) => { const cur = d.prompts[key], changed = cur != null && cur !== def, on = (c.promptTab || P[0][0]) === key; return { key: key, label: label, changed: changed, on: on, color: on ? "#171717" : changed ? "#0070f3" : "#8f8f8f", bg: on ? "#171717" : "transparent", fg: on ? "#fff" : changed ? "#0070f3" : "#4d4d4d", border: on ? "#171717" : changed ? "#0070f3" : "#eaeaea", select: () => this.setState({ config: Object.assign({}, c, { promptTab: key }) }) }; }),
+          cancel: () => this.setState({ config: null }), save: () => this.saveConfig() };
+        vm.prompt = vm.prompts.find(pp => pp.key === (c.promptTab || P[0][0])) || vm.prompts[0]; vm.editedCount = vm.prompts.filter(pp => pp.changed).length;
+        return vm; })(),
       // The dashboard is Simulated mode with nothing open; its cards are ordered by the last opening, then creation.
       isDashboard: !real && !S.envId, envsEmpty: !S.envs.length,
       envCards: S.envs.slice().sort((a, b) => (b.lastUsedAt || b.createdAt || 0) - (a.lastUsedAt || a.createdAt || 0)).map(e => this.envCard(e)),
@@ -907,8 +960,10 @@ class Debugger extends React.Component {
         { k: "model calls", v: String(t.model), help: "Operations that called a model through LiteLLM" },
         real ? { k: "tokens", v: tokens.toLocaleString(), help: "Input and output tokens the model calls recorded" } : { k: "est. cost", v: t.cost ? this.fmtCost(t.cost) : "$0", help: "Estimated model spend, from token counts" },
         { k: "server time", v: this.fmtMs(t.ms) === "—" ? "0 ms" : this.fmtMs(t.ms), help: real ? "Time the server recorded for each action, summed" : "Simulated time the server spent answering, summed across requests" }],
-      views: [["flow", "Data flow"], ["requests", "Requests" + (t.requests ? " · " + t.requests : "")]].map(([k, label]) => ({ key: k, label: label, color: (S.view || "flow") === k ? "#171717" : "#8f8f8f", line: (S.view || "flow") === k ? "#171717" : "transparent", select: () => this.setState({ view: k }) })),
-      isFlowView: (S.view || "flow") === "flow", isRequestsView: (S.view || "flow") === "requests",
+      views: [["flow", "Data flow"], ["requests", "Requests" + (t.requests ? " · " + t.requests : "")], ["prompts", "Prompts" + (promptCount ? " · " + promptCount : "")]].map(([k, label]) => ({ key: k, label: label, color: (S.view || "flow") === k ? "#171717" : "#8f8f8f", line: (S.view || "flow") === k ? "#171717" : "transparent", select: () => this.setState({ view: k }) })),
+      isFlowView: (S.view || "flow") === "flow", isRequestsView: (S.view || "flow") === "requests", isPromptsView: (S.view || "flow") === "prompts",
+      promptTabs: promptTabs, promptCalls: promptCalls, promptsEmpty: !promptCount, promptSelLabel: promptTabs.length ? this.PROMPT_LABEL(promptKey) : "",
+      promptsEmptyText: real ? (S.real.picked ? "This run recorded no model calls." : "No model calls yet. When the product asks the model, each call lands here under its prompt.") : "No model calls on this step yet. When the product asks the model, each call lands here under its prompt.",
       flowNodes: flow.nodes, flowEdges: flow.edges, flowDetail: flow.detail || {}, flowHasDetail: !!flow.detail, flowOpen: true,
       flowW: flow.width, flowH: flow.height, flowEmpty: !flow.nodes.length, flowHasNodes: flow.nodes.length > 0, flowJunctions: flow.junctions, lineageUnavailable: lineageUnavailable,
       flowZoomLabel: Math.round(S.flowZoom * 100) + "%",
@@ -956,7 +1011,12 @@ class Debugger extends React.Component {
       .concat(earlier.map(r => ({ value: r.onboarding_id, label: label(r) })))
       .concat([{ value: "__refresh", label: R.loading ? "Refreshing the list…" : (R.runs ? "Refresh the list" : "Load earlier runs") }]);
     const fs = R.frameSession;
+    const editedOf = e => Object.keys(e.config && e.config.prompts || {}).length;
+    const promptOptions = [{ value: "", label: "Server prompts" }].concat(S.envs.map(e => ({ value: e.id, label: e.name + " · " + (editedOf(e) ? editedOf(e) + " edited" : "no edits") })));
+    const chosen = S.envs.find(e => e.id === S.realPrompts), chosenEdits = chosen ? editedOf(chosen) : 0;
     return { isReal: real, pickerValue: R.picked ? R.picked.onboarding_id : "__current", pickerOptions: options, pick: (e) => this.pickRun(e.target.value),
+      promptValue: chosen ? chosen.id : "", promptOptions: promptOptions, pickPrompts: (e) => this.pickRealPrompts(e.target.value),
+      promptsApplied: chosenEdits ? chosenEdits + " edited prompt" + (chosenEdits === 1 ? "" : "s") : "", promptsTitle: chosen ? (chosenEdits ? "The product's model calls use the " + chosenEdits + " edited prompt" + (chosenEdits === 1 ? "" : "s") + " of “" + chosen.name + "”; every other prompt is the server's own" : "“" + chosen.name + "” edits no prompt, so the server's own are used") : "The product's model calls use the server's own prompts; choose an environment to use its edited prompts for your run",
       email: (R.session && R.session.email) || (fs && fs.email) || "", error: R.error || "", loading: !!R.loading,
       signedOut: !!(fs && fs.signedIn === false), signedOutWhy: (fs && fs.error) || "", reloadFrame: () => this.reloadFrame(),
       viewingPicked: !!R.picked, pickedTitle: R.picked ? label(R.picked) : "" };
@@ -984,6 +1044,8 @@ class Debugger extends React.Component {
           R.pickerOptions.map(o => h("option", { key: o.value, value: o.value }, o.label)))
         : V.isDashboard ? null : h("select", { value: V.envId, onChange: V.envSelect, title: "switch environment", style: css("max-width:280px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
           V.envOptions.map(eo => h("option", { key: eo.value, value: eo.value }, eo.label))),
+      V.isReal ? h("select", { value: R.promptValue, onChange: R.pickPrompts, "data-prompt-picker": "1", title: R.promptsTitle, style: css("max-width:260px;padding:6px 28px 6px 12px;border:1px solid " + (R.promptsApplied ? "#0070f3" : "#eaeaea") + ";border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:" + (R.promptsApplied ? "#0070f3" : "#171717") + ";outline:none;cursor:pointer") },
+          R.promptOptions.map(o => h("option", { key: o.value, value: o.value }, o.label))) : null,
       h("span", { style: css("font:12px/1.4 " + SANS + ";color:#e70022;flex:1 1 40px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, V.notice || (V.isReal ? R.error : "")),
       V.isReal ? (R.email ? h("span", { title: "the member the product runs as", style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, R.email) : null)
         : V.isDashboard ? null : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
@@ -1068,15 +1130,18 @@ class Debugger extends React.Component {
       ] : null);
     const prompts = [
       h("div", { key: "intro", style: css("font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty;margin-bottom:12px") }, "The eleven prompts the onboarding sends, verbatim from api/_lib/onboarding-prompts.js, in the order the reader meets them. Text in {{double braces}} is what the server fills in for each call: the reader block, the assessment, the transcript, the paper's title. Edit any prompt and this environment's calls carry your version, slots included."),
-      h("div", { key: "list", style: css("display:flex;flex-direction:column;gap:18px;padding-bottom:12px") }, cfg.prompts.map(pp => h("div", { key: pp.key, style: css("border:1px solid #eaeaea;border-radius:8px;padding:10px 12px 12px;background:#fff") },
+      h("div", { key: "tabs", "data-prompt-tabs": "1", style: css("display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px") },
+        cfg.promptTabs.map(pt => h("button", { key: pt.key, onClick: pt.select, title: pt.key + (pt.changed ? " · edited" : ""), "aria-pressed": pt.on, style: css("display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border:1px solid " + pt.border + ";border-radius:999px;background:" + pt.bg + ";font:500 11px/1 " + SANS + ";color:" + pt.fg) },
+          pt.label, pt.changed ? h("span", { title: "edited", style: css("width:7px;height:7px;border-radius:50%;background:" + (pt.on ? "#fff" : "#0070f3")) }) : null))),
+      h("div", { key: "editor", style: css("border:1px solid #eaeaea;border-radius:8px;padding:10px 12px 12px;background:#fff;margin-bottom:12px") },
         h("div", { style: css("display:flex;align-items:baseline;gap:8px") },
-          h("span", { style: css("font:500 12.5px/1.4 " + SANS + ";color:#171717") }, pp.label),
-          h("span", { style: css("font:11px/1.4 " + MONO + ";color:#8f8f8f") }, pp.key),
-          h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#0070f3") }, pp.badge),
+          h("span", { style: css("font:500 12.5px/1.4 " + SANS + ";color:#171717") }, cfg.prompt.label),
+          h("span", { style: css("font:11px/1.4 " + MONO + ";color:#8f8f8f") }, cfg.prompt.key),
+          h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#0070f3") }, cfg.prompt.badge),
           h("span", { style: css("flex:1") }),
-          h("button", { onClick: pp.reset, className: "hv-ink", style: css(LINK_BTN) }, pp.resetLabel)),
-        h("textarea", { value: pp.value, onChange: pp.set, rows: 8, spellCheck: false, className: "fc-blue",
-          style: css("display:block;width:100%;box-sizing:border-box;margin-top:8px;padding:9px 12px;border:1px solid #eaeaea;border-radius:6px;background:#fafafa;outline:none;resize:vertical;font:12.5px/1.6 " + SANS + ";color:#171717") }))))
+          h("button", { onClick: cfg.prompt.reset, className: "hv-ink", style: css(LINK_BTN) }, cfg.prompt.resetLabel)),
+        h("textarea", { key: cfg.prompt.key, value: cfg.prompt.value, onChange: cfg.prompt.set, rows: 18, spellCheck: false, className: "fc-blue",
+          style: css("display:block;width:100%;box-sizing:border-box;margin-top:8px;padding:9px 12px;border:1px solid #eaeaea;border-radius:6px;background:#fafafa;outline:none;resize:vertical;font:12.5px/1.6 " + SANS + ";color:#171717") }))
     ];
     return [
       h("div", { key: "veil", onClick: cfg.cancel, style: css("position:fixed;inset:0;z-index:80;background:rgba(23,23,23,0.32)") }),
@@ -1209,7 +1274,36 @@ class Debugger extends React.Component {
         V.views.map(vw => h("button", { key: vw.key, onClick: vw.select, style: css("padding:8px 10px 9px;border:none;background:transparent;font:500 12.5px/1 " + SANS + ";color:" + vw.color + ";border-bottom:2px solid " + vw.line + ";margin-bottom:-1px;white-space:nowrap") }, vw.label))),
       V.isFlowView && V.lineageUnavailable ? this.renderLineageUnavailable() : null,
       V.isFlowView && !V.lineageUnavailable ? this.renderFlow(V) : null,
-      V.isRequestsView ? this.renderRequests(V) : null);
+      V.isRequestsView ? this.renderRequests(V) : null,
+      V.isPromptsView ? this.renderPrompts(V) : null);
+  }
+  // The Prompts view: a tab per prompt the run sent, and under it every call of that prompt, the message as
+  // the model received it and the reply as parsed. The rest of the call is one click away in the inspector.
+  renderPrompts(V) {
+    const K = this.KINDS;
+    const block = (label, text) => [h("div", { key: label, style: css("margin-top:10px;font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#8f8f8f") }, label),
+      h("pre", { key: label + "-pre", style: css("margin:6px 0 0;max-height:320px;overflow:auto;padding:10px 12px;background:#fafafa;border:1px solid #eaeaea;border-radius:6px;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word") }, text)];
+    return h("div", { "data-screen-label": "Prompts" },
+      V.promptsEmpty ? h("div", { style: css("padding:28px 18px;border:1px dashed #e2e2e2;border-radius:10px;text-align:center") },
+        h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "No model calls yet"),
+        h("div", { style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, V.promptsEmptyText)) : null,
+      V.promptsEmpty ? null : h("div", { style: css("display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px") },
+        V.promptTabs.map(pt => h("button", { key: pt.key, onClick: pt.select, "data-prompt-tab": pt.key, title: pt.key, style: css("display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border:1px solid " + pt.border + ";border-radius:999px;background:" + pt.bg) },
+          h("span", { style: css("font:500 11px/1 " + SANS + ";color:" + pt.color) }, pt.label),
+          h("span", { style: css("font:11px/1 " + MONO + ";color:" + (pt.on ? "#c9c9c9" : "#8f8f8f")) }, pt.count),
+          pt.edited ? h("span", { title: "an edited prompt was sent", style: css("width:7px;height:7px;border-radius:50%;background:#0070f3") }) : null))),
+      V.promptCalls.map(pc => h("div", { key: pc.id, "data-prompt-call": "1", style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:10px;padding:10px 12px 12px;background:#fff") },
+        h("div", { style: css("display:flex;align-items:baseline;gap:10px;flex-wrap:wrap") },
+          h("span", { style: css("font:500 10px/1 " + MONO + ";color:#8f8f8f") }, pc.when),
+          h("span", { style: css("font:500 12.5px/1.3 " + SANS + ";color:#171717") }, pc.where),
+          pc.badge ? h("span", { style: css("padding:3px 6px;border-radius:4px;background:#e6f0fd;color:#0761d1;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;white-space:nowrap") }, pc.badge) : null,
+          h("span", { style: css("flex:1") }),
+          h("span", { style: css("font:11px/1.4 " + MONO + ";color:" + (pc.status === "error" ? "#e70022" : "#4d4d4d")) }, pc.status === "error" ? "failed" : pc.meta),
+          h("button", { onClick: pc.open, className: "hv-ink", style: css("padding:0;border:none;background:none;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#0070f3;white-space:nowrap") }, "open in session ›")),
+        pc.error ? h("div", { style: css("margin-top:8px;font:12px/1.5 " + SANS + ";color:#e70022;text-wrap:pretty") }, pc.error) : null,
+        block("Input · as the model received it", pc.input),
+        pc.hasOutput ? block("Response · as parsed", pc.output) : null,
+        pc.note ? h("div", { style: css("margin-top:6px;font:11px/1.4 " + SANS + ";color:#8f8f8f") }, pc.note) : null)));
   }
   renderLineageUnavailable() {
     return h("div", { "data-screen-label": "Lineage unavailable", style: css("border:1px dashed #e2e2e2;border-radius:10px;padding:28px 18px;text-align:center;margin-bottom:14px") },

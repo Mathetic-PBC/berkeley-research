@@ -20,6 +20,7 @@ const SRC = fs.readFileSync(path.join(ROOT, "engelbart", "setup", "test", "frame
 const ORIGIN = "https://app.example";
 
 function plain(x) { return JSON.parse(JSON.stringify(x)); }
+function same(a, b, msg) { assert.deepEqual(plain(a), plain(b), msg); }
 
 // A window with the few things frame.js touches: location, parent, document, fetch, supabase-js, the simulator.
 function frame(opts) {
@@ -185,8 +186,8 @@ test("real mode: the simulator's commands do nothing but say so; picking and rel
   const F = frame({ mode: "real", fetch: async () => reply(200, {}), supabase: supabaseWith(null).lib });
   F.command("snapshot");
   assert.deepEqual(F.messages("snapshot"), [{ egb: "snapshot", state: null }], "there is no simulator state to report");
-  F.command("reset"); F.command("dropFixture"); F.command("speed", 0.25); F.command("prompts", { gradePrompt: "x" });
-  assert.equal(F.messages("notice").length, 4);
+  F.command("reset"); F.command("dropFixture"); F.command("speed", 0.25);
+  assert.equal(F.messages("notice").length, 3);
   assert.ok(F.messages("notice").every((n) => /simulator control; it does nothing in Real mode/.test(n.text)));
   assert.equal(F.w.reloaded, 0, "reset did not reload the real page: there was nothing to reset");
   F.command("pick");
@@ -199,6 +200,30 @@ test("real mode: the simulator's commands do nothing but say so; picking and rel
   F.command("snapshot", null, { origin: "https://evil.example" });
   F.command("snapshot", null, { source: {} });
   assert.equal(F.posted.length, before, "commands from another origin or window are not obeyed");
+});
+
+test("real mode: the edited prompts the debugger sends ride on the model actions only, as the page's own body plus prompt_overrides; the report names them, never their text", async () => {
+  const calls = [];
+  const fetch = async (url, init) => { calls.push({ url, init }); return reply(200, { ok: true }); };
+  const F = frame({ mode: "real", fetch, supabase: supabaseWith(null).lib });
+  const post = (body) => { const init = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }; return F.w.fetch("/api/engelbart-onboarding", init).then(() => init); };
+  await post({ action: "answer", area: 0, text: "before any prompts were chosen" });
+  F.command("prompts", { gradePrompt: "Grade {{answer}} kindly", askPrompt: "Answer briefly" });
+  const original = await post({ action: "answer", area: 0, text: "an answer" });
+  await post({ action: "step", step: 2, fields: { name: "Ada" } });
+  await post({ action: "analysis" });
+  await post({ action: "analysis", run: true });
+  F.command("prompts", {});
+  await post({ action: "answer", area: 1, text: "later" });
+  const sent = calls.map((c) => JSON.parse(c.init.body));
+  same(sent.map((b) => b.prompt_overrides), [undefined, { gradePrompt: "Grade {{answer}} kindly", askPrompt: "Answer briefly" }, undefined, undefined, { gradePrompt: "Grade {{answer}} kindly", askPrompt: "Answer briefly" }, undefined],
+    "a model action carries them once chosen; a step, a poll, and everything after they are cleared do not");
+  assert.deepEqual(sent[1], { action: "answer", area: 0, text: "an answer", prompt_overrides: { gradePrompt: "Grade {{answer}} kindly", askPrompt: "Answer briefly" } }, "the page's body, plus the overrides");
+  assert.equal(JSON.parse(original.body).prompt_overrides, undefined, "the page's own request object is not touched");
+  const reported = F.messages("request").map((m) => m.body.prompt_overrides);
+  same(reported, [undefined, ["gradePrompt", "askPrompt"], undefined, undefined, ["gradePrompt", "askPrompt"], undefined], "the debugger is told which prompts went, not their text");
+  assert.ok(!JSON.stringify(F.posted).includes("Grade {{answer}} kindly"));
+  assert.equal(F.messages("notice").length, 0, "prompts is not a simulator control any more");
 });
 
 test("simulated mode is unchanged: /api goes to the in-page simulator, the session is the fake one, and the simulator's commands work", async () => {

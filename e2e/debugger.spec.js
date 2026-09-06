@@ -192,6 +192,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(page.getByText("real actions")).toHaveCount(0);
     await expect(page.getByText(/Model calls spend real credit/)).toHaveCount(0);
     await expect(page.locator("[data-run-picker]")).toBeVisible();
+    await expect(page.locator("[data-prompt-picker]")).toHaveValue("", { timeout: 5000 });
     await expect(page.getByText("member@example.com")).toBeVisible();
 
     // The real product boots as the member: the open request carried the member's token, not the simulator's.
@@ -257,6 +258,19 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(uploadRow).toBeVisible();
     await expect(uploadRow).toContainText("310 ms");
     await expect(uploadRow).toContainText("browser → storage");
+
+    // The Prompts view: the run's model calls under the prompt each sent, the message and the reply from the
+    // recorded snapshots; a call opens in the Requests view.
+    await page.getByRole("button", { name: /^Prompts · [1-9]/ }).click();
+    await expect(page.locator("[data-prompt-tab='analyzePrompt']")).toContainText("Read the paper");
+    const call = page.locator("[data-prompt-call]").first();
+    await expect(call).toContainText("onboarding · analysis (run)");
+    await expect(call).toContainText("The PhD student's paper follows as an attached document.");
+    await expect(call).toContainText("[the paper, as a PDF document block");
+    await expect(call).toContainText('"title": "Speculative Decoding for Fast LLM Inference"');
+    await call.getByRole("button", { name: /open in session/ }).click();
+    await expect(inspector).toContainText("model.analysis");
+    await page.getByRole("button", { name: /^Requests/ }).click();
 
     // An earlier run, from the picker, in the same panel: the model call's recorded request and replies are inspectable.
     await page.locator("[data-run-picker]").selectOption(OLDER);

@@ -134,7 +134,8 @@ model; the page's `fetch` to `/api` is answered in-page from
 `engelbart/setup/test/sim-backend.js`, model replies come from
 `fixture.js`, and the prompts are `prompts.js`, a verbatim copy of
 `api/_lib/onboarding-prompts.js` that the debugger lets you edit per
-environment. The page opens on a dashboard of test environments, each with
+environment, one prompt at a time on a tab each; an edited tab is marked.
+The page opens on a dashboard of test environments, each with
 its own simulated account, step recordings, notes and graph layout; nothing
 runs until one is opened. A card's Configure edits an environment and its
 Reset drops the simulated account and the step recordings (the participant,
@@ -143,8 +144,12 @@ the top bar, which also reloads the product at step one. Environments, step
 recordings and notes persist in that browser's `localStorage`.
 
 The page has two modes, named on the URL, with the same composition in both:
-the setup page on the left; the request list, the operation inspector and
-the Data flow view on the right. **Simulated**, the plain URL, is the
+the setup page on the left; the request list, the operation inspector, the
+Data flow view and the Prompts view on the right. The Prompts view groups the
+run's model calls by the prompt each sent (a tab per prompt, in the order the
+reader meets them, edited prompts marked) and shows each call's message as the
+model received it and the reply as parsed, with the rest of the call one click
+away in the request list. **Simulated**, the plain URL, is the
 simulator above: it shows what the server is designed to do for each press,
 not what production did. **Real** (`/engelbart/setup/test?mode=real`) puts
 the same setup page in the same frame against the real endpoints, signed in
@@ -178,9 +183,15 @@ the right only reads. It goes through `/api/engelbart-telemetry` (`GET` only;
 the member's own Supabase session; the service role stays on the server;
 runs and traces are returned only for the member's own onboardings; the reads
 are untraced), which never changes onboarding state, calls a model or spends
-credit. The simulator's reset, environments, speed and prompt edits are hidden
-in that mode, the setup page's own test bar is never enabled there, and
-nothing in the debugger can replay or rerun a real action. The frame
+credit. The simulator's reset, environments and speed are hidden in that
+mode, the setup page's own test bar is never enabled there, and nothing in
+the debugger can replay or rerun a real action. One control does reach the
+real backend: the prompts picker in the top bar chooses an environment whose
+edited prompts the product's model calls use for your own run (the frame adds
+them to the model actions as `prompt_overrides`; the server renders them with
+the same slots as its own, names the prompt and marks it edited in every model
+operation's record, and never stores them). Server prompts is the default and
+the choice is remembered in the browser. The frame
 (`frame.js`) reports each request and reply to the page with credentials,
 tokens and signed URLs redacted. The adapter is
 `engelbart/setup/test/real-runs.js`, tested against the example envelope in

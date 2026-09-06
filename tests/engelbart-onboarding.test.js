@@ -106,6 +106,17 @@ test("reset clears through the record module and answers with the next open", as
   assert.equal(out.profile_reused, false);
 });
 
+// The debugger's edited prompts ride on the request for this one run: the editable ones reach the
+// record module in its options, sanitized; anything else on the request is not an override at all.
+test("edited prompts on a request reach the record module for that run, sanitized; junk is no override", async () => {
+  const seen = [];
+  const d = deps({ OB: { ask: async (u, r, c, b, cred, options) => { seen.push(options.promptOverrides); return { answer: "a" }; } } });
+  await handler.dispatch(USER, { action: "ask", quote: "q", question: "w", prompt_overrides: { askPrompt: "Answer {{question}}", nope: "x", gradePrompt: 3 } }, d);
+  await handler.dispatch(USER, { action: "ask", quote: "q", question: "w", prompt_overrides: "askPrompt" }, d);
+  await handler.dispatch(USER, { action: "ask", quote: "q", question: "w" }, d);
+  assert.deepEqual(seen, [{ askPrompt: "Answer {{question}}" }, undefined, undefined]);
+});
+
 test("an unknown action is a 400", async () => {
   await assert.rejects(handler.dispatch(USER, { action: "dance" }, deps()), (e) => e.statusCode === 400);
 });

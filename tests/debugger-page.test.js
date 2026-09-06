@@ -730,3 +730,141 @@ test("an expired session is said plainly, and nothing is read without a token", 
   assert.match(out.stages()[0].traceError, /Sign in to Engelbart/);
   assert.equal(out.server.telemetry().length, 0);
 });
+
+// --- prompts: edited on tabs, chosen for a real run, and reviewed call by call --------------------------------
+
+test("the configure popup edits one prompt at a time, on a tab per prompt that marks the edited ones", async () => {
+  const P = page({});
+  P.d.openConfig("new"); await flush();
+  let V = P.d.renderVals();
+  assert.equal(V.cfg.promptTabs.length, 11);
+  same(V.cfg.promptTabs.map((t) => t.label), P.w.EGB_PROMPTS.ORDER.map((k) => P.w.EGB_PROMPTS.LABELS[k]), "every editable prompt, in the order the reader meets them");
+  same([V.cfg.promptTabs[0].on, V.cfg.prompt.key, V.cfg.prompt.changed, V.cfg.editedCount], [true, "analyzePrompt", false, 0], "the first prompt is open to begin with");
+  V.cfg.sections[2].select(); await flush();
+  V = P.d.renderVals();
+  const dialog = find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Configure environment")[0];
+  assert.equal(find(dialog, (n) => n.type === "textarea").length, 1, "one editor on screen, not eleven");
+  assert.equal(find(dialog, (n) => n.props && n.props["data-prompt-tabs"]).length, 1);
+  assert.ok(texts(dialog).includes("Read the paper") && texts(dialog).includes("Grade an answer"));
+  V.cfg.promptTabs.find((t) => t.key === "gradePrompt").select(); await flush();
+  V = P.d.renderVals();
+  same([V.cfg.prompt.key, V.cfg.prompt.label, V.cfg.prompt.value === P.w.EGB_PROMPTS.TEMPLATES.gradePrompt], ["gradePrompt", "Grade an answer", true]);
+  V.cfg.prompt.set({ target: { value: "Grade {{answer}} kindly." } }); await flush();
+  V = P.d.renderVals();
+  same([V.cfg.prompt.changed, V.cfg.prompt.badge, V.cfg.prompt.resetLabel, V.cfg.editedCount], [true, "edited", "reset to default", 1]);
+  same(V.cfg.promptTabs.filter((t) => t.changed).map((t) => t.key), ["gradePrompt"], "the tab says which prompt is edited");
+  V.cfg.promptTabs[0].select(); await flush();
+  V = P.d.renderVals();
+  same([V.cfg.prompt.key, V.cfg.promptTabs.find((t) => t.key === "gradePrompt").changed], ["analyzePrompt", true], "switching tabs keeps the edit");
+  V.cfg.setName({ target: { value: "Kind grader" } }); await flush();
+  P.d.renderVals().cfg.save(); await settle();
+  same(JSON.parse(P.store.get("egb.debugger.envs.v1"))[0].config.prompts, { gradePrompt: "Grade {{answer}} kindly." }, "saved as the one override");
+  P.d.openConfig("edit"); await flush();
+  V = P.d.renderVals();
+  V.cfg.promptTabs.find((t) => t.key === "gradePrompt").select(); await flush();
+  P.d.renderVals().cfg.prompt.reset(); await flush();
+  same([P.d.renderVals().cfg.prompt.changed, P.d.renderVals().cfg.editedCount], [false, 0], "reset to default drops the override");
+});
+
+test("in Real mode an environment's edited prompts can be chosen for the run: the frame is told on ready and on every change, and the choice is remembered", async () => {
+  const envs = [{ id: "env-x", name: "Kind grader", createdAt: 1, config: { prompts: { gradePrompt: "Grade {{answer}} kindly.", askPrompt: "Answer briefly." } } }, { id: "env-y", name: "Plain", createdAt: 2, config: { prompts: {} } }];
+  const P = page({ mode: "real", seed: { "egb.debugger.envs.v1": envs } });
+  P.send({ egb: "ready", speed: 1, mode: "real" }); await flush();
+  same(P.cmds(), [], "the server's own prompts to begin with: nothing to tell the frame");
+  let R = P.d.realVM();
+  same(R.promptOptions, [{ value: "", label: "Server prompts" }, { value: "env-x", label: "Kind grader · 2 edited" }, { value: "env-y", label: "Plain · no edits" }]);
+  same([R.promptValue, R.promptsApplied], ["", ""]);
+  const bar = P.d.renderTopBar(P.d.renderVals());
+  assert.equal(find(bar, (n) => n.props && n.props["data-prompt-picker"]).length, 1, "the picker sits in the bar");
+  assert.ok(texts(bar).includes("Server prompts") && texts(bar).includes("Kind grader · 2 edited"));
+  R.pickPrompts({ target: { value: "env-x" } }); await flush();
+  same(P.cmds(), ["prompts"]);
+  same(P.toFrame[0].m.value, envs[0].config.prompts, "the environment's overrides go to the frame, which adds them to the model actions");
+  assert.equal(P.store.get("egb.debugger.realPrompts"), "env-x", "remembered");
+  R = P.d.realVM();
+  same([R.promptValue, R.promptsApplied], ["env-x", "2 edited prompts"]);
+  assert.match(R.promptsTitle, /Kind grader/);
+  // The same browser, opened again: the choice holds and the frame is told as soon as it is ready.
+  const Q = page({ mode: "real", seed: Object.fromEntries(P.store) });
+  assert.equal(Q.d.realVM().promptValue, "env-x");
+  Q.send({ egb: "ready", speed: 1, mode: "real" }); await flush();
+  same(Q.cmds(), ["prompts"]);
+  same(Q.toFrame[0].m.value, envs[0].config.prompts);
+  // An environment with no edits, or the server's own: the frame is told to use the server's prompts.
+  Q.d.realVM().pickPrompts({ target: { value: "env-y" } }); await flush();
+  same(Q.toFrame[1].m, { egb: "cmd", cmd: "prompts", value: {} });
+  same([Q.d.realVM().promptValue, Q.d.realVM().promptsApplied], ["env-y", ""]);
+  Q.d.realVM().pickPrompts({ target: { value: "" } }); await flush();
+  same(Q.toFrame[2].m.value, {});
+  assert.equal(Q.store.has("egb.debugger.realPrompts"), false);
+  // A chosen environment that no longer exists means the server's prompts.
+  const Z = page({ mode: "real", seed: { "egb.debugger.realPrompts": "env-gone", "egb.debugger.envs.v1": envs } });
+  Z.send({ egb: "ready", speed: 1, mode: "real" }); await flush();
+  same([Z.d.realVM().promptValue, Z.cmds()], ["", []]);
+});
+
+test("the Prompts view groups the simulator's model calls by the prompt they sent, shows each call's message and reply, and opens the call in the session", async () => {
+  const P = page({});
+  P.d.createEnv("Lab"); await settle();
+  P.send({ egb: "ready", speed: 1, mode: "sim" }); await flush();
+  let V = P.d.renderVals();
+  same([V.views[2].label, V.promptsEmpty, V.promptTabs.length], ["Prompts", true, 0]);
+  assert.match(V.promptsEmptyText, /No model calls on this step yet/);
+  // The events a simulated answer emits: a request, a grading call with an edited prompt, a follow-up, done.
+  const at = 1_700_000_000_000;
+  const req = (text, key, edited, out) => ({ template: key, template_edited: edited || undefined, body: { model: "claude-haiku-4-5", max_tokens: 300, messages: [{ role: "user", content: [{ type: "text", text }] }] }, timeout_ms: 90000, out });
+  const events = [
+    { type: "stage", id: "st-1", seq: 1, at, path: "/api/engelbart-onboarding", method: "POST", surface: "onboarding", action: "answer", label: "onboarding · answer" },
+    { type: "op", id: "op-1", stage: "st-1", seq: 2, at: at + 5, kind: "db", name: "row.load", target: "GET /rest/v1/x", status: "ok", input: {}, output: {}, ms: 3, meta: {} },
+    { type: "op", id: "op-2", stage: "st-1", seq: 3, at: at + 10, kind: "model", name: "grade the answer", target: "haiku", status: "ok", input: req("Grade this answer kindly.", "gradePrompt", true), output: { level: 50, rationale: "fair" }, ms: 120, meta: { family: "haiku", model: "claude-haiku-4-5", tokens: { input: 210, output: 12 }, cost: 0.0004 } },
+    { type: "op", id: "op-3", stage: "st-1", seq: 4, at: at + 140, kind: "model", name: "write one follow-up", target: "sonnet", status: "ok", input: req("Write a follow-up.", "followUpPrompt"), output: { question: "And then?" }, ms: 400, meta: { family: "sonnet", model: "claude-sonnet-4-5", tokens: { input: 900, output: 40 }, cost: 0.004 } },
+    { type: "op", id: "op-4", stage: "st-1", seq: 5, at: at + 560, kind: "model", name: "grade the answer", target: "haiku", status: "ok", input: req("Grade the second answer kindly.", "gradePrompt", true), output: { level: 75, rationale: "good" }, ms: 110, meta: { family: "haiku", model: "claude-haiku-4-5", tokens: { input: 220, output: 12 }, cost: 0.0004 } },
+    { type: "stage.end", id: "st-1", at: at + 700, status: "ok", code: 200, ms: 700, response: { ok: true } },
+  ];
+  events.forEach((ev) => P.send({ egb: "trace", event: ev }));
+  await new Promise((r) => setTimeout(r, 80));
+  V = P.d.renderVals();
+  assert.equal(V.views[2].label, "Prompts · 3", "three model calls");
+  same(V.promptTabs.map((t) => [t.key, t.label, t.count, t.edited, t.on]), [["gradePrompt", "Grade an answer", "2", true, true], ["followUpPrompt", "Write a follow-up", "1", false, false]], "grouped by prompt, in the order the reader meets them, the first open");
+  assert.equal(V.promptSelLabel, "Grade an answer");
+  same(V.promptCalls.map((c) => [c.when, c.where, c.badge, c.meta, c.input, JSON.parse(c.output)]), [
+    [P.d.clock(at + 10), "onboarding · answer", "edited prompt", "claude-haiku-4-5 · 210 in · 12 out · $0.0004 · 120 ms", "Grade this answer kindly.", { level: 50, rationale: "fair" }],
+    [P.d.clock(at + 560), "onboarding · answer", "edited prompt", "claude-haiku-4-5 · 220 in · 12 out · $0.0004 · 110 ms", "Grade the second answer kindly.", { level: 75, rationale: "good" }]]);
+  V.promptTabs[1].select(); await flush();
+  V = P.d.renderVals();
+  same(V.promptCalls.map((c) => [c.badge, c.input, c.output]), [["", "Write a follow-up.", JSON.stringify({ question: "And then?" }, null, 2)]]);
+  P.d.setState({ view: "prompts" }); await flush();
+  const view = find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Prompts");
+  assert.equal(view.length, 1);
+  assert.ok(texts(view[0]).includes("Write a follow-up.") && texts(view[0]).includes("Input · as the model received it") && texts(view[0]).includes("Response · as parsed"));
+  assert.equal(find(view[0], (n) => n.props && n.props["data-prompt-call"]).length, 1);
+  V.promptCalls[0].open(); await flush();
+  same([P.d.state.view, P.d.state.sel, P.d.state.open["st-1"], P.d.state.inspTab], ["requests", { run: "live", stage: "st-1", op: "op-3" }, true, "input"], "the call opens in the Requests view, its request unfolded and the call selected");
+  assert.equal(P.d.inspectorVM().name, "write one follow-up");
+});
+
+test("in Real mode the Prompts view reads each call's request and reply from its recorded snapshots and names the prompt from the record", async () => {
+  const P = page({ mode: "real" });
+  P.request("rq-1", { action: "analysis", body: { action: "analysis", run: true }, bg: true });
+  P.response("rq-1", { trace_id: TRACE.analysis, body: { onboarding: { id: OB }, analysis: { status: "running" } } });
+  await settle();
+  let V = P.d.renderVals();
+  assert.equal(V.views[2].label, "Prompts · 1");
+  same(V.promptTabs.map((t) => [t.key, t.label, t.count, t.edited]), [["analyzePrompt", "Read the paper", "1", false]], "named by the record's engelbart.prompt.template");
+  const call = V.promptCalls[0];
+  same([call.where, call.badge, call.status], ["onboarding · analysis (run) · Name", "", "ok"], "the request, and the step it was sent from");
+  assert.match(call.meta, /^claude-sonnet-4-5-20250929 · 1,843 in · 1,276 out · /);
+  assert.ok(call.input.startsWith("The PhD student's paper follows as an attached document."), "the message as the model received it, from the model_request snapshot");
+  assert.ok(call.input.includes("[the paper, as a PDF document block · 24 KB]"), "the paper is named, not pasted");
+  assert.ok(call.input.includes("<phd_student_paper>"));
+  assert.equal(JSON.parse(call.output).title, "Speculative Decoding for Fast LLM Inference", "the reply as parsed, from the model_parsed_response snapshot");
+  assert.equal(call.note, "credentials redacted before it was stored");
+  // A run recorded before prompts were named is placed by the call's purpose.
+  const older = P.d.state.recordings[0];
+  older.stages.forEach((s) => s.ops.forEach((o) => { if (o.kind === "model") { delete o.attributes["engelbart.prompt.template"]; delete o.attributes["engelbart.prompt.edited"]; } }));
+  V = P.d.renderVals();
+  same(V.promptTabs.map((t) => [t.key, t.edited]), [["analyzePrompt", false]]);
+  call.open(); await flush();
+  same([P.d.state.view, P.d.state.sel.op], ["requests", MODEL_OP]);
+  assert.equal(P.d.inspectorVM().name, "model.analysis");
+});
