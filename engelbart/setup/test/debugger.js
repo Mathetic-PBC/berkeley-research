@@ -295,8 +295,8 @@ class Debugger extends React.Component {
       return;
     }
     const st = run.stages.find(s => s.id === (ev.stage || ev.id)); if (!st) return;
-    // A box the product changes is drawn changed and left unselected: the detail panel opens only on a click,
-    // so an action on the left never pulls the panel down to a value's output.
+    // The box the product just changed selects itself, so the panel follows the action on the left.
+    if (ev.type === "op" && ev.status === "ok" && ev.writes && ev.writes.length && ["credit", "session"].indexOf(ev.writes[0]) < 0 && run === this.target()) { this.autoSel = ev.writes[ev.writes.length - 1]; }
     if (ev.type === "op") { const i = st.ops.findIndex(o => o.id === ev.id); const o = { id: ev.id, seq: ev.seq, at: ev.at, kind: ev.kind, name: ev.name, target: ev.target, status: ev.status, input: ev.input, output: ev.output, ms: ev.ms, meta: ev.meta || {}, error: ev.error, reads: ev.reads || [], writes: ev.writes || [] }; if (i < 0) st.ops.push(o); else st.ops[i] = o; }
     if (ev.type === "stage.end") { st.status = ev.status; st.code = ev.code; st.ms = ev.ms; st.response = ev.response; }
   }
@@ -357,6 +357,7 @@ class Debugger extends React.Component {
       if (ev.type === "stage") { this.apply(run, ev); return; }
       const home = recs.find(r => r.stages.some(s => s.id === (ev.stage || ev.id))) || run; this.apply(home, ev);
     });
+    if (this.autoSel && this.autoSel !== this.state.flowSel) { const next = this.autoSel; this.autoSel = null; this.setState({ flowSel: next, flowTab: null }); } else this.autoSel = null;
     this.scheduleSave();
     this.forceUpdate(() => { const el = this.listRef.current; if (el && this.state.stick && this.viewed() === run) el.scrollTop = el.scrollHeight; });
   }

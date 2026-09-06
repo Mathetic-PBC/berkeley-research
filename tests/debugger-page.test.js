@@ -868,23 +868,3 @@ test("in Real mode the Prompts view reads each call's request and reply from its
   same([P.d.state.view, P.d.state.sel.op], ["requests", MODEL_OP]);
   assert.equal(P.d.inspectorVM().name, "model.analysis");
 });
-
-test("a value the product writes is drawn changed but not selected: the detail panel opens only on a click", async () => {
-  const P = page({});
-  P.d.createEnv("Lab"); await settle();
-  P.send({ egb: "ready", speed: 1, mode: "sim" }); await flush();
-  const at = 1_700_000_000_000;
-  [
-    { type: "stage", id: "st-w", seq: 1, at, path: "/api/engelbart-onboarding", method: "POST", surface: "onboarding", action: "answer", label: "onboarding · answer" },
-    { type: "op", id: "op-w", stage: "st-w", seq: 2, at: at + 5, kind: "db", name: "store the answer", target: "PATCH /rest/v1/onboardings", status: "ok", input: { name: "Ada" }, output: { ok: true }, ms: 3, meta: {}, reads: ["session"], writes: ["profile"] },
-    { type: "stage.end", id: "st-w", at: at + 20, status: "ok", code: 200, ms: 20, response: { ok: true } },
-  ].forEach((ev) => P.send({ egb: "trace", event: ev }));
-  await new Promise((r) => setTimeout(r, 80));
-  let V = P.d.renderVals();
-  const node = V.flowNodes.find((n) => n.id === "profile");
-  assert.ok(node && node.wroteHere, "the written box is drawn, marked as written on this step");
-  same([P.d.state.flowSel, V.flowHasDetail], [null, false], "nothing selected itself; no panel pulled the view down");
-  node.select(); await flush();
-  V = P.d.renderVals();
-  same([P.d.state.flowSel, V.flowHasDetail], ["profile", true], "a click opens it");
-});
