@@ -103,6 +103,35 @@ printing any captured content:
 SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... RUN_ID=<onboarding id> npm run verify:telemetry
 ```
 
+## Debugger
+
+`/engelbart/setup/test` runs the real setup page (`setup.js`, `install.js`,
+`setup.css`, unmodified) in a frame against a simulated control plane that
+lives entirely in the browser, and draws beside it every request the page
+makes and every operation the simulated server runs to answer it: the auth
+check, each Supabase read and write, the storage upload, the model call with
+its prompt, the link checks. Nothing reaches Vercel, Supabase, LiteLLM or a
+model; the page's `fetch` to `/api` is answered in-page from
+`engelbart/setup/test/sim-backend.js`, model replies come from
+`fixture.js`, and the prompts are `prompts.js`, a verbatim copy of
+`api/_lib/onboarding-prompts.js` that the debugger lets you edit per
+environment. Test environments, step recordings and notes persist in that
+browser's `localStorage`.
+
+It is a simulator: it shows what the server is designed to do for each press,
+not what production did. The persisted telemetry in the
+`engelbart_telemetry_*` tables is the record of real runs; reading those into
+this interface is a later step.
+
+The page is flattened from the Claude Design file `Engelbart Debugger.dc.html`
+into `engelbart/setup/test/` (`debugger.js`, `debugger.css`, `frame.html`,
+`frame.js`), with React 18 loaded from `cdn.jsdelivr.net` under subresource
+integrity, so it runs under the Engelbart CSP without `unsafe-inline` or
+`unsafe-eval`. Only the frame page (`/engelbart/setup/test/frame`) may be
+embedded, and only by this origin; the setup page itself keeps
+`frame-ancestors 'none'`. `e2e/debugger.spec.js` opens the debugger under the
+exact headers `vercel.json` deploys and fails on any CSP violation.
+
 ## Source of truth
 
 The static pages began as hand-flattened exports from the Claude Design project *Mathetic landing page design*:
@@ -110,6 +139,7 @@ The static pages began as hand-flattened exports from the Claude Design project 
 - `index.html` ← `Mathetic Landing.dc.html`
 - `engelbart/index.html` + `engelbart/styles.css` ← `Mathetic Demo.dc.html`
 - `engelbart/demo.js` ← the ten-scene `engelbart-demo.jsx` product walkthrough, ported to native DOM animation
+- `engelbart/setup/test/` ← `Engelbart Debugger.dc.html` and its `debugger/` files, from the *Engelbart Debugger* design project
 
 The design-canvas runtime (`support.js`, `image-slot.js`, React/Babel from unpkg) is not shipped; the
 `<x-dc>` template, `style-hover` rules, and composition were flattened into plain HTML/CSS/JS.
