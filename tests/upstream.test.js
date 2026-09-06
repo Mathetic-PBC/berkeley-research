@@ -25,3 +25,15 @@ test("with a bypass key, it is that key straight to Anthropic, in Anthropic's ow
   // The member's key goes nowhere: it is not sent, and not even carried.
   assert.equal(JSON.stringify(up).includes("sk-member-key"), false);
 });
+
+test("credentials marked for Anthropic are the member's own key, straight to Anthropic, ahead of any server-wide key", () => {
+  const own = { status: "own", gateway: "anthropic", apiKey: "sk-ant-mine", baseUrl: ANTHROPIC_URL, models: [] };
+  const up = resolveUpstream(own, { ENGELBART_ANTHROPIC_API_KEY: "sk-ant-server" });
+  assert.equal(up.gateway, "anthropic");
+  assert.equal(up.baseUrl, ANTHROPIC_URL);
+  assert.equal(up.apiKey, "sk-ant-mine");
+  assert.deepEqual(up.headers, { "x-api-key": "sk-ant-mine", "anthropic-version": ANTHROPIC_VERSION });
+  assert.equal(JSON.stringify(up).includes("sk-ant-server"), false);
+  // The pool's credentials carry no gateway and stay on the proxy.
+  assert.equal(resolveUpstream(CREDS, {}).gateway, "litellm");
+});

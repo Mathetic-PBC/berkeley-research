@@ -5,6 +5,7 @@ const crypto = require("node:crypto");
 const CliAuth = require("./_lib/cli-auth");
 const Credits = require("./_lib/credits");
 const Curated = require("./_lib/curated");
+const MemberKeys = require("./_lib/member-keys");
 const SetupChat = require("./_lib/setup-chat");
 const Research = require("./_lib/research");
 const ResearchModel = require("./_lib/research-model");
@@ -14,11 +15,13 @@ const { encryptionKey, supabaseConfig } = require("./_lib/config");
 const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("./_lib/http");
 const { rpc, verifyUser } = require("./_lib/supabase");
 
-// The onboarding exploration's model calls bill the member's own credit key,
-// exactly like `turn`. One guard so ideas / refine / path fail the same
-// friendly way when the credit is gone, instead of surfacing a gateway error.
-async function memberCredentials(req) {
-  const user = await verifyUser(bearerToken(req));
+// What a member's model calls run on: their own Anthropic key when they
+// brought one (member-keys.js; the pool is then not asked), otherwise their
+// credit key, with one guard so every model action fails the same friendly
+// way when the credit is gone, instead of surfacing a gateway error.
+async function modelCredentials(user) {
+  const own = await MemberKeys.credentials(user);
+  if (own) return own;
   const credentials = await Credits.credentialsFor(user);
   if (credentials.status === "exhausted" || credentials.status === "blocked") {
     const error = new Error("Your Engelbart Claude credit is used up, so setup"
@@ -26,7 +29,12 @@ async function memberCredentials(req) {
     error.statusCode = 409;
     throw error;
   }
-  return { user, credentials };
+  return credentials;
+}
+
+async function memberCredentials(req) {
+  const user = await verifyUser(bearerToken(req));
+  return { user, credentials: await modelCredentials(user) };
 }
 
 // One retrieved lab row, mapped to the shape the browser renders in a research
@@ -130,14 +138,7 @@ async function handler(req, res) {
     const action = String(body.action || "");
 
     if (action === "turn") {
-      const user = await verifyUser(bearerToken(req));
-      const credentials = await Credits.credentialsFor(user);
-      if (credentials.status === "exhausted" || credentials.status === "blocked") {
-        const error = new Error("Your Engelbart Claude credit is used up, so setup"
-          + " cannot run right now. Reach out to us to top it up.");
-        error.statusCode = 409;
-        throw error;
-      }
+      const { credentials } = await memberCredentials(req);
       return sendJson(res, 200, await SetupChat.turn({
         transcript: body.transcript,
         shown: body.shown,
@@ -163,6 +164,18 @@ async function handler(req, res) {
         p_payload: payload,
       });
       return sendJson(res, 200, { saved: true });
+    }
+
+    // A member's own Anthropic key for the model calls of this setup. Checked
+    // with Anthropic, stored encrypted, answered with its last four characters
+    // and nothing more; `own_key_clear` puts them back on the pool.
+    if (action === "own_key") {
+      const user = await verifyUser(bearerToken(req));
+      return sendJson(res, 200, await MemberKeys.setKey(user, body.key));
+    }
+    if (action === "own_key_clear") {
+      const user = await verifyUser(bearerToken(req));
+      return sendJson(res, 200, await MemberKeys.clearKey(user));
     }
 
     // The installer's half: claim-once, so the payload is materialized by
@@ -202,23 +215,13 @@ async function handler(req, res) {
         let discovered = [];
         if (hasInterest) {
           try {
-            const credentials = await Credits.credentialsFor(user);
-            if (credentials.status !== "exhausted" && credentials.status !== "blocked") {
-              discovered = await discoverAreas(interest, credentials, exclude);
-            }
+            discovered = await discoverAreas(interest, await modelCredentials(user), exclude);
           } catch { discovered = []; }   // curated labs are guaranteed; discovery is a bonus
         }
         return sendJson(res, 200, { areas: [...curatedAreas, ...discovered], curated: true });
       }
 
-      const credentials = await Credits.credentialsFor(user);
-      if (credentials.status === "exhausted" || credentials.status === "blocked") {
-        const error = new Error("Your Engelbart Claude credit is used up, so setup"
-          + " cannot run right now. Reach out to us to top it up.");
-        error.statusCode = 409;
-        throw error;
-      }
-      const areas = await discoverAreas(interest, credentials, new Set());
+      const areas = await discoverAreas(interest, await modelCredentials(user), new Set());
       return sendJson(res, 200, { areas });
     }
 
@@ -455,7 +458,7 @@ async function handler(req, res) {
       try {
         // The structured generator is grounded in the refetched lab and billed
         // to the member's key; a lab of null still generates (empty Understand).
-        const credentials = await Credits.credentialsFor(user);
+        const credentials = await modelCredentials(user);
         const project = await ResearchModel.generateProject(
           { interest, idea, lab: lab || {}, lanes: body.lanes, own }, credentials);
         provenance.papers = project.understand.map(

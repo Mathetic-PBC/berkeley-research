@@ -13,6 +13,7 @@
 // (ENGELBART_TRACE_POLLS), so the graph shows the work and not the waiting.
 
 const Credits = require("./_lib/credits");
+const MemberKeys = require("./_lib/member-keys");
 const OnboardingRecord = require("./_lib/onboarding");
 const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("./_lib/http");
 const { verifyUser } = require("./_lib/supabase");
@@ -39,7 +40,15 @@ function creditsOf(user, d) {
   return (d.credentialsFor || Credits.credentialsFor)(user, d.options || {});
 }
 
+function keysOf(d) {
+  return d.memberKeys || MemberKeys;
+}
+
+// A member who brought their own Anthropic key spends that, and the pool is
+// neither asked nor allowed to refuse them. Everyone else is on the pool.
 async function memberCredentials(user, d) {
+  const own = await keysOf(d).credentials(user, d.options || {});
+  if (own) return own;
   const credentials = await creditsOf(user, d);
   if (spent(credentials)) throw creditGone();
   return credentials;
@@ -101,8 +110,12 @@ async function route(user, body, d, action) {
     const out = await OB.open(user, body, options);
     named(out.onboarding);
     const created = Boolean(out.onboarding && out.onboarding.status === "created");
-    const credit = await creditForOpen(user, d, created);
-    return { ...out, credit: { status: credit.status, budgetUsd: credit.budgetUsd, spendUsd: credit.spendUsd } };
+    // Their own key, if they brought one, and the pool otherwise. The page
+    // is told which; the key itself is not part of any answer.
+    const ownKey = await keysOf(d).status(user, options);
+    const credit = ownKey.set ? { status: "own" } : await creditForOpen(user, d, created);
+    return { ...out, credit: { status: credit.status, budgetUsd: credit.budgetUsd, spendUsd: credit.spendUsd },
+      own_key: ownKey.set ? { set: true, last4: ownKey.last4 } : { set: false } };
   }
   // Reading the analysis status is a row read, not a model call, and is priced
   // like one: only the `run` that starts the reader, or the retry that runs it
@@ -136,7 +149,7 @@ async function route(user, body, d, action) {
   throw error;
 }
 
-// d = {OB?, credentialsFor?, options?, testRunId?, mode?} -- injected by tests
+// d = {OB?, credentialsFor?, memberKeys?, options?, testRunId?, mode?} -- injected by tests
 // and harnesses; production uses the real modules and process.env.
 //
 // One action, one trace. A routine poll runs untraced unless polls are

@@ -225,6 +225,17 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-profile{margin-top:var(--space-7);padding:8px 12px;border:1px solid var(--bd);border-radius:var(--radius-sm);display:flex;flex-direction:column;gap:6px;font:var(--text-12);color:var(--fnt)}
 .ob-profile-line{font:500 12.5px/1.3 var(--font-sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ob-profile .ob-link{text-align:left;font-size:12px}
+/* the member's own Anthropic key: a line saying what Claude runs on, and the small form behind it */
+.ob-key{margin-top:var(--space-7);padding:8px 12px;border:1px solid var(--bd);border-radius:var(--radius-sm);display:flex;flex-direction:column;gap:6px;font:var(--text-12);color:var(--fnt)}
+.ob-key .ob-link{text-align:left;font-size:12px}
+.ob-key-line{font:500 12.5px/1.3 var(--font-sans);color:var(--ink)}
+.ob-key-help{font:var(--text-12);color:var(--fnt);text-wrap:pretty}
+.ob-key-input{all:unset;display:block;box-sizing:border-box;width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:var(--radius-sm);background:var(--panel);font:12.5px/1.4 var(--font-mono);color:var(--ink)}
+.ob-key-input:focus{border-color:var(--ink)}
+.ob-key-err{font:var(--text-12);color:var(--del)}
+.ob-key-actions{display:flex;align-items:center;gap:12px}
+.ob-key-save{font:500 12px/1 var(--font-sans);padding:6px 12px;border-radius:var(--radius-pill);border:1px solid var(--ink);background:var(--ink);color:var(--onacc);cursor:pointer}
+.ob-key-save[disabled]{color:var(--fnt);background:var(--hov);border-color:var(--bd);cursor:default}
 .ob-test{margin-top:auto;padding-top:24px;display:flex;flex-direction:column;align-items:flex-start;gap:8px}
 .ob-test-cap{font:var(--text-microcap);letter-spacing:1.4px;text-transform:uppercase;color:var(--mut)}
 .ob-reading{margin-top:28px;display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px dashed var(--bd2);border-radius:var(--radius-md);animation:rise var(--dur-rise) both;font:var(--text-12);color:var(--mut)}

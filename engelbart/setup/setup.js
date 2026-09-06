@@ -57,6 +57,7 @@
     cals: [],           // calibration rows
     turns: [],          // the brainstorm transcript, as stored
     credit: null,
+    ownKey: null,       // { set, last4 }: whether the member brought their own Anthropic key
     step: 0,            // the step on screen (row.step is the furthest reached)
     base: 0,            // 4 once the profile steps are behind them: Paper is then the first of six
     test: false,        // ?test=true: every step is a click away, and the record can be cleared
@@ -72,6 +73,7 @@
       bs: { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false },   // brainstorm
       as: { open: {}, picked: "" },     // assets
       reg: { open: false, pos: null, busy: false, rewrites: {} },   // the register control: unfolded, pending slider position, in-flight, rewritten text by step
+      key: { open: false, text: "", busy: false, err: "" },         // the own-key control: unfolded, what is typed, in-flight, what went wrong
       todoConfirm: -1,                  // the todo row whose × was pressed once
       tour: false,                      // the one-time tour between Install and Topics
       change: { open: false, text: "", thinking: false, log: [] }                             // direction / subgoals
@@ -151,6 +153,7 @@
     st.cals = out.calibrations || [];
     st.turns = out.turns || [];
     if (out.credit) st.credit = out.credit;
+    if (out.own_key) st.ownKey = out.own_key;
     var r = st.row;
     st.ui.yearOther = !!r.year && YEARS.indexOf(r.year) < 0;
     st.ui.yearText = st.ui.yearOther ? r.year : "";
@@ -214,6 +217,7 @@
       profile.appendChild(on(change, "click", function () { st.base = 0; go(0); }));
       rail.appendChild(profile);
     }
+    rail.appendChild(keyView());
     var steps = el("div", "ob-steps");
     LABELS.forEach(function (label, i) {
       if (i < st.base) return;
@@ -250,6 +254,91 @@
     }
     if (st.test) rail.appendChild(testBar());
     return rail;
+  }
+
+  // --- the member's own Anthropic key ----------------------------------------
+  //
+  // Setup runs on Mathetic credit unless the member brings an Anthropic key of
+  // their own. The key goes to the server once, is checked with Anthropic and
+  // stored encrypted there, and this page only ever sees its last four
+  // characters again.
+
+  function keyView() {
+    var k = st.ui.key, own = st.ownKey || { set: false };
+    var box = el("div", "ob-key");
+    if (!k.open) {
+      box.appendChild(el("div", "ob-key-line", own.set
+        ? "Claude runs on your own Anthropic key (…" + str(own.last4) + ")"
+        : "Claude runs on Mathetic credit"));
+      var change = el("button", "ob-link", own.set ? "Change or remove the key" : "Use your own Anthropic key"); change.type = "button";
+      box.appendChild(on(change, "click", function () { k.open = true; k.text = ""; k.err = ""; draw(); }));
+      return box;
+    }
+    box.appendChild(el("div", "ob-key-line", own.set ? "Replace your Anthropic key" : "Use your own Anthropic key"));
+    box.appendChild(el("div", "ob-key-help", "Paste an API key from console.anthropic.com. It is checked with Anthropic, stored encrypted, and used only for the model calls of your setup here. It is never shown again."));
+    var input = el("input", "ob-key-input");
+    input.type = "password"; input.placeholder = "sk-ant-…"; input.autocomplete = "off"; input.spellcheck = false; input.value = k.text;
+    attr(input, "aria-label", "Anthropic API key");
+    on(input, "input", function () { k.text = input.value; });
+    on(input, "keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); submitKey(); }
+      if (e.key === "Escape") { e.preventDefault(); closeKey(); }
+    });
+    box.appendChild(input);
+    if (k.err) box.appendChild(el("div", "ob-key-err", k.err));
+    var row = el("div", "ob-key-actions");
+    var save = el("button", "ob-key-save", k.busy ? "Checking…" : "Save"); save.type = "button"; save.disabled = k.busy;
+    row.appendChild(on(save, "click", submitKey));
+    if (own.set) {
+      var remove = el("button", "ob-link", "Remove"); remove.type = "button";
+      row.appendChild(on(remove, "click", removeKey));
+    }
+    var cancel = el("button", "ob-link", "Cancel"); cancel.type = "button";
+    row.appendChild(on(cancel, "click", closeKey));
+    box.appendChild(row);
+    return box;
+  }
+
+  function closeKey() {
+    var k = st.ui.key;
+    if (k.busy) return;
+    k.open = false; k.text = ""; k.err = ""; draw();
+  }
+
+  // What was typed leaves this tab as soon as it is sent, whichever way the
+  // answer goes: a refused key is pasted again, not kept around.
+  function submitKey() {
+    var k = st.ui.key;
+    if (k.busy) return;
+    var text = str(k.text).trim();
+    if (!text) { k.err = "Paste a key first."; draw(); return; }
+    k.busy = true; k.err = ""; k.text = ""; draw();
+    setupApi({ action: "own_key", key: text }).then(function (out) {
+      st.ownKey = { set: true, last4: str(out.last4) };
+      k.busy = false; k.open = false;
+      draw();
+    }, function (e) {
+      k.busy = false;
+      if (e && e.status === 401) { fail(e); return; }
+      k.err = (e && e.message) || "That key could not be saved.";
+      draw();
+    });
+  }
+
+  function removeKey() {
+    var k = st.ui.key;
+    if (k.busy) return;
+    k.busy = true; k.err = ""; k.text = ""; draw();
+    setupApi({ action: "own_key_clear" }).then(function () {
+      st.ownKey = { set: false };
+      k.busy = false; k.open = false;
+      draw();
+    }, function (e) {
+      k.busy = false;
+      if (e && e.status === 401) { fail(e); return; }
+      k.err = (e && e.message) || "The key could not be removed.";
+      draw();
+    });
   }
 
   // --- test mode -----------------------------------------------------------------

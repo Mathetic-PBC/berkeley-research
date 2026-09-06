@@ -12,6 +12,7 @@ function deps(overrides = {}) {
   const row = { id: "row-1", user_id: USER.id, status: "open", step: 0, analysis_status: "none", ...overrides.row };
   return {
     credentialsFor: async () => ({ status: "active", apiKey: "k", baseUrl: "https://p", models: [], budgetUsd: 25, spendUsd: 1 }),
+    memberKeys: { status: async () => ({ set: false }), credentials: async () => null },
     ...overrides,
     // Last, so an override names ONE record function and keeps the rest: the
     // handler loads the row through `open` before every other action.
@@ -44,7 +45,33 @@ test("open returns the row, the calibrations and the credit meter", async () => 
   const out = await handler.dispatch(USER, { action: "open" }, deps());
   assert.equal(out.onboarding.id, "row-1");
   assert.deepEqual(out.credit, { status: "active", budgetUsd: 25, spendUsd: 1 });
+  assert.deepEqual(out.own_key, { set: false });
   assert.equal(out.apiKey, undefined);
+});
+
+// A member who brought their own Anthropic key: the model actions run on it,
+// the pool is not consulted, and a spent pool does not stop them. The page
+// learns four characters of it and nothing else.
+test("a member's own key carries the model actions, past the pool and its gate", async () => {
+  const OWN = "sk-ant-api03-own-key-0123456789abcdef";
+  let seen = null;
+  let pool = 0;
+  const d = deps({
+    memberKeys: {
+      status: async () => ({ set: true, last4: OWN.slice(-4), since: "t" }),
+      credentials: async () => ({ status: "own", gateway: "anthropic", apiKey: OWN, baseUrl: "https://api.anthropic.com", models: [] }),
+    },
+    credentialsFor: async () => { pool += 1; return { status: "exhausted", budgetUsd: 25, spendUsd: 25 }; },
+    OB: { details: async (u, r, c, b, credentials) => { seen = credentials; return { intro: "", questions: [] }; } },
+  });
+  const opened = await handler.dispatch(USER, { action: "open" }, d);
+  assert.deepEqual(opened.own_key, { set: true, last4: "cdef" });
+  assert.equal(opened.credit.status, "own");
+  assert.equal(JSON.stringify(opened).includes(OWN), false);
+  await handler.dispatch(USER, { action: "details" }, d);
+  assert.equal(seen.gateway, "anthropic");
+  assert.equal(seen.apiKey, OWN);
+  assert.equal(pool, 0, "the pool was never asked");
 });
 
 test("a spent key stops the flow at open with the credit wording", async () => {

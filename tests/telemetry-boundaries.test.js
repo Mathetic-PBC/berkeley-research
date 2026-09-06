@@ -308,10 +308,12 @@ test("a page fetch is an http operation with the URL stripped of its query, and 
 });
 
 // The dispatcher, with an injected record module as engelbart-onboarding.test.js does.
+const NO_OWN_KEY = { status: async () => ({ set: false }), credentials: async () => null };
 function deps(overrides = {}) {
   const { OB: ob, ...rest } = overrides;
   return {
     credentialsFor: async () => CREDS,
+    memberKeys: NO_OWN_KEY,
     ...rest,
     OB: {
       open: async () => ({ onboarding: { id: "row-7", user_id: USER.id, status: "open", step: 0, analysis_status: "running" }, calibrations: [] }),
@@ -376,8 +378,8 @@ test("concurrent onboarding requests keep their own trace context", async () => 
         });
       },
     });
-    const a = handler.dispatch(USER, { action: "brainstorm", text: "a" }, { credentialsFor: async () => CREDS, OB: OBfor("row-a") });
-    const b = handler.dispatch({ id: "22222222-2222-2222-2222-222222222222" }, { action: "brainstorm", text: "b" }, { credentialsFor: async () => CREDS, OB: OBfor("row-b") });
+    const a = handler.dispatch(USER, { action: "brainstorm", text: "a" }, { credentialsFor: async () => CREDS, memberKeys: NO_OWN_KEY, OB: OBfor("row-a") });
+    const b = handler.dispatch({ id: "22222222-2222-2222-2222-222222222222" }, { action: "brainstorm", text: "b" }, { credentialsFor: async () => CREDS, memberKeys: NO_OWN_KEY, OB: OBfor("row-b") });
     setTimeout(release, 5);
     const [ra, rb] = await Promise.all([a, b]);
     assert.equal(ra.say, "row-a"); assert.equal(rb.say, "row-b");

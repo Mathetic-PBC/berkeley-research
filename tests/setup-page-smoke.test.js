@@ -131,7 +131,7 @@ function mount(options = {}) {
     }
     if (body && replies[body.action]) return replies[body.action](body);
     if (url === "/api/engelbart-onboarding") {
-      if (body.action === "open") return answer({ onboarding: row, calibrations: options.calibrations || [], turns, profile_reused: Boolean(options.profileReused) });
+      if (body.action === "open") return answer({ onboarding: row, calibrations: options.calibrations || [], turns, profile_reused: Boolean(options.profileReused), own_key: options.ownKey || { set: false } });
       if (body.action === "reset") { row = { step: 0, status: "open", analysis_status: "none" }; return answer({ onboarding: row, calibrations: [], profile_reused: false }); }
       if (body.action === "step") { row = { ...row, ...body.fields, step: body.step }; return answer({ onboarding: row }); }
       if (body.action === "sources") return answer({ ok: true, analysis_status: "none" });
@@ -160,6 +160,8 @@ function mount(options = {}) {
           upload: { uploadUrl: "https://x.supabase.co/storage/v1/object/upload/sign/papers/p", anonKey: "anon" } });
       }
       if (body.action === "own_paper_saved") return answer({ saved: true });
+      if (body.action === "own_key") return answer({ set: true, last4: String(body.key).slice(-4) });
+      if (body.action === "own_key_clear") return answer({ set: false });
     }
     if (/supabase\.co/.test(url)) return answer({});           // the PDF's PUT to Storage
     return Promise.reject(new Error(`unrouted ${url}`));
@@ -765,4 +767,55 @@ test("without ?test the rail only reaches back", async () => {
   assert.equal(one(page.app, "ob-test"), undefined);
   const rows = byClass(page.app, "ob-row");
   assert.deepEqual(rows.map((r) => r.attrs["data-reach"]), ["1", "1", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]);
+});
+
+// --- the member's own Anthropic key --------------------------------------------
+
+const keyBox = (page) => one(page.app, "ob-key");
+const keyLine = (page) => textOf(one(keyBox(page), "ob-key-line"));
+const keyLink = (page, label) => byClass(keyBox(page), "ob-link").filter((b) => textOf(b) === label)[0];
+
+test("the rail takes the member's own Anthropic key, shows only its tail, and can hand it back", async () => {
+  const page = mount({ row: fullRow({ step: 4 }) });
+  await settle();
+  const title = page.title();
+  assert.equal(keyLine(page), "Claude runs on Mathetic credit");
+  keyLink(page, "Use your own Anthropic key").click();
+  const input = find(keyBox(page), (n) => n.tagName === "input")[0];
+  assert.equal(input.type, "password");
+  input.value = "  sk-ant-api03-test-key-0123456789abcdef  "; input.fire("input", { target: input });
+  one(keyBox(page), "ob-key-save").click();
+  await settle();
+  const sent = page.bodies.find((b) => b.action === "own_key");
+  assert.equal(sent.key, "sk-ant-api03-test-key-0123456789abcdef");
+  assert.equal(keyLine(page), "Claude runs on your own Anthropic key (…cdef)");
+  assert.equal(find(page.app, (n) => n.tagName === "input" && n.type === "password").length, 0, "the key is gone from the page");
+  assert.equal(page.title(), title, "the step on screen is untouched");
+  // Remove puts them back on the pool.
+  keyLink(page, "Change or remove the key").click();
+  keyLink(page, "Remove").click();
+  await settle();
+  assert.equal(page.bodies.filter((b) => b.action === "own_key_clear").length, 1);
+  assert.equal(keyLine(page), "Claude runs on Mathetic credit");
+});
+
+test("a key Anthropic refuses is reported beside the field, not as a page error", async () => {
+  const page = mount({ row: fullRow({ step: 4 }), refuse: { own_key: { status: 400, error: "Anthropic did not accept that key" } } });
+  await settle();
+  keyLink(page, "Use your own Anthropic key").click();
+  const input = find(keyBox(page), (n) => n.tagName === "input")[0];
+  input.value = "sk-ant-api03-bad-key-0123456789abcdef"; input.fire("input", { target: input });
+  one(keyBox(page), "ob-key-save").click();
+  await settle();
+  assert.equal(textOf(one(keyBox(page), "ob-key-err")), "Anthropic did not accept that key");
+  assert.equal(page.error(), "");
+  assert.equal(find(keyBox(page), (n) => n.tagName === "input")[0].value, "", "the refused key is not kept in the field");
+  assert.equal(keyLine(page), "Use your own Anthropic key", "the form stays open for another try");
+});
+
+test("a member who arrives with a key sees it named in the rail", async () => {
+  const page = mount({ row: fullRow({ step: 4 }), ownKey: { set: true, last4: "9zzz" } });
+  await settle();
+  assert.equal(keyLine(page), "Claude runs on your own Anthropic key (…9zzz)");
+  assert.ok(keyLink(page, "Change or remove the key"));
 });
