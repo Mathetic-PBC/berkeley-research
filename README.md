@@ -136,16 +136,21 @@ model; the page's `fetch` to `/api` is answered in-page from
 `api/_lib/onboarding-prompts.js` that the debugger lets you edit per
 environment. The page opens on a dashboard of test environments, each with
 its own simulated account, step recordings, notes and graph layout; nothing
-runs until one is opened. Environments, step recordings and notes persist in
-that browser's `localStorage`.
+runs until one is opened. A card's Configure edits an environment and its
+Reset drops the simulated account and the step recordings (the participant,
+prompts and notes stay) without opening it; an open environment resets from
+the top bar, which also reloads the product at step one. Environments, step
+recordings and notes persist in that browser's `localStorage`.
 
-The page has two modes, switched at the top, with the same composition in
-both: the setup page on the left; the request list, the operation inspector
-and the Data flow view on the right. **Simulated** is the simulator above: it
-shows what the server is designed to do for each press, not what production
-did. **Real** puts the same setup page in the same frame against the real
-endpoints, signed in as you (the frame uses your real Supabase session;
-nothing is intercepted), and draws beside it what the server actually did.
+The page has two modes, named on the URL, with the same composition in both:
+the setup page on the left; the request list, the operation inspector and
+the Data flow view on the right. **Simulated**, the plain URL, is the
+simulator above: it shows what the server is designed to do for each press,
+not what production did. **Real** (`/engelbart/setup/test?mode=real`) puts
+the same setup page in the same frame against the real endpoints, signed in
+as you (the frame uses your real Supabase session; nothing is intercepted),
+and draws beside it what the server actually did. Nothing in the page
+switches between them.
 Every action's reply names the trace it produced in an `x-engelbart-trace-id`
 header; the page reads that trace from `/api/engelbart-telemetry?trace=` the
 moment the reply lands and places the recorded operations under the request
@@ -158,8 +163,8 @@ reply, database request and response, page text, normalized result),
 attributes, events and error, exactly as stored, credentials redacted before
 storage. Requests the server does not trace (the config read, routine status
 polls, the browser's direct upload to Storage) are listed too, marked
-untraced, consecutive polls folded into one row. The run picker beside the
-mode switch opens an earlier onboarding of yours into the same panel. Nothing
+untraced, consecutive polls folded into one row. The run picker in the top
+bar opens an earlier onboarding of yours into the same panel. Nothing
 is invented: no cost is estimated, request bodies the server did not keep are
 not shown, and the Data flow view draws only the reads and writes the server
 recorded for each operation (`engelbart.lineage.reads` / `.writes`, see the

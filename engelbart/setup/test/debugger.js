@@ -171,6 +171,16 @@ class Debugger extends React.Component {
     const envs = this.state.envs.filter(e => e.id !== env.id); this.persistEnvs(envs);
     this.setState(open ? Object.assign({ envs: envs }, this.envState(null)) : { envs: envs });
   }
+  // Resetting from the dashboard: the environment's simulated account and step tabs go, its name, participant,
+  // prompts, notes and graph zoom stay. (The open environment resets from its own bar, where the product reloads too.)
+  resetEnv(env) {
+    if (!env || !window.confirm("Reset “" + env.name + "”? Its simulated account's setup is dropped and every step tab is cleared; its name, participant, prompts and notes stay.")) return;
+    const d = this.loadEnvData(env.id) || {}, tabs = this.loadTabs();
+    const data = { recordings: tabs, targetId: tabs[0].id, viewing: 0, notes: d.notes || {}, flowPos: {}, flowPan: { x: 0, y: 0 }, flowZoom: d.flowZoom || 1, flowHeight: d.flowHeight || null };
+    try { window.localStorage.removeItem("egb.sim.db." + env.id); window.localStorage.setItem(this.envKey(env.id), JSON.stringify(data)); } catch (e) {}
+    const envs = this.state.envs.map(e => e.id === env.id ? Object.assign({}, e, { stats: this.envStats(tabs) }) : e); this.persistEnvs(envs);
+    this.setState({ envs: envs });
+  }
   // A card on the dashboard: what the environment is set up as, and what it has recorded so far.
   envCard(e) {
     const p = e.config && e.config.participant, st = e.stats || {}, edited = Object.keys(e.config && e.config.prompts || {}).length;
@@ -183,6 +193,7 @@ class Debugger extends React.Component {
       stats: [{ k: "steps", v: String(st.steps || 0) }, { k: "requests", v: String(st.requests || 0) }, { k: "model calls", v: String(st.model || 0) }, { k: "est. cost", v: st.cost ? this.fmtCost(st.cost) : "$0" }, { k: "server time", v: this.fmtMs(st.ms) === "—" ? "0 ms" : this.fmtMs(st.ms) }],
       open: () => this.openEnv(e.id),
       configure: (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); this.openConfig("edit", e.id); },
+      reset: (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); this.resetEnv(e); },
       remove: (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); this.deleteEnv(e); } };
   }
   // One tab per onboarding step. The product reports which step is on screen; requests made while it
@@ -313,7 +324,9 @@ class Debugger extends React.Component {
   // The mode is remembered in this browser. Switching to Real saves the simulator's tabs first; switching
   // back restores them from the environment's storage. The product on the left does, in Real mode, exactly
   // what it does at /engelbart/setup; this side only reads what the server recorded about it.
-  loadMode() { try { return window.localStorage.getItem("egb.debugger.mode") === "real" ? "real" : "sim"; } catch (e) { return "sim"; } }
+  // The mode is the URL's, as the frame's is: ?mode=real runs the setup page as the signed-in member; anything
+  // else is the simulator, which is where the page lands and stays. There is no switch in the page.
+  loadMode() { try { return new URLSearchParams(window.location.search).get("mode") === "real" ? "real" : "sim"; } catch (e) { return "sim"; } }
   isReal() { return this.state.mode === "real"; }
   setReal(patch, after) { this.setState(s => ({ real: Object.assign({}, s.real, patch) }), after); }
   // session: the member's session as this page reads it; frameSession: as the frame reported it; runs: the
@@ -343,17 +356,6 @@ class Debugger extends React.Component {
       rec.stages.forEach(x => { if (x.real && x.requestId) { const k = "req:" + x.requestId; if (open[k] != null && open[x.id] == null) open[x.id] = open[k]; if (sel && sel.run === "live" && sel.stage === k) sel = { run: "live", stage: x.id, op: null }; } });
       return Object.assign({ real: R, open: open, sel: sel }, st);
     }, () => { if (after) after(); const el = this.listRef.current; if (el && this.state.stick && !this.state.real.picked) el.scrollTop = el.scrollHeight; });
-  }
-  setMode(mode) {
-    if (mode === this.state.mode) return;
-    try { window.localStorage.setItem("egb.debugger.mode", mode); } catch (e) {}
-    this.connectedAt = null; this.lastPress = null; this.wheelEl = null;
-    if (mode === "real") {
-      clearTimeout(this.saveTimer); this.saveEnvData(); this.pending.splice(0);
-      this.setState(Object.assign({ mode: "real", sel: null, flowSel: null, open: {}, view: "requests", inspTab: "input", tab: "live", connected: false, picking: false, stick: true }, this.realRecordingState(this.state.real)), () => this.enterReal());
-      return;
-    }
-    this.setState(Object.assign({ mode: "sim", tab: "live", connected: false }, this.envState(this.state.envId)));
   }
   // On entering Real mode: the member's runs, for the picker. The frame boots the product by itself.
   enterReal() { if (!this.state.real.runs && !this.state.real.loading) this.loadRuns(); }
@@ -943,11 +945,9 @@ class Debugger extends React.Component {
       copyLabel: S.copied ? "Copied" : "Copy JSON", copyJson: () => { if (insp && navigator.clipboard) navigator.clipboard.writeText(insp.raw).then(() => this.setState({ copied: true }), () => {}); }
     };
   }
-  // Real mode's view model: the mode toggle, the run picker, the member's session and the frame's word on it.
+  // Real mode's view model: the run picker, the member's session and the frame's word on it.
   realVM() {
     const S = this.state, R = S.real, real = S.mode === "real";
-    const modes = [["sim", "Simulated", "The setup page against the simulated backend: nothing real is touched"], ["real", "Real", "The setup page against the real backend, as the signed-in member: real requests, real telemetry"]]
-      .map(([k, label, title]) => ({ key: k, label: label, title: title, on: S.mode === k, bg: S.mode === k ? "#171717" : "transparent", color: S.mode === k ? "#fff" : "#4d4d4d", select: () => this.setMode(k) }));
     const label = r => (r.project_name || r.paper_title || ("onboarding " + String(r.onboarding_id).slice(0, 8))) + " · " + this.dateOf(r.telemetry && r.telemetry.started_at || r.created_at) + (r.telemetry && r.telemetry.status === "failed" ? " · failed" : "");
     // Earlier runs: the member's other onboardings that recorded something. The one the product is on is this session.
     const earlier = (R.runs || []).filter(r => r.telemetry && r.onboarding_id !== R.onboardingId);
@@ -956,7 +956,7 @@ class Debugger extends React.Component {
       .concat(earlier.map(r => ({ value: r.onboarding_id, label: label(r) })))
       .concat([{ value: "__refresh", label: R.loading ? "Refreshing the list…" : (R.runs ? "Refresh the list" : "Load earlier runs") }]);
     const fs = R.frameSession;
-    return { isReal: real, modes: modes, pickerValue: R.picked ? R.picked.onboarding_id : "__current", pickerOptions: options, pick: (e) => this.pickRun(e.target.value),
+    return { isReal: real, pickerValue: R.picked ? R.picked.onboarding_id : "__current", pickerOptions: options, pick: (e) => this.pickRun(e.target.value),
       email: (R.session && R.session.email) || (fs && fs.email) || "", error: R.error || "", loading: !!R.loading,
       signedOut: !!(fs && fs.signedIn === false), signedOutWhy: (fs && fs.error) || "", reloadFrame: () => this.reloadFrame(),
       viewingPicked: !!R.picked, pickedTitle: R.picked ? label(R.picked) : "" };
@@ -973,16 +973,12 @@ class Debugger extends React.Component {
         h("button", { onClick: R.reloadFrame, className: "hv-ink-line", style: css("margin-top:12px;padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px") }, "Reload the frame")));
   }
   // --- the template ------------------------------------------------------------------------------------
-  // On the dashboard the bar carries the wordmark, the mode toggle and the notice; the environment dropdown and
-  // the reset belong to an open environment. (The design's bar shows the wordmark alone there; the mode toggle
-  // stays because Real mode, which has no environments, is reached from it.)
+  // On the dashboard the bar carries the wordmark and the notice alone; the environment dropdown and the reset
+  // belong to an open environment. In Real mode (?mode=real) it carries the run picker and the member instead.
   renderTopBar(V) {
     const R = V.real;
     return h("div", { "data-screen-label": "Top bar", style: css("flex:none;min-height:46px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 14px 6px 16px;border-bottom:1px solid #eaeaea;white-space:nowrap") },
       h("span", { style: css("font:500 17px/1 " + SANSF + ";letter-spacing:-0.2px") }, "Engelbart"),
-      h("span", { role: "group", "aria-label": "mode", style: css("display:inline-flex;align-items:center;border:1px solid #eaeaea;border-radius:999px;padding:2px;background:#fff") },
-        R.modes.map(m => h("button", { key: m.key, onClick: m.select, title: m.title, "aria-pressed": m.on, style: css("padding:5px 11px;border:none;border-radius:999px;font:500 11.5px/1 " + SANS + ";background:" + m.bg + ";color:" + m.color + ";white-space:nowrap") }, m.label))),
-      V.isReal ? h("span", { title: "Real mode performs real actions: model calls spend real credit, onboarding writes are real, uploads are real. Nothing here can replay, rerun or reset them.", style: css("padding:4px 8px;border-radius:999px;background:oklch(0.95 0.04 25);font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:oklch(0.45 0.16 25)") }, "real actions") : null,
       V.isReal
         ? h("select", { value: R.pickerValue, onChange: R.pick, "data-run-picker": "1", title: "what the panel shows: this session, or one of your earlier runs", style: css("max-width:320px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
           R.pickerOptions.map(o => h("option", { key: o.value, value: o.value }, o.label)))
@@ -993,13 +989,9 @@ class Debugger extends React.Component {
         : V.isDashboard ? null : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
           style: css("padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px;white-space:nowrap") }, "Reset test environment"));
   }
-  // One line under the top bar in Real mode, because the product on the left is not a simulation there.
-  renderRealStrip() {
-    return h("div", { "data-screen-label": "Real mode notice", style: css("flex:none;padding:5px 16px;border-bottom:1px solid #eaeaea;background:oklch(0.97 0.02 25);font:11.5px/1.5 " + SANS + ";color:oklch(0.4 0.14 25);white-space:normal;text-wrap:pretty") },
-      "Real mode: the product on the left does real work as you. Model calls spend real credit, Continue writes to your onboarding, a dropped PDF is uploaded. The panel on the right only reads what the server recorded.");
-  }
   // The environments dashboard, Simulated mode's landing screen. Every environment is a card: the whole card
-  // opens it, its × deletes it, Configure edits it without opening it. Hover changes borders only (debugger.css).
+  // opens it, its × deletes it, Configure edits it and Reset clears it, both without opening it. Hover changes
+  // borders only (debugger.css).
   renderDashboard(V) {
     const PILL = "padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;border-radius:999px;white-space:nowrap";
     return h("div", { "data-screen-label": "Environments", style: css("flex:1;min-height:0;overflow:auto;padding:32px 32px 48px") },
@@ -1027,7 +1019,8 @@ class Debugger extends React.Component {
                 h("div", { style: css("margin-top:4px;font:500 9px/1 " + SANS + ";letter-spacing:1.2px;text-transform:uppercase;color:#8f8f8f;white-space:nowrap") }, st.k)))),
             h("div", { style: css("display:flex;align-items:center;gap:8px;margin-top:2px") },
               h("span", { style: css(PILL + ";color:#fff;background:#171717") }, "Open ›"),
-              h("button", { onClick: ec.configure, className: "hv-ink-line", style: css(PILL + ";color:#4d4d4d;background:transparent;border:1px solid #eaeaea") }, "Configure")))))));
+              h("button", { onClick: ec.configure, className: "hv-ink-line", style: css(PILL + ";color:#4d4d4d;background:transparent;border:1px solid #eaeaea") }, "Configure"),
+              h("button", { onClick: ec.reset, title: "Drop the simulated account's setup and clear every step tab; the participant and prompts stay", className: "hv-ink-line", style: css(PILL + ";color:#4d4d4d;background:transparent;border:1px solid #eaeaea") }, "Reset")))))));
   }
   renderConfig(cfg) {
     if (!cfg.open) return null;
@@ -1332,7 +1325,6 @@ class Debugger extends React.Component {
     const V = this.renderVals(), R = V.real;
     return h("div", { style: css("height:100vh;display:flex;flex-direction:column;background:#fff;color:#171717;font-family:" + SANSF + ";overflow:hidden") },
       this.renderTopBar(V),
-      V.isReal ? this.renderRealStrip() : null,
       this.renderConfig(V.cfg),
       V.isDashboard ? this.renderDashboard(V) : h("div", { ref: this.bodyRef, style: css("flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,56fr) 1px minmax(0,44fr)") },
         h("div", { "data-screen-label": "Product", style: css("min-width:0;min-height:0;position:relative;background:#fafafa") },

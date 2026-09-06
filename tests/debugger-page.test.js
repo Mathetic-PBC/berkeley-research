@@ -136,7 +136,8 @@ function page(options = {}) {
     supabase: { createClient: () => ({ auth: { getSession: async () => (options.signedIn === false ? { data: { session: null } } : { data: { session: { access_token: TOKEN, user: { email: "member@berkeley.edu" } } } }) } }) },
     React, ReactDOM: { createRoot: () => ({ render(el) { mounted = new el.type(el.props); mounted.componentDidMount(); } }) },
   };
-  if (options.mode) store.set("egb.debugger.mode", options.mode);
+  // The mode is named on the URL, as the frame's is; the page stores nothing about it.
+  if (options.mode === "real") sandbox.location.search += (sandbox.location.search ? "&" : "?") + "mode=real";
   // What this browser already held: environments, their saved state, simulated accounts.
   Object.entries(options.seed || {}).forEach(([k, v]) => store.set(k, typeof v === "string" ? v : JSON.stringify(v)));
   sandbox.window = sandbox;
@@ -151,18 +152,19 @@ function page(options = {}) {
     response: (id, over) => send(Object.assign({ egb: "response", id, at: 1_700_000_000_000 + 120, ms: 120, status: 200, ok: true, trace_id: null, body: { ok: true } }, over || {})) };
 }
 
-test("the stored mode decides how the page starts; Real mode never hands the frame the product's test switch, and hides the simulator's reset", async () => {
+test("the URL decides the mode; Real mode never hands the frame the product's test switch, and hides the simulator's reset; nothing in the page switches modes", async () => {
   const P = page({ mode: "real" });
   assert.equal(P.d.isReal(), true);
   const V = P.d.renderVals();
   assert.equal(V.frameSrc, "/engelbart/setup/test/frame?mode=real", "no env, no participant, and never test=true, although the page itself was opened with it");
   assert.equal(P.d.props.productTestMode, true);
   const bar = texts(P.d.renderTopBar(V));
-  assert.ok(bar.includes("Simulated") && bar.includes("Real"), "the mode toggle");
-  assert.ok(bar.includes("real actions"), "the warning badge");
+  assert.ok(!bar.includes("Simulated") && !bar.includes("Real"), "no mode toggle: the mode is the URL's");
+  assert.ok(!bar.includes("real actions"), "no warning badge");
   assert.ok(!bar.includes("Reset test environment"), "no reset button in Real mode");
   assert.ok(!bar.some((t) => /Configure this environment/.test(t)), "no environment menu in Real mode");
-  assert.ok(texts(P.d.renderRealStrip()).join(" ").includes("Model calls spend real credit"), "the strip says what Real means");
+  assert.equal(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Real mode notice").length, 0, "no strip under the bar");
+  assert.equal(P.d.setMode, undefined, "and no way to switch");
   assert.ok(texts(P.d.render()).includes("Engelbart setup, running against the real backend"), "the frame is on the page in Real mode");
   assert.equal(find(P.d.render(), (n) => n.type === "iframe").length, 1);
   assert.equal(V.isRequestsView, true, "Real mode opens on Requests, where the work shows");
@@ -178,8 +180,9 @@ test("the stored mode decides how the page starts; Real mode never hands the fra
   const VS = S.d.renderVals();
   assert.match(VS.frameSrc, /^\/engelbart\/setup\/test\/frame\?env=env-[a-z0-9]+&test=true$/, "Simulated mode still passes the test switch through");
   const sbar = texts(S.d.renderTopBar(VS));
-  assert.ok(sbar.includes("Reset test environment") && !sbar.includes("real actions"));
+  assert.ok(sbar.includes("Reset test environment") && !sbar.includes("real actions") && !sbar.includes("Real"));
   assert.equal(S.server.telemetry().length, 0, "the simulator never reads telemetry");
+  assert.equal(S.store.has("egb.debugger.mode"), false, "nothing about the mode is stored");
 });
 
 test("Simulated mode lands on the environments dashboard: no frame and no simulated backend until one is opened; New environment creates one and opens it", async () => {
@@ -201,7 +204,7 @@ test("Simulated mode lands on the environments dashboard: no frame and no simula
   assert.ok(copy.includes("New environment"));
   assert.ok(copy.includes("No environments yet. Create one to open the product against a fresh simulated account."), "the empty state");
   const bar = texts(P.d.renderTopBar(V));
-  assert.ok(bar.includes("Engelbart") && bar.includes("Simulated") && bar.includes("Real"), "the wordmark and the mode toggle");
+  same(bar.filter(Boolean), ["Engelbart"], "the wordmark alone, as designed: no mode toggle");
   assert.ok(!bar.includes("Reset test environment") && !bar.includes("switch environment"), "no environment controls on the dashboard");
   // New environment: the popup in "new" mode; Create makes the environment and opens it.
   V.newEnv(); await flush();
@@ -234,7 +237,7 @@ test("Simulated mode lands on the environments dashboard: no frame and no simula
   assert.equal(P.server.telemetry().length, 0, "the simulator never reads telemetry");
 });
 
-test("the dashboard's cards: most recently opened first, saying when, how the participant starts and what was recorded; the card opens, Configure edits without opening, × deletes", async () => {
+test("the dashboard's cards: most recently opened first, saying when, how the participant starts and what was recorded; the card opens, Configure edits and Reset clears without opening, × deletes", async () => {
   const opened = Date.now() - 60_000, older = new Date(2025, 2, 4, 15, 9, 0).getTime();
   const fresh = { id: "env-a", name: "Fresh", createdAt: opened - 60_000, lastUsedAt: opened, stats: { steps: 0, requests: 0, model: 0, cost: 0, ms: 0 }, config: { description: "", notes: "", prompts: {}, participant: { enabled: false } } };
   const prefilled = { id: "env-b", name: "Ada, third year", createdAt: older, lastUsedAt: 0, stats: { steps: 3, requests: 12, model: 4, cost: 0.0042, ms: 1900 },
@@ -256,7 +259,7 @@ test("the dashboard's cards: most recently opened first, saying when, how the pa
   same(P.d.envCard({ id: "x", name: "x", createdAt: older, stats: { cost: 0.123, ms: 128 }, config: { prompts: { askPrompt: "y" } } }).stats.map((s) => s.v), ["0", "0", "0", "$0.123", "128 ms"]);
   assert.ok(P.d.envCard({ id: "x", name: "x", createdAt: older, config: { prompts: { askPrompt: "y" } } }).meta.endsWith(" · 1 prompt edited"));
   const copy = texts(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Environments")[0]);
-  ["Fresh", "Ada, third year", "Skips the profile steps.", "Open ›", "Configure", "×", "Delete this environment"].forEach((t) => assert.ok(copy.includes(t), t));
+  ["Fresh", "Ada, third year", "Skips the profile steps.", "Open ›", "Configure", "Reset", "×", "Delete this environment"].forEach((t) => assert.ok(copy.includes(t), t));
   assert.ok(!copy.includes("No environments yet. Create one to open the product against a fresh simulated account."));
   // Configure on a card edits that environment, open or not; the click does not open the card.
   let stopped = 0; const ev = { stopPropagation() { stopped += 1; } };
@@ -271,8 +274,24 @@ test("the dashboard's cards: most recently opened first, saying when, how the pa
   assert.equal(JSON.parse(P.store.get("egb.debugger.envs.v1")).find((e) => e.id === "env-b").name, "Ada, third year, no links");
   assert.equal(V.envCards[1].name, "Ada, third year, no links");
   same(P.cmds(), [], "no prompts were pushed: no product is running");
-  // × asks first, in the environment's name; declining keeps everything.
+  // Reset on a card asks first, in the environment's name; it drops the simulated account and the step tabs and
+  // keeps the name, participant, prompts and notes. Nothing runs, so nothing reloads.
   const asked = []; P.w.confirm = (msg) => { asked.push(msg); return false; };
+  V.envCards[1].reset(ev); await flush();
+  assert.equal(stopped, 2);
+  same(asked, ["Reset “Ada, third year, no links”? Its simulated account's setup is dropped and every step tab is cleared; its name, participant, prompts and notes stay."]);
+  assert.ok(P.store.has("egb.sim.db.env-b"), "declined: the account stays");
+  P.w.confirm = () => true;
+  P.d.renderVals().envCards[1].reset(ev); await flush();
+  assert.equal(P.store.has("egb.sim.db.env-b"), false, "the simulated account is gone; the frame makes a fresh one when the environment opens");
+  const kept = JSON.parse(P.store.get("egb.debugger.env.env-b"));
+  same([kept.recordings.map((r) => r.id), kept.notes, kept.flowPos], [["start"], { start: "kept" }, {}]);
+  const rb = P.d.renderVals().envCards[1];
+  same([rb.name, rb.stats.map((s) => s.v)], ["Ada, third year, no links", ["0", "0", "0", "$0", "0 ms"]]);
+  assert.equal(JSON.parse(P.store.get("egb.debugger.envs.v1")).find((e) => e.id === "env-b").config.prompts.analyzePrompt, "custom", "prompts stay");
+  same([P.cmds(), P.d.renderVals().isDashboard, P.d.state.envId], [[], true, null]);
+  // × asks first too; declining keeps everything.
+  asked.length = 0; P.w.confirm = (msg) => { asked.push(msg); return false; };
   V.envCards[1].remove(ev); await flush();
   same(asked, ["Delete “Ada, third year, no links”? Its simulated account, steps and notes are removed."]);
   assert.equal(P.d.renderVals().envCards.length, 2);
@@ -584,8 +603,10 @@ test("the run picker opens an earlier run in the same panel and comes back to th
   assert.equal(P.server.telemetry().filter((c) => c.url === "/api/engelbart-telemetry").length, 3, "the list was read on entry, when the onboarding became known, and on refresh");
 });
 
-test("switching modes keeps each side's state: the simulator's tabs survive a visit to Real mode, and Real mode's session survives a visit back", async () => {
-  const P = page({});
+test("each mode keeps its own state and the URL says which one runs: a Real session leaves the simulator's environment alone, and a stored choice from an earlier build moves nothing", async () => {
+  const P = page({ seed: { "egb.debugger.mode": "real" } });
+  assert.equal(P.d.isReal(), false, "the stored choice is ignored: the plain URL is the simulator");
+  assert.equal(P.d.renderVals().isDashboard, true);
   P.d.createEnv("Lab"); await settle();
   P.send({ egb: "ready", speed: 1, mode: "sim" });
   await flush();
@@ -602,32 +623,34 @@ test("switching modes keeps each side's state: the simulator's tabs survive a vi
   assert.ok(simStage[0].ops.length >= 3);
   assert.ok(simStage[0].ops.every((o) => Array.isArray(o.reads)), "the simulator's lineage is there");
   assert.equal(P.d.renderVals().flowHasNodes, true, "and the graph draws it");
+  P.d.closeEnv(); await flush();
+  const envId = JSON.parse(P.store.get("egb.debugger.envs.v1"))[0].id;
+  const saved = P.store.get("egb.debugger.env." + envId);
+  assert.equal(P.store.get("egb.debugger.mode"), "real", "the stale key is neither read nor rewritten");
 
-  P.d.setMode("real");
-  await flush();
-  assert.equal(P.d.isReal(), true);
-  assert.equal(P.store.get("egb.debugger.mode"), "real", "the choice is remembered");
-  assert.equal(P.stages().length, 0, "Real mode starts on an empty session");
-  P.request("rq-1"); P.response("rq-1", { trace_id: TRACE.open, body: { onboarding: { id: OB } } });
+  // The same browser at ?mode=real: an empty session, nothing of the environment touched.
+  const R = page({ mode: "real", seed: Object.fromEntries(P.store) });
+  assert.equal(R.d.isReal(), true);
+  assert.equal(R.stages().length, 0, "Real mode starts on an empty session");
+  R.request("rq-1"); R.response("rq-1", { trace_id: TRACE.open, body: { onboarding: { id: OB } } });
   await settle();
-  assert.equal(P.stages().find((s) => s.trace_id === TRACE.open).ops.length, 4);
-  const VR = P.d.renderVals();
+  assert.equal(R.stages().find((s) => s.trace_id === TRACE.open).ops.length, 4);
+  const VR = R.d.renderVals();
   assert.equal(VR.lineageUnavailable, false, "the recorded run names what it read and wrote");
   assert.equal(VR.flowHasNodes, true, "so the graph draws a real run from its recorded reads and writes, with nothing guessed");
   assert.equal(VR.views[1].label, "Requests · 4");
-  P.send({ egb: "trace", event: events[0] });
+  assert.equal(VR.frameSrc, "/engelbart/setup/test/frame?mode=real");
+  R.send({ egb: "trace", event: events[0] });
   await new Promise((r) => setTimeout(r, 80));
-  assert.equal(P.stages().length, 4, "a simulator event means nothing to Real mode");
+  assert.equal(R.stages().length, 4, "a simulator event means nothing to Real mode");
+  assert.equal(R.store.get("egb.debugger.env." + envId), saved, "the environment's saved state is as the simulator left it");
 
-  P.d.setMode("sim");
-  await flush();
-  assert.equal(P.d.isReal(), false);
-  assert.equal(P.stages().length, 1, "the simulator's tab is back as it was");
-  assert.equal(P.stages()[0].id, simStage[0].id);
-  P.d.setMode("real");
-  await flush();
-  assert.equal(P.stages().length, 4, "and the real session is still there");
-  assert.equal(P.d.renderVals().frameSrc, "/engelbart/setup/test/frame?mode=real");
+  // And at the plain URL again: the environment opens with its tab as it was.
+  const S = page({ seed: Object.fromEntries(R.store) });
+  assert.equal(S.d.isReal(), false);
+  S.d.openEnv(envId); await flush();
+  assert.equal(S.stages().length, 1, "the simulator's tab is back as it was");
+  assert.equal(S.stages()[0].id, simStage[0].id);
 });
 
 test("the frame's word on the session is shown: signed out means the product left for the sign-in page, so the pane says how to come back and how to reload", async () => {
