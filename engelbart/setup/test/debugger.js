@@ -6,8 +6,12 @@
  * <x-dc> template is written out below as React.createElement calls, and the
  * style-hover / style-focus rules live in debugger.css.
  *
- * Nothing here reaches a real server. The frame answers /api and the fake
- * Supabase host in-page; state lives in this browser's localStorage. */
+ * In Simulated mode nothing here reaches a real server: the frame answers /api
+ * and the fake Supabase host in-page, and state lives in this browser's
+ * localStorage. Real runs mode (real-runs.js) reads the member's own recorded
+ * onboarding telemetry through /api/engelbart-telemetry and shows it in the
+ * same request list and inspector, read-only: it never changes an onboarding,
+ * calls a model or spends credit, and the simulator is untouched by it. */
 (function () {
   "use strict";
   var root = document.getElementById("debugger");
@@ -63,7 +67,11 @@ class Debugger extends React.Component {
     const current = this.mostRecent(envs);
     this.state = Object.assign({ envs: envs, tab: "live", notice: "", hideKinds: {}, cases: this.loadCases(),
       caseOpen: null, knobs: Object.assign({}, window.EngelbartSim.DEFAULT_KNOBS), running: false, compare: null, cmpOpen: {}, inspTab: "output", speedKey: "1", copied: false, stick: true,
-      picking: false, flowModal: false, detailModal: false }, this.envState(current.id));
+      picking: false, flowModal: false, detailModal: false, mode: this.loadMode(),
+      real: { session: undefined, signedOut: false, runs: null, loading: false, error: "", open: null, fetching: {} } }, this.envState(current.id));
+    // Real runs mode starts with no run on screen; the simulator's tabs wait in the environment's storage.
+    if (this.state.mode === "real") Object.assign(this.state, { recordings: [], targetId: null, view: "requests", inspTab: "input" });
+    this.realClient = window.EGB_REAL ? window.EGB_REAL.client() : null;
     this.frameRef = React.createRef(); this.bodyRef = React.createRef(); this.listRef = React.createRef(); this.flowScrollRef = React.createRef();
     this.pending = []; this.flushTimer = null;
     this.onMessage = this.onMessage.bind(this);
@@ -107,13 +115,14 @@ class Debugger extends React.Component {
   envKey(id) { return "egb.debugger.env." + id; }
   // What an environment keeps between visits: its step tabs with everything recorded, notes, and the graph layout.
   saveEnvData() {
+    if (this.state.mode === "real") return;
     const id = this.state.envId; if (!id) return;
     const S = this.state, data = { recordings: S.recordings, targetId: S.targetId, viewing: S.viewing, notes: S.notes, flowPos: S.flowPos, flowPan: S.flowPan, flowZoom: S.flowZoom, flowHeight: S.flowHeight };
     try { window.localStorage.setItem(this.envKey(id), JSON.stringify(data)); } catch (e) { this.setState({ notice: "This environment is too large to keep in browser storage; older steps may be lost on reload." }); }
     const envs = this.state.envs.map(e => e.id === id ? Object.assign({}, e, { lastUsedAt: Date.now(), stats: this.envStats(S.recordings) }) : e); this.persistEnvs(envs);
     if (JSON.stringify(envs) !== JSON.stringify(this.state.envs)) this.setState({ envs: envs });
   }
-  scheduleSave() { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => this.saveEnvData(), 800); }
+  scheduleSave() { if (this.state.mode === "real") return; clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => this.saveEnvData(), 800); }
   envStats(recs) { const all = []; recs.forEach(r => r.stages.forEach(s => all.push(s))); const t = this.totals(all); return { steps: recs.filter(r => r.step && r.stages.length).length, requests: t.requests, model: t.model, cost: t.cost, ms: t.ms }; }
   loadEnvData(id) { try { return JSON.parse(window.localStorage.getItem(this.envKey(id)) || "null"); } catch (e) { return null; } }
   mostRecent(envs) { return envs.slice().sort((a, b) => (b.lastUsedAt || 0) - (a.lastUsedAt || 0))[0]; }
@@ -216,7 +225,7 @@ class Debugger extends React.Component {
   pad(n) { return String(n).padStart(2, "0"); }
   clock(at) { const d = new Date(at), h = d.getHours(); return ((h % 12) || 12) + ":" + this.pad(d.getMinutes()) + ":" + this.pad(d.getSeconds()) + (h < 12 ? " AM" : " PM"); }
   // --- frame messages ---------------------------------------------------------------
-  componentDidMount() { window.addEventListener("message", this.onMessage); this.applySplit(); }
+  componentDidMount() { window.addEventListener("message", this.onMessage); this.applySplit(); if (this.isReal()) this.loadRuns(); }
   componentWillUnmount() { window.removeEventListener("message", this.onMessage); }
   componentDidUpdate() { this.applySplit(); this.bindWheel(); }
   applySplit() { const s = Math.max(25, Math.min(80, Number(this.state.split != null ? this.state.split : (this.props.split ?? 56)))); if (this.bodyRef.current) this.bodyRef.current.style.gridTemplateColumns = "minmax(0," + s + "fr) 1px minmax(0," + (100 - s) + "fr)"; }
@@ -250,6 +259,7 @@ class Debugger extends React.Component {
     // A new request lands in the step on screen; the rest of a request (a background reading that
     // outlives its step) follows the request wherever it started.
     this.flushTimer = null; const run = this.target(), recs = this.state.recordings;
+    if (this.state.mode === "real" || !run) { this.pending.splice(0); return; }
     this.pending.splice(0).forEach(ev => {
       if (ev.type === "stage") { this.apply(run, ev); return; }
       const home = recs.find(r => r.stages.some(s => s.id === (ev.stage || ev.id))) || run; this.apply(home, ev);
@@ -259,6 +269,66 @@ class Debugger extends React.Component {
     this.forceUpdate(() => { const el = this.listRef.current; if (el && this.state.stick && this.viewed() === run) el.scrollTop = el.scrollHeight; });
   }
   cmd(cmd, value) { const f = this.frameRef.current; if (f && f.contentWindow) f.contentWindow.postMessage({ egb: "cmd", cmd: cmd, value: value }, window.location.origin); }
+  // --- Real runs: the member's recorded onboarding telemetry, read-only ------------------------------------
+  // The mode is remembered in this browser. Switching to Real runs saves the simulator's tabs first and
+  // shows the run list; switching back restores them from the environment's storage. Nothing in this
+  // mode writes anywhere: not to the environment, not to the server.
+  loadMode() { try { return window.localStorage.getItem("egb.debugger.mode") === "real" ? "real" : "sim"; } catch (e) { return "sim"; } }
+  isReal() { return this.state.mode === "real"; }
+  setReal(patch, after) { this.setState(s => ({ real: Object.assign({}, s.real, patch) }), after); }
+  setMode(mode) {
+    if (mode === this.state.mode) return;
+    try { window.localStorage.setItem("egb.debugger.mode", mode); } catch (e) {}
+    if (mode === "real") {
+      clearTimeout(this.saveTimer); this.saveEnvData(); this.pending.splice(0);
+      const open = this.state.real.open;
+      this.setState({ mode: "real", recordings: open ? [open.recording] : [], viewing: 0, targetId: open ? open.recording.id : null, sel: null, flowSel: null, open: {}, view: "requests", inspTab: "input", tab: "live", connected: false, picking: false },
+        () => { if (!this.state.real.runs && !this.state.real.loading) this.loadRuns(); });
+      return;
+    }
+    this.connectedAt = null; this.lastPress = null; this.wheelEl = null;
+    this.setState(Object.assign({ mode: "sim", tab: "live" }, this.envState(this.state.envId)));
+  }
+  realToken() {
+    if (!this.realClient) return Promise.resolve(null);
+    return this.realClient.session().then(s => { this.setReal({ session: s, signedOut: !s }); return s ? s.token : null; });
+  }
+  realFailed(e, fallback) {
+    const msg = e && e.status === 401 ? "Your Engelbart session has expired. Sign in again at /engelbart/signin, then come back." : e && e.status === 403 ? "This account is not an Engelbart member." : (e && e.message) || fallback;
+    this.setReal({ loading: false, error: msg });
+  }
+  loadRuns() {
+    this.setReal({ loading: true, error: "" });
+    this.realToken().then(token => {
+      if (!token) { this.setReal({ loading: false, runs: null }); return; }
+      return this.realClient.list(token).then(body => this.setReal({ loading: false, runs: Array.isArray(body && body.runs) ? body.runs : [] }));
+    }).catch(e => this.realFailed(e, "Could not load your runs."));
+  }
+  openRun(item) {
+    if (!item || !item.telemetry) return;
+    this.setReal({ loading: true, error: "" });
+    this.realToken().then(token => {
+      if (!token) { this.setReal({ loading: false }); return; }
+      return this.realClient.run(token, item.onboarding_id).then(env => {
+        const recording = window.EGB_REAL.adapt(env);
+        this.setState(s => ({ real: Object.assign({}, s.real, { loading: false, open: { item: item, envelope: env, recording: recording, token: token } }),
+          recordings: [recording], viewing: 0, targetId: recording.id, sel: null, flowSel: null, open: {}, view: "requests", inspTab: "input", stick: false }));
+      });
+    }).catch(e => this.realFailed(e, "Could not load that run."));
+  }
+  backToRuns() { this.setState(s => ({ real: Object.assign({}, s.real, { open: null, error: "" }), recordings: [], targetId: null, sel: null, flowSel: null, open: {} })); }
+  // A snapshot the run did not carry inline is asked for once, the first time a tab shows it.
+  snapshot(id) {
+    const open = this.state.real.open; if (!open || !id) return { state: "none" };
+    const s = window.EGB_REAL.snapshotOf(open.recording, id);
+    if (s.state === "pending" && !this.state.real.fetching[id]) {
+      const f = Object.assign({}, this.state.real.fetching); f[id] = true; this.setReal({ fetching: f });
+      const settle = (snap) => { open.recording.snapshots[id] = snap || Object.assign({}, open.recording.snapshots[id], { content: null, content_omitted: false, unavailable: true }); this.forceUpdate(); };
+      this.realClient.snapshot(open.token, id).then(body => settle(body && body.snapshot), () => settle(null));
+    }
+    return s;
+  }
+  dateOf(at) { const d = new Date(at); return isNaN(d) ? "—" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " + this.clock(at); }
   // --- cases ---------------------------------------------------------------------------
   loadCases() { try { return JSON.parse(window.localStorage.getItem("egb.debugger.cases.v1") || "[]"); } catch (e) { return []; } }
   persist(cases) { try { window.localStorage.setItem("egb.debugger.cases.v1", JSON.stringify(cases)); } catch (e) { this.setState({ notice: "Could not save: browser storage is full. Delete a case first." }); } }
@@ -323,7 +393,7 @@ class Debugger extends React.Component {
     const cost = s.ops.reduce((n, o) => n + ((o.kind === "model" && o.meta && o.meta.cost) || 0), 0);
     const ops = s.ops.filter(o => !hide[o.kind]);
     return { id: s.id, anchor: "stage-" + s.seq, seqLabel: this.pad(index + 1), label: s.label, path: s.method + " " + s.path,
-      tag: s.bg ? "background" : s.poll ? "poll" : s.direct ? "browser → storage" : s.method === "LOCAL" ? "in page" : "",
+      tag: s.bg ? "background" : s.poll ? "poll" : s.direct ? "browser → storage" : s.method === "LOCAL" ? "in page" : s.synthetic ? "no root recorded" : s.outcome ? String(s.outcome) : "",
       dot: s.status === "running" ? "#0070f3" : s.status === "error" ? "#e70022" : "#c9c9c9",
       opsLabel: s.ops.length + (s.ops.length === 1 ? " op" : " ops"), msLabel: this.fmtMs(s.ms || s.ops.reduce((n, o) => n + (o.ms || 0), 0)), costLabel: this.fmtCost(cost),
       chevron: open ? "⌃" : "›", open: open, reqColor: sel && sel.stage === s.id && !sel.op ? "#0070f3" : "#8f8f8f",
@@ -331,7 +401,7 @@ class Debugger extends React.Component {
       inspectStage: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.select(runKey, s.id, null); },
       dots: ops.map((o, i) => ({ color: o.status === "running" ? "#3291ff" : o.status === "error" ? "#e70022" : K[o.kind].color, ring: sel && sel.op === o.id ? "0 0 0 2px #fff, 0 0 0 3.5px #0070f3" : "none",
         line: i === ops.length - 1 ? "transparent" : "#e2e2e2", title: K[o.kind].label + " · " + o.name + " · " + this.fmtMs(o.ms), select: () => this.select(runKey, s.id, o.id) })),
-      ops: ops.map((o, i) => ({ id: o.id, seq: this.pad(i + 1), kindLabel: K[o.kind].label, color: K[o.kind].color, bg: K[o.kind].bg, name: o.name + (o.status === "running" ? " …" : o.status === "error" ? " — failed" : ""), nameColor: o.status === "error" ? "#e70022" : "#171717",
+      ops: ops.map((o, i) => ({ id: o.id, seq: this.pad(i + 1), kindLabel: K[o.kind].label, color: K[o.kind].color, bg: K[o.kind].bg, indent: (o.depth || 0) * 12, name: o.name + (o.status === "running" ? " …" : o.status === "error" ? " — failed" : ""), nameColor: o.status === "error" ? "#e70022" : "#171717",
         target: o.target, msLabel: o.status === "running" ? "running" : this.fmtMs(o.ms), rowBg: sel && sel.op === o.id ? "#e6f0fd" : "transparent", select: () => this.select(runKey, s.id, o.id) })) };
   }
   // --- readable rendering of stored data, prompts and replies ---------------------------------------------------
@@ -557,8 +627,34 @@ class Debugger extends React.Component {
     const K = this.KINDS, found = this.findOp(this.state.sel); if (!found) return null;
     const tab = this.state.inspTab, tabs = [];
     const mk = (key, label) => ({ label: label, select: () => this.setState({ inspTab: key, copied: false }), bg: tab === key ? "#171717" : "#fff", color: tab === key ? "#fff" : "#4d4d4d", border: tab === key ? "#171717" : "#eaeaea" });
-    let json, meta = [], name, target, kind;
-    if (found.op) {
+    let json, meta = [], name, target, kind, redactedNote = null;
+    if (found.op && found.op.real) {
+      const o = found.op; kind = o.kind; name = o.name; target = o.target; const sn = o.snaps; const list = [];
+      if (sn.input) list.push(["input", "Input", sn.input]);
+      if (sn.output) list.push(["output", "Output", sn.output]);
+      if (sn.raw) list.push(["raw", "Raw reply", sn.raw]);
+      sn.extra.forEach(x => list.push(["snap:" + x.kind, x.kind.replace(/_/g, " "), x.id]));
+      if (sn.error) list.push(["errsnap", "Error detail", sn.error]);
+      list.push(["attrs", "Attributes", null]);
+      if (o.events.length) list.push(["events", "Events", null]);
+      if (o.error) list.push(["error", "Error", null]);
+      const cur = list.find(t => t[0] === tab) || list[0];
+      list.forEach(t => tabs.push(mk(t[0], t[1])));
+      if (cur[2]) {
+        const s = this.snapshot(cur[2]);
+        json = s.state === "ready" ? (s.content === undefined || s.content === null ? "—" : JSON.stringify(s.content, null, 2)) : s.state === "pending" ? "Loading " + (s.bytes ? Math.round(s.bytes / 1024) + " KB" : "the snapshot") + "…" : s.state === "missing" ? "This snapshot was not stored." : "This snapshot could not be read.";
+        if (s.truncated) json = "// cut to the byte bound when it was recorded\n" + json;
+        redactedNote = s.state === "ready" ? (s.redacted ? "redacted before it was stored" : "stored as sent") : "";
+      } else json = cur[0] === "attrs" ? JSON.stringify(o.attributes, null, 2) : cur[0] === "events" ? JSON.stringify(o.events, null, 2) : JSON.stringify({ error: o.error }, null, 2);
+      meta.push({ k: "status", v: o.status }, { k: "took", v: this.fmtMs(o.ms) }, { k: "level", v: o.level || "—" });
+      if (o.kind === "model") { const t = o.meta.tokens || {}; meta.push({ k: "model", v: o.meta.model || o.meta.family || "—" }); if (t.input != null) meta.push({ k: "in", v: t.input.toLocaleString() }); if (t.cache_write) meta.push({ k: "cache write", v: t.cache_write.toLocaleString() }); if (t.cache_read) meta.push({ k: "cache read", v: t.cache_read.toLocaleString() }); if (t.output != null) meta.push({ k: "out", v: t.output.toLocaleString() }); if (o.meta.finish) meta.push({ k: "finish", v: o.meta.finish }); }
+      if (o.meta.code != null) meta.push({ k: "http", v: String(o.meta.code) });
+    } else if (found.stage && found.stage.real) {
+      const s = found.stage; kind = "api"; name = s.label; target = s.method + " " + s.path;
+      tabs.push(mk("attrs", "Attributes")); if (s.error) tabs.push(mk("error", "Error"));
+      json = tab === "error" && s.error ? JSON.stringify(s.error, null, 2) : JSON.stringify(s.attributes, null, 2);
+      meta.push({ k: "status", v: s.status + (s.code ? " · " + s.code : "") }, { k: "server time", v: this.fmtMs(s.ms) }, { k: "ops", v: String(s.ops.length) }, { k: "trace", v: String(s.trace_id || "").slice(0, 12) || "—" }, { k: "body", v: "not recorded" });
+    } else if (found.op) {
       const o = found.op; kind = o.kind; name = o.name; target = o.target;
       tabs.push(mk("input", "Input"), mk("output", "Output"));
       const body = tab === "input" ? o.input : (o.status === "error" ? { error: o.error } : o.output);
@@ -572,14 +668,14 @@ class Debugger extends React.Component {
       meta.push({ k: "status", v: s.status + (s.code ? " · " + s.code : "") }, { k: "server time", v: this.fmtMs(s.ms) }, { k: "ops", v: String(s.ops.length) });
       if (s.direct) meta.push({ k: "route", v: "browser → Storage, no function" });
     }
-    const redacted = (json.match(/••••/g) || []).length;
+    const redacted = (json.match(/••••|\[redacted\]/g) || []).length;
     let counterpart = null;
     if (found.side) { const d = this.compareData(); const row = d && d.rows.find(r => (found.side === "A" ? r.a : r.b) && (found.side === "A" ? r.a.id : r.b.id) === found.stage.id);
       if (row) { const pair = found.op ? row.pairs.find(p => (found.side === "A" ? p.a : p.b) === found.op) : null; const other = found.side === "A" ? (pair ? pair.b : row.b) : (pair ? pair.a : row.a);
         if (other) counterpart = () => this.select(found.side === "A" ? "B" : "A", found.op ? (found.side === "A" ? row.b.id : row.a.id) : other.id, found.op ? other.id : null); } }
     return { kindLabel: K[kind].label, bg: K[kind].bg, color: K[kind].color, name: name, target: target, meta: meta, tabs: tabs, json: json,
       side: found.side ? "side " + found.side : "", sideColor: found.side === "B" ? "#0070f3" : "#8f8f8f",
-      redacted: redacted ? redacted + " secret" + (redacted > 1 ? "s" : "") + " redacted" : "nothing redacted",
+      redacted: redacted ? redacted + " secret" + (redacted > 1 ? "s" : "") + " redacted" : redactedNote != null ? redactedNote : "nothing redacted",
       counterpartLabel: counterpart ? "see in " + (found.side === "A" ? "B" : "A") + " ›" : "", counterpartColor: counterpart ? "#0070f3" : "transparent", counterpart: counterpart || (() => {}), raw: json };
   }
   renderVals() {
@@ -588,7 +684,10 @@ class Debugger extends React.Component {
     const visible = live.stages.filter(s => showPolls || !s.poll);
     const counts = {}; live.stages.forEach(s => s.ops.forEach(o => { counts[o.kind] = (counts[o.kind] || 0) + 1; }));
     const insp = this.inspectorVM();
-    const flow = this.flowVM(live);
+    const real = this.isReal();
+    // Lineage (which stored values an operation read and wrote) is not in the telemetry contract, so no graph is drawn for a real run.
+    const flow = real ? { nodes: [], edges: [], junctions: [], width: 0, height: 0, detail: null } : this.flowVM(live);
+    const tokens = live.stages.reduce((n, s) => n + s.ops.reduce((m, o) => m + ((o.meta && o.meta.tokens && ((o.meta.tokens.input || 0) + (o.meta.tokens.output || 0))) || 0), 0), 0);
     const cmp = this.compareData();
     const testMode = this.props.productTestMode ?? false;
     const knobRows = this.KNOBS.map(kn => ({ label: kn.label, desc: kn.desc, options: kn.options.map(([v, label]) => { const on = String(S.knobs[kn.key]) === String(v); return { label: label, bg: on ? "#171717" : "transparent", color: on ? "#fff" : "#4d4d4d", select: () => { const k = Object.assign({}, S.knobs); k[kn.key] = v; this.setState({ knobs: k }); } }; }) }));
@@ -640,8 +739,8 @@ class Debugger extends React.Component {
         { k: "requests", v: String(t.requests), help: "Calls the page made to the server (one per Continue, poll, upload…)" },
         { k: "operations", v: String(t.ops), help: "Things the server did to answer those requests: auth checks, database reads and writes, storage, model calls, link checks" },
         { k: "model calls", v: String(t.model), help: "Operations that called a model through LiteLLM" },
-        { k: "est. cost", v: t.cost ? this.fmtCost(t.cost) : "$0", help: "Estimated model spend, from token counts" },
-        { k: "server time", v: this.fmtMs(t.ms) === "—" ? "0 ms" : this.fmtMs(t.ms), help: "Simulated time the server spent answering, summed across requests" }],
+        real ? { k: "tokens", v: tokens.toLocaleString(), help: "Input and output tokens the model calls recorded" } : { k: "est. cost", v: t.cost ? this.fmtCost(t.cost) : "$0", help: "Estimated model spend, from token counts" },
+        { k: "server time", v: this.fmtMs(t.ms) === "—" ? "0 ms" : this.fmtMs(t.ms), help: real ? "Time the server recorded for each action, summed" : "Simulated time the server spent answering, summed across requests" }],
       views: [["flow", "Data flow"], ["requests", "Requests" + (t.requests ? " · " + t.requests : "")]].map(([k, label]) => ({ key: k, label: label, color: (S.view || "flow") === k ? "#171717" : "#8f8f8f", line: (S.view || "flow") === k ? "#171717" : "transparent", select: () => this.setState({ view: k }) })),
       isFlowView: (S.view || "flow") === "flow", isRequestsView: (S.view || "flow") === "requests",
       flowNodes: flow.nodes, flowEdges: flow.edges, flowDetail: flow.detail || {}, flowHasDetail: !!flow.detail, flowOpen: true,
@@ -674,17 +773,92 @@ class Debugger extends React.Component {
       cmpAName: cmp ? cmp.c.name : "", cmpAKnobs: cmp ? this.knobDiff(cmp.c.knobs) : "", cmpBName: cmp ? cmp.run.name : "", cmpBKnobs: cmp ? this.knobDiff(cmp.run.knobs) : "",
       cmpMetrics: cmpMetrics, cmpRows: cmpRows, cmpStageSummary: cmp ? (changedStages ? changedStages + " of " + cmp.rows.length + " requests differ" : "all " + cmp.rows.length + " requests identical") : "",
       hasInspector: !!insp, insp: insp || {}, closeInspector: () => this.setState({ sel: null }),
+      isReal: real, real: this.realVM(),
       copyLabel: S.copied ? "Copied" : "Copy JSON", copyJson: () => { if (insp && navigator.clipboard) navigator.clipboard.writeText(insp.raw).then(() => this.setState({ copied: true }), () => {}); }
     };
+  }
+  // The Real runs pane's view model: mode toggle, the run list, the open run.
+  realVM() {
+    const S = this.state, R = S.real, real = S.mode === "real";
+    const modes = [["sim", "Simulated", "The setup page against the simulated backend, as before"], ["real", "Real runs", "Your own recorded onboarding runs, read-only"]].map(([k, label, title]) => ({ key: k, label: label, title: title, on: S.mode === k, bg: S.mode === k ? "#171717" : "transparent", color: S.mode === k ? "#fff" : "#4d4d4d", select: () => this.setMode(k) }));
+    const open = R.open;
+    const statusColor = st => st === "failed" ? "#e70022" : st === "running" ? "#0070f3" : st === "completed" ? "#1a7f37" : "#c9c9c9";
+    const runs = (R.runs || []).map(r => { const tm = r.telemetry; const title = r.project_name || r.paper_title || ("onboarding " + String(r.onboarding_id).slice(0, 8));
+      return { id: r.onboarding_id, title: title, sub: r.project_name && r.paper_title ? r.paper_title : (r.project_name || r.paper_title ? "onboarding " + String(r.onboarding_id).slice(0, 8) : ""), when: this.dateOf(tm && tm.started_at || r.created_at),
+        actions: tm && tm.actions && tm.actions.length ? tm.actions.join(" · ") : "", status: tm ? tm.status : "no telemetry", statusColor: tm ? statusColor(tm.status) : "#c9c9c9",
+        stats: tm ? [tm.counts.operations + (tm.counts.operations === 1 ? " op" : " ops"), tm.server_ms ? this.fmtMs(tm.server_ms) : null, tm.counts.failed ? tm.counts.failed + " failed" : null].filter(Boolean).join(" · ") : "nothing was recorded for this onboarding",
+        error: tm && tm.last_error ? (tm.last_error.operation ? tm.last_error.operation + ": " : "") + (tm.last_error.message || tm.last_error.name || "failed") : "",
+        rowStatus: "onboarding " + r.onboarding_status, openable: !!tm, open: () => this.openRun(r) }; });
+    const rn = open ? open.recording.run || {} : {}, ob = open ? open.recording.onboarding || {} : {};
+    return { isReal: real, modes: modes, signedOut: !!R.signedOut, loading: !!R.loading, error: R.error || "", hasRuns: !!(R.runs && R.runs.length), runsEmpty: !!(R.runs && !R.runs.length), runs: runs,
+      refresh: () => this.loadRuns(), canRefresh: !open && !R.loading, hasOpen: !!open, back: () => this.backToRuns(),
+      title: open ? open.recording.name : "", email: R.session && R.session.email || "",
+      facts: open ? [["onboarding", ob.onboarding_id || rn.run_id || "—"], ["state", ob.onboarding_status ? ob.onboarding_status + (ob.step != null ? " · step " + ob.step : "") : "—"], ["paper", ob.paper_title || "—"], ["project", ob.project_name || "—"],
+        ["run", rn.status || "—"], ["started", rn.started_at ? this.dateOf(rn.started_at) : "—"], ["ended", rn.ended_at ? this.dateOf(rn.ended_at) : "—"], ["actions", (rn.actions || []).join(", ") || "—"],
+        ["traces", rn.counts ? String(rn.counts.traces) : "—"], ["operations", rn.counts ? rn.counts.operations + (rn.counts.failed ? " · " + rn.counts.failed + " failed" : "") : "—"],
+        ["snapshots", open.recording.snapshotsInline ? "with the run" : "loaded as you open them"], ["environment", [rn.environment, rn.code_version ? "build " + String(rn.code_version).slice(0, 12) : null].filter(Boolean).join(" · ") || "—"]] : [] };
+  }
+  renderRealPane(V) {
+    const R = V.real;
+    const card = (children) => h("div", { style: css("border:1px solid #eaeaea;border-radius:10px;background:#fff;padding:14px 16px") }, children);
+    const note = h("div", { style: css("margin-top:14px;padding:10px 12px;border-radius:8px;background:#f2f2f2;font:11.5px/1.55 " + SANS + ";color:#4d4d4d;text-wrap:pretty") },
+      "Read-only. Nothing here can change an onboarding, call a model or spend credit; the simulator's reset, environments and prompt edits do not apply to real runs. ",
+      "Which stored values each operation read and wrote is not recorded yet, so the Data flow view stays empty and the Requests view carries everything.");
+    let body;
+    if (R.hasOpen) {
+      body = [
+        h("button", { key: "back", onClick: R.back, className: "hv-ink", style: css("padding:0;border:none;background:none;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#0070f3") }, "‹ Back to runs"),
+        h("div", { key: "title", style: css("margin-top:12px;font:500 17px/1.3 " + SANSF + ";letter-spacing:-0.2px;color:#171717;overflow-wrap:anywhere") }, R.title),
+        h("div", { key: "facts", style: css("margin-top:12px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:7px 14px") },
+          R.facts.map(([k, v]) => [h("span", { key: k + "k", style: css(EYEBROW + ";line-height:1.5") }, k), h("span", { key: k + "v", style: css("font:12px/1.5 " + MONO + ";color:#171717;overflow-wrap:anywhere") }, v)])),
+        h("div", { key: "n" }, note)];
+    } else if (R.signedOut) {
+      body = card([h("div", { key: "t", style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "Sign in to see your runs"),
+        h("div", { key: "d", style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, "Real runs are read with your own Engelbart session, which this browser does not hold. ",
+          h("a", { href: "/engelbart/signin", style: css("color:#0070f3") }, "Sign in"), ", then come back and refresh.")]);
+    } else if (R.error) {
+      body = card([h("div", { key: "t", style: css("font:500 13px/1.5 " + SANS + ";color:#e70022") }, R.error),
+        h("button", { key: "r", onClick: R.refresh, className: "hv-ink", style: css("margin-top:8px;" + LINK_BTN + ";color:#0070f3") }, "Try again")]);
+    } else if (R.loading && !R.hasRuns) {
+      body = h("div", { style: css("padding:18px 0;font:12px/1.5 " + SANS + ";color:#8f8f8f") }, "Loading your runs…");
+    } else if (R.runsEmpty) {
+      body = card([h("div", { key: "t", style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "No onboarding runs recorded for this account yet"),
+        h("div", { key: "d", style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, "Runs appear here once you have used the real setup at /engelbart/setup with telemetry on.")]);
+    } else {
+      body = h("div", { "data-screen-label": "Run list" }, R.runs.map(r => h("button", { key: r.id, onClick: r.open, disabled: !r.openable, "data-run": r.id, className: r.openable ? "hv-fafafa" : "", title: r.openable ? "open this run in the debugger" : "nothing was recorded for this onboarding",
+        style: css("display:block;width:100%;box-sizing:border-box;text-align:left;margin-bottom:8px;padding:11px 14px;border:1px solid #eaeaea;border-radius:10px;background:#fff;cursor:" + (r.openable ? "pointer" : "default") + ";opacity:" + (r.openable ? 1 : 0.6)) },
+        h("div", { style: css("display:flex;align-items:baseline;gap:10px") },
+          h("span", { style: css("width:8px;height:8px;border-radius:50%;flex:none;background:" + r.statusColor + ";align-self:center") }),
+          h("span", { style: css("flex:1 1 auto;min-width:0;font:500 13px/1.3 " + SANS + ";color:#171717;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, r.title),
+          h("span", { style: css("flex:none;font:11px/1.3 " + MONO + ";color:#8f8f8f;white-space:nowrap") }, r.when)),
+        r.sub ? h("div", { style: css("margin:3px 0 0 18px;font:11.5px/1.4 " + SANS + ";color:#8f8f8f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, r.sub) : null,
+        h("div", { style: css("margin:6px 0 0 18px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font:11px/1.4 " + MONO + ";color:#4d4d4d") },
+          h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:" + r.statusColor) }, r.status),
+          r.actions ? h("span", null, r.actions) : null,
+          h("span", { style: css("color:#8f8f8f") }, r.stats),
+          h("span", { style: css("color:#c9c9c9") }, r.rowStatus)),
+        r.error ? h("div", { style: css("margin:4px 0 0 18px;font:11px/1.4 " + SANS + ";color:#e70022;overflow-wrap:anywhere") }, r.error) : null)));
+    }
+    return h("div", { "data-screen-label": "Real runs", style: css("height:100%;box-sizing:border-box;overflow:auto;padding:16px 16px 24px") },
+      h("div", { style: css("display:flex;align-items:baseline;gap:10px;margin-bottom:12px") },
+        h("span", { style: css(EYEBROW) }, R.hasOpen ? "Real run" : "Recent onboarding runs"),
+        h("span", { style: css("flex:1") }),
+        R.email ? h("span", { style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, R.email) : null,
+        R.canRefresh ? h("button", { onClick: R.refresh, className: "hv-ink", style: css(LINK_BTN) }, R.loading ? "refreshing…" : "refresh") : null),
+      body,
+      R.hasOpen ? null : note);
   }
   // --- the template ------------------------------------------------------------------------------------
   renderTopBar(V) {
     return h("div", { "data-screen-label": "Top bar", style: css("flex:none;min-height:46px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 14px 6px 16px;border-bottom:1px solid #eaeaea;white-space:nowrap") },
       h("span", { style: css("font:500 17px/1 " + SANSF + ";letter-spacing:-0.2px") }, "Engelbart"),
-      h("select", { value: V.envId, onChange: V.envSelect, title: "switch environment", style: css("max-width:280px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
+      h("span", { role: "group", "aria-label": "mode", style: css("display:inline-flex;align-items:center;border:1px solid #eaeaea;border-radius:999px;padding:2px;background:#fff") },
+        V.real.modes.map(m => h("button", { key: m.key, onClick: m.select, title: m.title, "aria-pressed": m.on, style: css("padding:5px 11px;border:none;border-radius:999px;font:500 11.5px/1 " + SANS + ";background:" + m.bg + ";color:" + m.color + ";white-space:nowrap") }, m.label))),
+      V.isReal ? h("span", { title: "Real runs are inspected, never changed", style: css("padding:4px 8px;border-radius:999px;background:#f2f2f2;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#4d4d4d") }, "read-only") : null,
+      V.isReal ? null : h("select", { value: V.envId, onChange: V.envSelect, title: "switch environment", style: css("max-width:280px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
         V.envOptions.map(eo => h("option", { key: eo.value, value: eo.value }, eo.label))),
       h("span", { style: css("font:12px/1.4 " + SANS + ";color:#e70022;flex:1 1 40px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, V.notice),
-      h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
+      V.isReal ? null : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
         style: css("padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px;white-space:nowrap") }, "Reset test environment"));
   }
   renderConfig(cfg) {
@@ -827,8 +1001,8 @@ class Debugger extends React.Component {
           h("span", { style: css("font:500 11px/1 " + SANS + ";color:#171717") }, k.label),
           h("span", { style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, k.count)))),
       V.liveEmpty ? h("div", { key: "empty", style: css("padding:28px 18px;border:1px dashed #e2e2e2;border-radius:10px;text-align:center") },
-        h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "No requests on this step yet"),
-        h("div", { style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, "Use the product on the left. Every request it makes while on this step, and every operation the server runs to answer it, lands here as it happens.")) : null,
+        h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, V.isReal ? "No actions were recorded for this run" : "No requests on this step yet"),
+        h("div", { style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, V.isReal ? "The run has no workflow operation on record." : "Use the product on the left. Every request it makes while on this step, and every operation the server runs to answer it, lands here as it happens.")) : null,
       V.stages.map(s => h("div", { key: s.id, id: s.anchor, style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:8px;background:#fff;overflow:hidden") },
         h("div", { onClick: s.toggle, className: "hv-fafafa", style: css("display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer") },
           h("span", { style: css("font:500 10px/1 " + MONO + ";color:#8f8f8f;width:22px") }, s.seqLabel),
@@ -849,7 +1023,7 @@ class Debugger extends React.Component {
           s.ops.map(o => h("div", { key: o.id, onClick: o.select, className: "hv-fafafa", style: css("display:grid;grid-template-columns:34px 64px minmax(0,1fr) 58px;align-items:baseline;gap:10px;padding:5px 12px;cursor:pointer;background:" + o.rowBg) },
             h("span", { style: css("font:11px/1.5 " + MONO + ";color:#c9c9c9;text-align:right") }, o.seq),
             h("span", { style: css("display:inline-block;padding:4px 0;border-radius:4px;font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;text-align:center;background:" + o.bg + ";color:" + o.color) }, o.kindLabel),
-            h("span", { style: css("min-width:0") },
+            h("span", { style: css("min-width:0;padding-left:" + (o.indent || 0) + "px") },
               h("span", { style: css("font:13px/1.45 " + SANS + ";color:" + o.nameColor) }, o.name),
               h("span", { style: css("display:block;font:11px/1.5 " + MONO + ";color:#8f8f8f;word-break:break-all") }, o.target)),
             h("span", { style: css("font:11px/1.5 " + MONO + ";color:#4d4d4d;text-align:right") }, o.msLabel)))) : null))
@@ -857,11 +1031,11 @@ class Debugger extends React.Component {
   }
   renderLive(V) {
     return h("div", { ref: this.listRef, onScroll: V.onListScroll, style: css("flex:1;min-height:0;overflow:auto;padding:12px 14px 20px") },
-      this.renderStepTabs(V),
+      V.isReal ? null : this.renderStepTabs(V),
       h("div", { style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:14px;background:#fff;overflow:hidden") },
         h("div", { style: css("padding:16px 14px 18px;background:#fafafa") },
           h("div", { style: css("display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap") },
-            h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#8f8f8f") }, "This step"),
+            h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#8f8f8f") }, V.isReal ? "This run" : "This step"),
             h("span", { style: css("font:11.5px/1.4 " + MONO + ";color:#4d4d4d") }, V.lastRan)),
           h("div", { style: css("margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:12px 8px") },
             V.statTiles.map(stt => h("span", { key: stt.k, title: stt.help, style: css("min-width:0") },
@@ -869,8 +1043,15 @@ class Debugger extends React.Component {
               h("span", { style: css("display:block;margin-top:5px;font:11px/1.3 " + SANS + ";color:#8f8f8f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, stt.k)))))),
       h("div", { style: css("display:flex;align-items:center;gap:2px;margin-bottom:12px;border-bottom:1px solid #eaeaea") },
         V.views.map(vw => h("button", { key: vw.key, onClick: vw.select, style: css("padding:8px 10px 9px;border:none;background:transparent;font:500 12.5px/1 " + SANS + ";color:" + vw.color + ";border-bottom:2px solid " + vw.line + ";margin-bottom:-1px;white-space:nowrap") }, vw.label))),
-      V.isFlowView ? this.renderFlow(V) : null,
+      V.isFlowView && V.isReal ? this.renderLineageUnavailable() : null,
+      V.isFlowView && !V.isReal ? this.renderFlow(V) : null,
       V.isRequestsView ? this.renderRequests(V) : null);
+  }
+  renderLineageUnavailable() {
+    return h("div", { "data-screen-label": "Lineage unavailable", style: css("border:1px dashed #e2e2e2;border-radius:10px;padding:28px 18px;text-align:center;margin-bottom:14px") },
+      h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "Lineage is not recorded for real runs"),
+      h("div", { style: css("margin:4px auto 0;max-width:460px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") },
+        "The graph draws which stored values each operation read and wrote. Real telemetry records the operations, their timing, payloads and errors, but not that, and nothing is guessed here. Use Requests to inspect every operation."));
   }
   renderCases(V) {
     return h("div", { style: css("flex:1;min-height:0;overflow:auto;padding:12px 14px 20px") },
@@ -977,17 +1158,21 @@ class Debugger extends React.Component {
       h("pre", { style: css("flex:1;min-height:0;overflow:auto;margin:8px 14px 12px;padding:10px 12px;background:#fff;border:1px solid #eaeaea;border-radius:8px;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word") }, insp.json));
   }
   render() {
-    const V = this.renderVals();
+    const real = this.isReal(), idle = real && !this.state.recordings.length;
+    // With no run open there is nothing for the execution panel to show, so only the pane's own view model is built.
+    const V = idle ? { isReal: true, real: this.realVM(), notice: this.state.notice, cfg: { open: false }, hasInspector: false, isLive: false, isCases: false, isCompare: false } : this.renderVals();
     return h("div", { style: css("height:100vh;display:flex;flex-direction:column;background:#fff;color:#171717;font-family:" + SANSF + ";overflow:hidden") },
       this.renderTopBar(V),
       this.renderConfig(V.cfg),
       h("div", { ref: this.bodyRef, style: css("flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,56fr) 1px minmax(0,44fr)") },
-        h("div", { "data-screen-label": "Product", style: css("min-width:0;min-height:0;position:relative;background:#fafafa") },
+        real ? h("div", { "data-screen-label": "Runs", style: css("min-width:0;min-height:0;position:relative;background:#fafafa") }, this.renderRealPane(V))
+          : h("div", { "data-screen-label": "Product", style: css("min-width:0;min-height:0;position:relative;background:#fafafa") },
           h("iframe", { ref: this.frameRef, title: "Engelbart setup, running against the simulated backend", src: V.frameSrc, style: css("display:block;width:100%;height:100%;border:0;background:#fff") })),
         h("div", { onPointerDown: (e) => this.splitDown(e), title: "drag to resize", style: css("position:relative;background:#eaeaea;cursor:col-resize;width:1px") },
           h("div", { style: css("position:absolute;left:-5px;top:0;bottom:0;width:11px;cursor:col-resize") }),
           h("div", { style: css("position:absolute;left:-2px;top:50%;width:5px;height:36px;margin-top:-18px;border-radius:3px;background:#c9c9c9") })),
         h("div", { "data-screen-label": "Execution graph", style: css("min-width:0;min-height:0;display:flex;flex-direction:column;background:#fff") },
+          idle ? h("div", { style: css("flex:1;display:flex;align-items:center;justify-content:center;padding:24px;font:12.5px/1.6 " + SANS + ";color:#8f8f8f;text-align:center;text-wrap:pretty") }, "Open a run on the left to see its actions, operations and payloads here.") : null,
           V.isLive ? this.renderLive(V) : null,
           V.isCases ? this.renderCases(V) : null,
           V.isCompare ? this.renderCompare(V) : null,
