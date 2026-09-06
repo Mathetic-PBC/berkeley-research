@@ -15,6 +15,7 @@
 const Credits = require("./_lib/credits");
 const MemberKeys = require("./_lib/member-keys");
 const OnboardingRecord = require("./_lib/onboarding");
+const Prompts = require("./_lib/onboarding-prompts");
 const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("./_lib/http");
 const { verifyUser } = require("./_lib/supabase");
 const { telemetry, userHash } = require("./_lib/telemetry");
@@ -88,6 +89,15 @@ function testRunId(body, d) {
   return given ? given.slice(0, 80) : null;
 }
 
+// Edited prompts a request carries for this one run of the member's own
+// onboarding (`prompt_overrides`, from the execution debugger's environment):
+// the editable prompts only, bounded, or nothing. They reach the model layer
+// through the options and are named in the record; they change no one else's
+// run and are stored nowhere.
+function overridesOf(body) {
+  return Prompts.sanitizeOverrides(body && body.prompt_overrides);
+}
+
 // The row's id is the run: once the row is read, the workflow and every
 // operation started after it carry it.
 function named(row) {
@@ -97,7 +107,8 @@ function named(row) {
 
 async function route(user, body, d, action) {
   const OB = d.OB || OnboardingRecord;
-  const options = d.options || {};
+  const overrides = overridesOf(body);
+  const options = overrides ? { ...(d.options || {}), promptOverrides: overrides } : (d.options || {});
 
   if (action === "reset") {
     // Test mode clearing the record. No model, no credit: the row is gone and
@@ -176,6 +187,7 @@ async function dispatch(user, body, d = {}) {
       "engelbart.poll": poll,
       "engelbart.run_flag": Boolean(body && body.run),
       "engelbart.retry": Boolean(body && body.retry),
+      "engelbart.prompts.edited": (() => { const o = overridesOf(body); return o ? Object.keys(o) : undefined; })(),
     },
   }, (op) => {
     if (typeof d.onTrace === "function" && op && op.trace_id) d.onTrace(op.trace_id);

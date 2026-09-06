@@ -5,7 +5,10 @@
  * answered in-page by sim-backend.js, supabase-js is replaced by a session that
  * is always signed in, and every simulated operation is posted to the parent.
  *
- * Real (?mode=real): nothing is intercepted or replaced. The page boots on the
+ * Real (?mode=real): nothing is replaced and, with one addition, nothing is
+ * intercepted: the page's own fetch is watched, and the edited prompts the
+ * debugger chose for this run ride along on the model actions
+ * (`prompt_overrides`), for the member's own onboarding. The page boots on the
  * pinned supabase-js, reads the member's own session from this origin's
  * storage, and talks to the real endpoints, which do real work: model calls
  * spend credit, writes land in the member's onboarding, uploads go to Storage.
@@ -22,6 +25,8 @@
   function post(message) { window.parent.postMessage(message, ORIGIN); }
   var params = new URLSearchParams(window.location.search);
   var MODE = params.get("mode") === "real" ? "real" : "sim";
+  // Real mode: the edited prompts the debugger chose for this run, or null for the server's own.
+  var promptOverrides = null;
   var speed = Number(params.get("speed") || 1);
   var sim = null;
 
@@ -75,6 +80,8 @@
     var realFetch = window.fetch.bind(window);
     var seq = 0;
     var BACKGROUND = ["analysis", "assets", "leveled"];
+    // The actions that ask the model, so the edited prompts go only where they are read.
+    var MODEL_ACTIONS = ["sources", "analysis", "assets", "leveled", "answer", "brainstorm", "asset_ask", "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"];
     function pathOf(u) {
       if (u.indexOf("/") === 0) return u.split("#")[0];
       if (u.indexOf(ORIGIN + "/") === 0) return u.slice(ORIGIN.length).split("#")[0];
@@ -105,7 +112,14 @@
         var action = body && typeof body === "object" && body.action ? String(body.action) : (isStorage ? "upload" : path.split("/").pop());
         var background = BACKGROUND.indexOf(action) >= 0 && body && (body.run || body.retry);
         var poll = BACKGROUND.indexOf(action) >= 0 && !background;
-        post({ egb: "request", id: id, at: started, method: method, path: path, where: where, action: action, body: redact(body), step: lastStep, bg: !!background, poll: !!poll });
+        var reported = body;
+        // The debugger's edited prompts, added to a model action's JSON body as the page sent it; the
+        // report names which prompts went, not their text.
+        if (promptOverrides && isApi && path === "/api/engelbart-onboarding" && method === "POST" && !poll && MODEL_ACTIONS.indexOf(action) >= 0 && init && typeof init.body === "string" && body && typeof body === "object") {
+          init = Object.assign({}, init, { body: JSON.stringify(Object.assign({}, body, { prompt_overrides: promptOverrides })) });
+          reported = Object.assign({}, body, { prompt_overrides: Object.keys(promptOverrides) });
+        }
+        post({ egb: "request", id: id, at: started, method: method, path: path, where: where, action: action, body: redact(reported), step: lastStep, bg: !!background, poll: !!poll });
         return realFetch(url, init).then(function (r) {
           var traceId = null; try { traceId = r.headers.get("x-engelbart-trace-id"); } catch (e) { traceId = null; }
           var done = function (reply) { post({ egb: "response", id: id, at: Date.now(), ms: Date.now() - started, status: r.status, ok: r.ok, trace_id: traceId && /^[0-9a-f]{32}$/i.test(traceId) ? traceId.toLowerCase() : null, body: reply }); return r; };
@@ -188,10 +202,12 @@
     if (m.cmd === "auto") autoAll = !!m.value;
     if (m.cmd === "reload") window.location.reload();
     if (!sim) {
-      // The simulator's controls do not exist here: nothing to speed up, no prompts to swap, and no
-      // record to reset, because the record is the member's real onboarding.
+      // Edited prompts are the one control that reaches the real backend: kept here, sent with each
+      // model action, for the member's own run. The simulator's other controls do not exist here:
+      // nothing to speed up, and no record to reset, because the record is the member's real onboarding.
+      if (m.cmd === "prompts") { promptOverrides = m.value && typeof m.value === "object" && !Array.isArray(m.value) && Object.keys(m.value).length ? m.value : null; return; }
       if (m.cmd === "snapshot") post({ egb: "snapshot", state: null });
-      if (m.cmd === "reset" || m.cmd === "dropFixture" || m.cmd === "speed" || m.cmd === "prompts") notice("That is a simulator control; it does nothing in Real mode.");
+      if (m.cmd === "reset" || m.cmd === "dropFixture" || m.cmd === "speed") notice("That is a simulator control; it does nothing in Real mode.");
       return;
     }
     if (m.cmd === "speed") sim.setSpeed(Number(m.value));

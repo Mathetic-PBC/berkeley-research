@@ -137,12 +137,20 @@ changing the boundaries.
 
 ### Attribute namespaces
 
-- `engelbart.*` — application metadata: `run_id`, `onboarding_id`, `test_run_id`, `action`, `user_hash`, `poll`, `retry`, `outcome`, `lineage.reads`, `lineage.writes` (see *Lineage*), `model.*`, `db.*`, `storage.*`, `analysis.*`, `assessment.*`, `payload.*`, `links.*`, `link.verdict`, `page.*`. `engelbart.model.gateway` is `litellm` (the member's key through the proxy) or `anthropic` (a key the member brought themselves, or the server-wide `ENGELBART_ANTHROPIC_API_KEY` bypass), with `server.address` the host actually called.
+- `engelbart.*` — application metadata: `run_id`, `onboarding_id`, `test_run_id`, `action`, `user_hash`, `poll`, `retry`, `outcome`, `lineage.reads`, `lineage.writes` (see *Lineage*), `prompt.template`, `prompt.edited`, `prompts.edited`, `model.*`, `db.*`, `storage.*`, `analysis.*`, `assessment.*`, `payload.*`, `links.*`, `link.verdict`, `page.*`. `engelbart.model.gateway` is `litellm` (the member's key through the proxy) or `anthropic` (a key the member brought themselves, or the server-wide `ENGELBART_ANTHROPIC_API_KEY` bypass), with `server.address` the host actually called.
 - `gen_ai.*`, `http.*`, `url.*`, `server.address`, `db.*` — OpenTelemetry semantic conventions where they fit (`gen_ai.request.model`, `gen_ai.usage.input_tokens`, `http.response.status_code`, `url.full`, `db.operation.name`, `db.query.summary`).
 - `bart.*` — the telemetry layer itself: `bart.operation_id`, `bart.type`, `bart.snapshot.<kind>`, `bart.waiting_reason`, `bart.error.status_code`.
 
 Strings in attributes are capped at 2000 characters and redacted. Payloads
 never go in attributes; they are Snapshots.
+
+Every model operation names the prompt it sent in `engelbart.prompt.template`
+(`analyzePrompt`, `gradePrompt`, … the function in `api/_lib/onboarding-prompts.js`)
+and says in `engelbart.prompt.edited` whether the request carried an edited
+template for it (`prompt_overrides` on the onboarding request, from the execution
+debugger, for the member's own run only). The workflow root lists the edited
+prompts' names in `engelbart.prompts.edited` when there were any. The text of an
+edited prompt is not an attribute; it is in the `model_request` snapshot, as sent.
 
 ### Database operations: structure in attributes, values in snapshots
 

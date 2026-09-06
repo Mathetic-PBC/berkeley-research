@@ -98,6 +98,8 @@ async function callModel(request, credentials, options = {}) {
       "server.address": hostOf(upstream.baseUrl),
       "engelbart.model.gateway": upstream.gateway,
       "engelbart.model.purpose": purpose,
+      "engelbart.prompt.template": request.template || undefined,
+      "engelbart.prompt.edited": request.template ? Boolean(request.templateEdited) : undefined,
       "engelbart.model.family": request.family || "sonnet",
       "engelbart.model.timeout_ms": timeoutMs,
       "engelbart.model.has_system": Boolean(request.system),
@@ -168,6 +170,15 @@ function text(value) {
   return { type: "text", text: value };
 }
 
+// The prompt for one call: the function's own text, or -- when the request carried an edited template
+// for it (an execution debugger's environment, for the member's own run) -- that template rendered from
+// the same input. `template` names the prompt in the operation's record either way, `edited` says which.
+function promptFor(key, input, options) {
+  const overrides = options && options.promptOverrides;
+  const edited = Boolean(overrides && overrides[key] != null && P.TEMPLATES[key] != null);
+  return { text: edited ? P.render(key, input, overrides) : P[key](input), template: key, edited };
+}
+
 // --- analysis ---------------------------------------------------------------
 
 function normalizeDate(value) {
@@ -222,6 +233,7 @@ function normalizeAnalysis(raw) {
 // input = {familiarityLabel, familiarityDesc, depthLabel, depthDesc,
 //          pdfBase64 | pdfText, urls: [{url, text}]}
 async function analyze(input, credentials, options = {}) {
+  const edited = Boolean(options.promptOverrides && options.promptOverrides.analyzePrompt != null);
   const content = await telemetry.runOperation({
     name: "analysis.construct-request", type: "processing", reads: lineageOf("analysis").reads,
     attributes: {
@@ -240,11 +252,13 @@ async function analyze(input, credentials, options = {}) {
     // would otherwise paste the prompt back into the tag it sits inside.
     const tail = after.replace("%URLS%", () => urls);
     // The paper leads, as the cached prefix the asset hunt shares; the
-    // diagnostic's own text follows verbatim, its paper tag pointing up.
-    return [...paperPrefix(input), text(before + "(the paper attached above)" + tail)];
+    // diagnostic's own text follows verbatim, its paper tag pointing up. An
+    // edited template is rendered whole, the urls in its slot.
+    const body = edited ? P.render("analyzePrompt", { ...input, urls }, options.promptOverrides) : before + "(the paper attached above)" + tail;
+    return [...paperPrefix(input), text(body)];
   });
   const raw = await callModel({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS,
-    timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "analysis" }, credentials, options);
+    timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "analysis", template: "analyzePrompt", templateEdited: edited }, credentials, options);
   const analysis = await normalized("analysis", raw, normalizeAnalysis);
   if (!analysis) {
     const error = new Error("The paper analysis did not come back in a usable shape");
@@ -267,8 +281,9 @@ function normalizeGrade(raw) {
 
 async function grade(input, credentials, options = {}) {
   let raw;
+  const pr = promptFor("gradePrompt", input, options);
   try {
-    raw = await callModel({ content: [text(P.gradePrompt(input))], family: "haiku", maxTokens: 300, purpose: "grade" },
+    raw = await callModel({ content: [text(pr.text)], family: "haiku", maxTokens: 300, purpose: "grade", template: pr.template, templateEdited: pr.edited },
       credentials, options);
   } catch (error) {
     if (error.statusCode === 409) throw error;
@@ -289,8 +304,9 @@ function normalizeFollowUp(raw) {
 // flaky model costs the reader a tailored question, never the diagnostic.
 async function followUp(input, credentials, options = {}) {
   let raw;
+  const pr = promptFor("followUpPrompt", input, options);
   try {
-    raw = await callModel({ content: [text(P.followUpPrompt(input))], family: "sonnet", maxTokens: 500, purpose: "follow_up" },
+    raw = await callModel({ content: [text(pr.text)], family: "sonnet", maxTokens: 500, purpose: "follow_up", template: pr.template, templateEdited: pr.edited },
       credentials, options);
   } catch (error) {
     if (error.statusCode === 409) throw error;
@@ -352,8 +368,9 @@ function normalizeAsk(raw) {
 // `purpose` names the model operation (model.<purpose>) and its normalize
 // step; `reads` adds to the purpose's lineage the values this one prompt
 // also carries (the previous answer a revision starts from).
-async function generate(prompt, normalize, credentials, options, what, purpose, reads) {
-  const raw = await callModel({ content: [text(prompt)], family: "sonnet", purpose, reads }, credentials, options);
+async function generate(key, input, normalize, credentials, options, what, purpose, reads) {
+  const pr = promptFor(key, input, options);
+  const raw = await callModel({ content: [text(pr.text)], family: "sonnet", purpose, reads, template: pr.template, templateEdited: pr.edited }, credentials, options);
   const out = await normalized(purpose, raw, normalize);
   if (!out) {
     const error = new Error(`The ${what} did not come back in a usable shape`);
@@ -363,10 +380,10 @@ async function generate(prompt, normalize, credentials, options, what, purpose, 
   return out;
 }
 
-const details = (input, c, o) => generate(P.detailsPrompt(input), normalizeDetails, c, o, "questions", "details");
-const goals = (input, c, o) => generate(P.goalsPrompt(input), normalizeGoals, c, o, "goals", "goals");
-const todos = (input, c, o) => generate(P.todosPrompt(input), normalizeTodos, c, o, "todos", "todos");
-const ask = (input, c, o) => generate(P.askPrompt(input), normalizeAsk, c, o, "answer", "ask");
+const details = (input, c, o) => generate("detailsPrompt", input, normalizeDetails, c, o, "questions", "details");
+const goals = (input, c, o) => generate("goalsPrompt", input, normalizeGoals, c, o, "goals", "goals");
+const todos = (input, c, o) => generate("todosPrompt", input, normalizeTodos, c, o, "todos", "todos");
+const ask = (input, c, o) => generate("askPrompt", input, normalizeAsk, c, o, "answer", "ask");
 
 // The screen's passages at another register: Haiku, one call, the same count
 // back. A reply of the wrong shape or count is a 502, never a partial swap.
@@ -376,7 +393,8 @@ function normalizeRewrite(raw, count) {
   return texts.every(Boolean) ? { texts } : null;
 }
 async function rewrite(input, credentials, options = {}) {
-  const raw = await callModel({ content: [text(P.rewritePrompt(input))], family: "haiku", maxTokens: 6000, purpose: "rewrite" }, credentials, options);
+  const pr = promptFor("rewritePrompt", input, options);
+  const raw = await callModel({ content: [text(pr.text)], family: "haiku", maxTokens: 6000, purpose: "rewrite", template: pr.template, templateEdited: pr.edited }, credentials, options);
   const out = await normalized("rewrite", raw, (r) => normalizeRewrite(r, input.texts.length));
   if (!out) {
     const error = new Error("The rewrite did not come back in a usable shape");
@@ -488,8 +506,9 @@ function shaped(out, what) {
 
 // The asset hunt: the cached paper, the prompt, and the model's own search.
 async function assets(input, credentials, options = {}) {
-  const content = [...paperPrefix(input), text(P.assetsPrompt())];
-  const got = await searched({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS, timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "assets" },
+  const pr = promptFor("assetsPrompt", {}, options);
+  const content = [...paperPrefix(input), text(pr.text)];
+  const got = await searched({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS, timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "assets", template: pr.template, templateEdited: pr.edited },
     credentials, options, WEB_SEARCH);
   const out = shaped(await normalized("assets", got.raw, normalizeAssets), "asset hunt");
   if (!out.assets.length) {
@@ -501,8 +520,9 @@ async function assets(input, credentials, options = {}) {
 }
 
 async function levelAssets(input, credentials, options = {}) {
-  const got = await searched({ content: [text(P.levelPrompt(input))], family: "sonnet", maxTokens: ANALYZE_TOKENS,
-    timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "leveled" }, credentials, options, WEB_SEARCH_SMALL);
+  const pr = promptFor("levelPrompt", input, options);
+  const got = await searched({ content: [text(pr.text)], family: "sonnet", maxTokens: ANALYZE_TOKENS,
+    timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "leveled", template: pr.template, templateEdited: pr.edited }, credentials, options, WEB_SEARCH_SMALL);
   return { ...shaped(await normalized("leveled", got.raw, normalizeLeveled), "leveled resources"), searched: got.searched };
 }
 
@@ -564,15 +584,15 @@ function normalizeSubgoals(raw) {
   return { subgoals };
 }
 
-const brainstorm = (input, c, o) => generate(P.brainstormPrompt(input), normalizeBrainstorm, c, o, "brainstorm turn", "brainstorm");
+const brainstorm = (input, c, o) => generate("brainstormPrompt", input, normalizeBrainstorm, c, o, "brainstorm turn", "brainstorm");
 // The asset asked about came from the fitted list when there is one, else from the hunt.
-const assetAsk = (input, c, o) => generate(P.assetAskPrompt(input), normalizeAsk, c, o, "answer", "asset_ask", [input.from === "assets" ? "assets" : "leveled"]);
-const direction = (input, c, o) => generate(P.directionPrompt(input), normalizeDirection, c, o, "direction", "direction", input.previous ? ["direction"] : []);
-const subgoals = (input, c, o) => generate(P.subgoalsPrompt(input), normalizeSubgoals, c, o, "subgoals", "subgoals", input.previous ? ["subgoals"] : []);
+const assetAsk = (input, c, o) => generate("assetAskPrompt", input, normalizeAsk, c, o, "answer", "asset_ask", [input.from === "assets" ? "assets" : "leveled"]);
+const direction = (input, c, o) => generate("directionPrompt", input, normalizeDirection, c, o, "direction", "direction", input.previous ? ["direction"] : []);
+const subgoals = (input, c, o) => generate("subgoalsPrompt", input, normalizeSubgoals, c, o, "subgoals", "subgoals", input.previous ? ["subgoals"] : []);
 
 module.exports = {
   LEVELS, LINEAGE, MAX_PAGE_TEXT,
-  callModel, pickModel, extractJson,
+  callModel, pickModel, extractJson, promptFor,
   analyze, grade, followUp, rewrite, details, goals, todos, ask, assets, levelAssets, brainstorm, assetAsk, direction, subgoals,
   paperPrefix, briefOf,
   normalizeAnalysis, normalizeGrade, normalizeFollowUp, normalizeRewrite, normalizeDetails, normalizeGoals, normalizeTodos, normalizeAsk,

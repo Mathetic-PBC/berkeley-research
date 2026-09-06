@@ -119,6 +119,8 @@ test("a model call is a model child of the workflow, completed, with the four st
     assert.deepEqual(model.attributes["gen_ai.response.finish_reasons"], ["end_turn"]);
     assert.deepEqual(model.attributes["engelbart.model.block_types"], ["text", "document", "text"]);
     assert.equal(model.attributes["engelbart.model.parsed"], true);
+    assert.equal(model.attributes["engelbart.prompt.template"], "analyzePrompt", "the prompt is named");
+    assert.equal(model.attributes["engelbart.prompt.edited"], false, "and was the server's own");
     // Stage 1: the request as sent, byte for byte what went over the wire.
     const sent = JSON.parse(db.calls.find((c) => c.url.endsWith("/v1/messages")).init.body);
     const request = sink.snapshots.find((s) => s.kind === "model_request");
@@ -157,6 +159,34 @@ test("a model call is a model child of the workflow, completed, with the four st
     const all = everything(sink);
     assert.doesNotMatch(all, new RegExp(MEMBER_KEY));
     assert.equal(all.includes(PDF.toString("base64").slice(0, 64)), false);
+  } finally { done(); }
+});
+
+// An edited prompt on the request (the execution debugger's environment, for the member's own run) is
+// what the model is sent, rendered from the same input; the record names the prompt and says it was
+// edited, the root lists the edited names, and the text is in the request snapshot as sent.
+test("an edited prompt reaches the model rendered with the call's own slots, and the record says which prompts were edited", async () => {
+  const { sink, done } = observe();
+  const gateway = async (url, init) => ({ ok: true, status: 200, async json() {
+    return { model: "claude-sonnet-4-5-20250929", stop_reason: "end_turn", usage: { input_tokens: 40, output_tokens: 8 }, content: [{ type: "text", text: JSON.stringify({ answer: "Because it verifies." }) }] }; } });
+  try {
+    const overrides = { askPrompt: "Answer \"{{question}}\" about \"{{quote}}\" for {{paper_title}}. {{reader_block}}", gradePrompt: "unused here" };
+    const row = { id: "row-1", user_id: USER.id, status: "open", step: 4, analysis_status: "done" };
+    let seen = null;
+    const out = await handler.dispatch(USER, { action: "ask", quote: "the verifier", question: "why", prompt_overrides: { ...overrides, junk: 1, detailsPrompt: "not editable" } }, {
+      credentialsFor: async () => CREDS, memberKeys: { status: async () => ({ set: false }), credentials: async () => null }, options: { env: ENV, fetchImpl: gateway },
+      OB: { open: async () => ({ onboarding: row, calibrations: [] }),
+        ask: async (u, r, c, b, credentials, options) => { seen = options.promptOverrides; return OM.ask({ reader: { name: "Ada" }, paper: { title: "T", one_liner: "o" }, quote: b.quote, question: b.question }, credentials, options); } },
+    });
+    assert.equal(out.answer, "Because it verifies.");
+    assert.deepEqual(seen, overrides, "the record module gets the editable prompts only, sanitized");
+    const root = sink.one("onboarding.ask");
+    assert.deepEqual(root.attributes["engelbart.prompts.edited"], ["gradePrompt", "askPrompt"], "the root lists what was edited, in the prompts' own order");
+    const model = sink.one("model.ask");
+    assert.equal(model.attributes["engelbart.prompt.template"], "askPrompt");
+    assert.equal(model.attributes["engelbart.prompt.edited"], true);
+    const request = sink.snapshots.find((s) => s.kind === "model_request" && s.operation_id === model.operation_id);
+    assert.equal(request.content.body.messages[0].content[0].text, "Answer \"why\" about \"the verifier\" for T. # Who you are writing for\n\nAda.\n", "the edited template, rendered from the call's own input");
   } finally { done(); }
 });
 
