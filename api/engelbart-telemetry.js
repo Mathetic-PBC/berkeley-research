@@ -1,17 +1,21 @@
 "use strict";
 
-// Read-only access to a member's own onboarding telemetry, for the Real runs
-// mode of the debugger at /engelbart/setup/test. Three GET shapes:
+// Read-only access to a member's own onboarding telemetry, for the Real mode
+// of the debugger at /engelbart/setup/test. Four GET shapes:
 //
 //   GET /api/engelbart-telemetry                 the member's recent onboarding runs, newest first
 //   GET /api/engelbart-telemetry?run=<id>        one run: the contract envelope for that onboarding
+//   GET /api/engelbart-telemetry?trace=<id>      one trace: the envelope for one action, by the id
+//                                                the onboarding endpoint returned in x-engelbart-trace-id
 //   GET /api/engelbart-telemetry?snapshot=<id>   one snapshot's content, when the run left it out
 //
 // The member is named by their Supabase session, exactly as the onboarding
 // endpoint names them, and sees a run only when the onboarding row it belongs
-// to is theirs. The service role stays in this function. Nothing here writes:
-// no onboarding state changes, no model is called, no credit is spent, and the
-// reads themselves run untraced so looking at telemetry produces none.
+// to is theirs (a trace that never learned its row is theirs when every
+// operation in it carries their user hash). The service role stays in this
+// function. Nothing here writes: no onboarding state changes, no model is
+// called, no credit is spent, and the reads themselves run untraced so looking
+// at telemetry produces none.
 //
 // The records come back in the shapes docs/observability/data-contract.md
 // defines, straight from the three telemetry tables; the debugger's adapter
@@ -19,7 +23,7 @@
 
 const { allowMethods, bearerToken, publicError, sendJson } = require("./_lib/http");
 const { selectRows, verifyUser } = require("./_lib/supabase");
-const { telemetry } = require("./_lib/telemetry");
+const { telemetry, userHash } = require("./_lib/telemetry");
 const Contract = require("./_lib/telemetry/contract");
 
 const TABLES = Object.freeze({
@@ -43,6 +47,8 @@ const SNAPSHOT_META_COLUMNS = "snapshot_id,operation_id,trace_id,span_id,run_id,
 const ONBOARDING_COLUMNS = "id,user_id,status,step,project_name,paper_title,created_at,updated_at";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// An OpenTelemetry trace id: 32 hex characters.
+const TRACE_ID = /^[0-9a-f]{32}$/i;
 
 function fail(message, statusCode) {
   const error = new Error(message);
@@ -140,6 +146,22 @@ async function listRuns(user, d) {
   return { runs };
 }
 
+// The events and snapshots of some traces; snapshots travel whole while they
+// fit, and as metadata to be asked for one by one otherwise.
+async function recordsOf(read, traceIds) {
+  if (!traceIds.length) return { events: [], snapshots: [], inline: true };
+  const traces = inList(traceIds);
+  const inTrace = (x) => x && traceIds.includes(x.trace_id);
+  const events = (await read(TABLES.events, `trace_id=${traces}&select=*&order=at.asc,sequence.asc`)).filter(inTrace);
+  const meta = (await read(TABLES.snapshots, `trace_id=${traces}&select=${SNAPSHOT_META_COLUMNS}&order=created_at.asc`)).filter(inTrace);
+  const bytes = meta.reduce((n, s) => n + (Number(s.bytes) || 0), 0);
+  const inline = bytes <= INLINE_SNAPSHOT_BYTES;
+  const snapshots = inline
+    ? (await read(TABLES.snapshots, `trace_id=${traces}&select=*&order=created_at.asc`)).filter(inTrace)
+    : meta.map((s) => ({ ...s, content_omitted: true }));
+  return { events, snapshots, inline };
+}
+
 async function loadRun(user, id, d) {
   const read = reader(d);
   const row = await ownedRow(read, user, id);
@@ -147,22 +169,40 @@ async function loadRun(user, id, d) {
   const operations = (await read(TABLES.operations, `or=(onboarding_id.eq.${rowId},run_id.eq.${rowId})&select=*&order=started_at.asc`))
     .filter((op) => op && (op.onboarding_id === row.id || op.run_id === row.id));
   const traceIds = [...new Set(operations.map((op) => op.trace_id).filter(Boolean))];
-  let events = [];
-  let snapshots = [];
-  let inline = true;
-  if (traceIds.length) {
-    const traces = inList(traceIds);
-    const inTrace = (x) => x && traceIds.includes(x.trace_id);
-    events = (await read(TABLES.events, `trace_id=${traces}&select=*&order=at.asc,sequence.asc`)).filter(inTrace);
-    const meta = (await read(TABLES.snapshots, `trace_id=${traces}&select=${SNAPSHOT_META_COLUMNS}&order=created_at.asc`)).filter(inTrace);
-    const bytes = meta.reduce((n, s) => n + (Number(s.bytes) || 0), 0);
-    inline = bytes <= INLINE_SNAPSHOT_BYTES;
-    snapshots = inline
-      ? (await read(TABLES.snapshots, `trace_id=${traces}&select=*&order=created_at.asc`)).filter(inTrace)
-      : meta.map((s) => ({ ...s, content_omitted: true }));
-  }
+  const { events, snapshots, inline } = await recordsOf(read, traceIds);
   const envelope = Contract.bundle({ operations, snapshots, events }, { run_id: row.id });
   return { ...envelope, snapshots_inline: inline, onboarding: publicRow(row) };
+}
+
+// One action's trace, as the debugger asks for it the moment the action's
+// reply names it. The trace is the member's through the row its operations
+// were back-filled with; a trace that ended before any row was read (an open
+// that failed at the credit gate) is theirs when every operation carries
+// their own user hash. Anything else, and anything not there, is "no such
+// trace": a request that arrives before the flush landed reads the same as a
+// trace that never existed, and the page asks again.
+async function loadTrace(user, traceId, d) {
+  const read = reader(d);
+  if (!TRACE_ID.test(String(traceId || ""))) throw fail("No such trace", 404);
+  const id = String(traceId).toLowerCase();
+  const operations = (await read(TABLES.operations, `trace_id=eq.${encodeURIComponent(id)}&select=*&order=started_at.asc`))
+    .filter((op) => op && String(op.trace_id).toLowerCase() === id);
+  if (!operations.length) throw fail("No such trace", 404);
+  const rowIdOf = (op) => (isUuid(op.onboarding_id) ? op.onboarding_id : isUuid(op.run_id) ? op.run_id : null);
+  const rowIds = [...new Set(operations.map(rowIdOf).filter(Boolean))];
+  let row = null;
+  if (rowIds.length) {
+    // One trace, one row; the first named is the one checked, and every other must agree.
+    row = await ownedRow(read, user, rowIds[0]);
+    if (rowIds.length > 1) throw fail("No such trace", 404);
+  } else {
+    const mine = userHash(user.id);
+    const hashOf = (op) => op.attributes && op.attributes["engelbart.user_hash"];
+    if (!mine || !operations.every((op) => hashOf(op) === mine)) throw fail("No such trace", 404);
+  }
+  const { events, snapshots, inline } = await recordsOf(read, [id]);
+  const envelope = Contract.bundle({ operations, snapshots, events }, { run_id: row ? row.id : undefined });
+  return { ...envelope, trace_id: id, snapshots_inline: inline, onboarding: row ? publicRow(row) : null };
 }
 
 async function loadSnapshot(user, id, d) {
@@ -194,9 +234,11 @@ function queryOf(req) {
 // The one entry point the handler and the tests share: an authenticated member and the query.
 async function query(user, params, d = {}) {
   const run = params.get("run");
+  const trace = params.get("trace");
   const snapshot = params.get("snapshot");
-  if (run && snapshot) throw fail("Ask for a run or a snapshot, not both", 400);
+  if ([run, trace, snapshot].filter(Boolean).length > 1) throw fail("Ask for a run, a trace or a snapshot, not several", 400);
   if (snapshot) return loadSnapshot(user, snapshot, d);
+  if (trace) return loadTrace(user, trace, d);
   if (run) return loadRun(user, run, d);
   return listRuns(user, d);
 }
@@ -218,6 +260,7 @@ module.exports = handler;
 module.exports.query = query;
 module.exports.listRuns = listRuns;
 module.exports.loadRun = loadRun;
+module.exports.loadTrace = loadTrace;
 module.exports.loadSnapshot = loadSnapshot;
 module.exports.summarize = summarize;
 module.exports.INLINE_SNAPSHOT_BYTES = INLINE_SNAPSHOT_BYTES;

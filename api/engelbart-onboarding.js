@@ -25,6 +25,10 @@ const MODEL_ACTIONS = new Set(["sources", "analysis", "assets", "leveled", "answ
 // retrying one bills the key.
 const POLLED = new Set(["analysis", "assets", "leveled"]);
 const TEST_RUN_HEADER = "x-engelbart-test-run";
+// The reply names the trace it produced, so a page that made the request can
+// ask /api/engelbart-telemetry?trace= for exactly what the server did to
+// answer it. An untraced poll sends no header.
+const TRACE_HEADER = "x-engelbart-trace-id";
 
 function spent(credentials) {
   return credentials.status === "exhausted" || credentials.status === "blocked";
@@ -149,8 +153,9 @@ async function route(user, body, d, action) {
   throw error;
 }
 
-// d = {OB?, credentialsFor?, memberKeys?, options?, testRunId?, mode?} -- injected by tests
-// and harnesses; production uses the real modules and process.env.
+// d = {OB?, credentialsFor?, memberKeys?, options?, testRunId?, mode?, onTrace?} -- injected
+// by tests and harnesses; production uses the real modules and process.env.
+// `onTrace(traceId)` is told the workflow's trace id as soon as it starts.
 //
 // One action, one trace. A routine poll runs untraced unless polls are
 // switched on, in which case it is its own clearly-marked `.poll` workflow.
@@ -172,18 +177,22 @@ async function dispatch(user, body, d = {}) {
       "engelbart.run_flag": Boolean(body && body.run),
       "engelbart.retry": Boolean(body && body.retry),
     },
-  }, () => route(user, body, d, action)));
+  }, (op) => {
+    if (typeof d.onTrace === "function" && op && op.trace_id) d.onTrace(op.trace_id);
+    return route(user, body, d, action);
+  }));
 }
 
 async function handler(req, res) {
   if (!allowMethods(req, res, ["POST"])) return;
   let status = 200;
   let payload;
+  let traceId = "";
   try {
     const body = await readJson(req);
     // Authentication is bookkeeping, not onboarding; it stays out of the graph.
     const user = await telemetry.untraced(() => verifyUser(bearerToken(req)));
-    payload = await dispatch(user, body, { testRunId: String(req.headers[TEST_RUN_HEADER] || "") });
+    payload = await dispatch(user, body, { testRunId: String(req.headers[TEST_RUN_HEADER] || ""), onTrace: (id) => { traceId = id; } });
   } catch (error) {
     const failure = publicError(error);
     status = failure.status;
@@ -193,8 +202,11 @@ async function handler(req, res) {
   // function is frozen once it has answered, and a batch still in memory
   // would never land. Bounded, so a slow collector cannot hold the reply.
   await telemetry.flush();
+  // A failed action still names its trace: what went wrong is in it.
+  if (traceId) res.setHeader(TRACE_HEADER, traceId);
   return sendJson(res, status, payload);
 }
 
 module.exports = handler;
+module.exports.TRACE_HEADER = TRACE_HEADER;
 module.exports.dispatch = dispatch;

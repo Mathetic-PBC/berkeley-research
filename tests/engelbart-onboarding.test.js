@@ -179,3 +179,23 @@ test("assets and leveled are polled free and billed on run; the conversation is 
   const out = await handler.dispatch(USER, { action: "direction" }, deps());
   assert.equal(out.direction.title, "d");
 });
+
+// The reply names its trace, so the debugger can ask for exactly what the
+// server did to answer it; a routine poll runs untraced and names nothing.
+test("a traced action tells the caller its trace id as it starts; an untraced poll never does", async () => {
+  const seen = [];
+  await handler.dispatch(USER, { action: "step", step: 1, fields: {} }, deps({ onTrace: (id) => seen.push(id) }));
+  assert.equal(seen.length, 1);
+  assert.match(seen[0], /^[0-9a-f]{32}$/, "an OpenTelemetry trace id");
+  const polls = [];
+  await handler.dispatch(USER, { action: "analysis" }, deps({ onTrace: (id) => polls.push(id) }));
+  assert.deepEqual(polls, [], "an untraced poll has no trace to name");
+  // A failed action still names its trace: what went wrong is in it.
+  const failed = [];
+  await assert.rejects(handler.dispatch(USER, { action: "analysis", run: true }, deps({ onTrace: (id) => failed.push(id),
+    credentialsFor: async () => ({ status: "exhausted" }) })), (e) => e.statusCode === 409);
+  assert.equal(failed.length, 1);
+  assert.equal(handler.TRACE_HEADER, "x-engelbart-trace-id");
+  const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "api", "engelbart-onboarding.js"), "utf8");
+  assert.match(source, /res\.setHeader\(TRACE_HEADER, traceId\)/, "the handler sends it as a response header");
+});

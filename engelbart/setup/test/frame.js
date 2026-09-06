@@ -1,29 +1,144 @@
-/* The real setup page (setup.js, install.js, setup.css, unmodified) run
- * against the simulated control plane. fetch() to /api and to the fake
- * Supabase host is answered in-page; supabase-js is replaced by a session
- * that is always signed in. Every operation is posted to the parent, which
- * is the debugger page on this same origin. */
+/* The real setup page (setup.js, install.js, setup.css, unmodified) inside the
+ * debugger, in one of two modes named on the URL.
+ *
+ * Simulated (the default): fetch() to /api and to the fake Supabase host is
+ * answered in-page by sim-backend.js, supabase-js is replaced by a session that
+ * is always signed in, and every simulated operation is posted to the parent.
+ *
+ * Real (?mode=real): nothing is intercepted or replaced. The page boots on the
+ * pinned supabase-js, reads the member's own session from this origin's
+ * storage, and talks to the real endpoints, which do real work: model calls
+ * spend credit, writes land in the member's onboarding, uploads go to Storage.
+ * What this file adds is observation only: each request the page makes to
+ * /api or to Storage is reported to the parent as it starts and as it ends,
+ * with the trace id the server names in its reply (x-engelbart-trace-id), so
+ * the debugger can read that trace's telemetry and put it under the request.
+ * Bodies are redacted here, before they leave the frame.
+ *
+ * In both modes the parent is the debugger page on this same origin. */
 (function () {
   "use strict";
   var ORIGIN = window.location.origin;
   function post(message) { window.parent.postMessage(message, ORIGIN); }
   var params = new URLSearchParams(window.location.search);
+  var MODE = params.get("mode") === "real" ? "real" : "sim";
   var speed = Number(params.get("speed") || 1);
-  // One simulated account per test environment: the record lives under the environment's key.
-  var env = String(params.get("env") || "default").replace(/[^A-Za-z0-9_-]/g, "");
-  var participant = null; try { participant = params.get("p") ? JSON.parse(params.get("p")) : null; } catch (e) { participant = null; }
-  var sim = window.EngelbartSim.create({ persist: "egb.sim.db." + env, speed: speed, recordRaw: true, participant: participant,
-    emit: function (ev) { post({ egb: "trace", event: ev }); } });
-  var realFetch = window.fetch.bind(window);
-  window.fetch = function (url, init) { return sim.isSim(url) ? sim.handle(url, init) : realFetch(url, init); };
-  var session = { access_token: "eyJ" + "sim".repeat(20), user: sim.USER };
-  window.supabase = { createClient: function () { return { auth: {
-    getSession: function () {
-      return sim.local("supabase-js auth.getSession", { store: "localStorage sb-*-auth-token", persistSession: true, autoRefreshToken: true },
-        { session: { user: sim.USER.email, expires_in: 3600 } }).then(function () { return { data: { session: session }, error: null }; });
-    },
-    onAuthStateChange: function () { return { data: { subscription: { unsubscribe: function () {} } } }; }
-  } }; } };
+  var sim = null;
+
+  /* Anything that could be a credential is replaced before a body is posted:
+   * by the name of the field it sits in, or by its shape. The same names the
+   * simulator hides, plus the ones the real endpoints exchange (a member's own
+   * model key, the signed upload URL, the anon key that goes with it). */
+  var SECRET_KEYS = /^(authorization|apikey|anonkey|anon_key|servicerolekey|service_role_key|supabaseanonkey|masterkey|key|api_key|key_ciphertext|key_iv|key_tag|access_token|refresh_token|provider_token|paper_token|token|p_payload_token|uploadurl|upload_url|password|secret)$/i;
+  function redact(v, key, depth) {
+    depth = depth || 0;
+    if (depth > 12) return "…";
+    if (v == null) return v;
+    if (typeof v === "string") {
+      if (key && SECRET_KEYS.test(key)) return "••••••••";
+      if (/^sk-/.test(v)) return "sk-••••••••";
+      if (/^egb_/.test(v)) return "egb_••••••••";
+      if (/^eyJ[A-Za-z0-9._-]{16,}/.test(v)) return "eyJ•••••••• (jwt)";
+      if (/[?&]token=/.test(v)) return v.replace(/([?&]token=)[^&#]*/g, "$1••••••••");
+      if (v.length > 400 && /^[A-Za-z0-9+/=\s]+$/.test(v)) return "<base64 " + Math.round(v.length * 0.75 / 1024) + " KB omitted>";
+      return v.length > 20000 ? v.slice(0, 20000) + "… (" + v.length + " chars)" : v;
+    }
+    if (Array.isArray(v)) return v.map(function (x) { return redact(x, null, depth + 1); });
+    if (typeof v === "object") { var o = {}; Object.keys(v).forEach(function (k) { o[k] = redact(v[k], k, depth + 1); }); return o; }
+    return v;
+  }
+
+  if (MODE === "sim") {
+    // One simulated account per test environment: the record lives under the environment's key.
+    var env = String(params.get("env") || "default").replace(/[^A-Za-z0-9_-]/g, "");
+    var participant = null; try { participant = params.get("p") ? JSON.parse(params.get("p")) : null; } catch (e) { participant = null; }
+    sim = window.EngelbartSim.create({ persist: "egb.sim.db." + env, speed: speed, recordRaw: true, participant: participant,
+      emit: function (ev) { post({ egb: "trace", event: ev }); } });
+    var simFetch = window.fetch.bind(window);
+    window.fetch = function (url, init) { return sim.isSim(url) ? sim.handle(url, init) : simFetch(url, init); };
+    var session = { access_token: "eyJ" + "sim".repeat(20), user: sim.USER };
+    window.supabase = { createClient: function () { return { auth: {
+      getSession: function () {
+        return sim.local("supabase-js auth.getSession", { store: "localStorage sb-*-auth-token", persistSession: true, autoRefreshToken: true },
+          { session: { user: sim.USER.email, expires_in: 3600 } }).then(function () { return { data: { session: session }, error: null }; });
+      },
+      onAuthStateChange: function () { return { data: { subscription: { unsubscribe: function () {} } } }; }
+    } }; } };
+  } else {
+    observeReal();
+  }
+
+  /* Real mode: the page's own fetch, watched. Only same-origin /api requests and
+   * the browser's PUT of a paper to Storage are reported; anything else (fonts,
+   * supabase-js talking to Auth) passes through unseen. */
+  function observeReal() {
+    var realFetch = window.fetch.bind(window);
+    var seq = 0;
+    var BACKGROUND = ["analysis", "assets", "leveled"];
+    function pathOf(u) {
+      if (u.indexOf("/") === 0) return u.split("#")[0];
+      if (u.indexOf(ORIGIN + "/") === 0) return u.slice(ORIGIN.length).split("#")[0];
+      return null;
+    }
+    function bodyOf(init, req) {
+      var raw = init && init.body != null ? init.body : null;
+      if (raw == null && req && typeof req.text === "function") return Promise.resolve(null); // a Request's body is not re-read here
+      if (typeof raw === "string") { try { return Promise.resolve(JSON.parse(raw)); } catch (e) { return Promise.resolve({ text: raw.slice(0, 2000) }); } }
+      if (raw && typeof raw.size === "number") return Promise.resolve({ bytes: raw.size, type: raw.type || null, name: raw.name || null });
+      if (raw && raw.byteLength != null) return Promise.resolve({ bytes: raw.byteLength });
+      return Promise.resolve(raw == null ? null : { body: "(not a JSON string)" });
+    }
+    window.fetch = function (url, init) {
+      var isReq = typeof Request !== "undefined" && url instanceof Request;
+      var u = String(isReq ? url.url : url);
+      var method = String((init && init.method) || (isReq && url.method) || "GET").toUpperCase();
+      var same = pathOf(u);
+      var isApi = same && /^\/api\//.test(same);
+      var isStorage = !same && method === "PUT" && /\/storage\/v1\/object\//.test(u);
+      if (!isApi && !isStorage) return realFetch(url, init);
+      var id = "rq-" + (++seq) + "-" + Date.now().toString(36);
+      var started = Date.now();
+      // A signed upload URL carries its token in the query; the path alone is reported.
+      var path = isApi ? same.split("?")[0] : u.split("?")[0].replace(/^https?:\/\/[^/]+/, "");
+      var where = isApi ? "api" : "storage";
+      return bodyOf(init, isReq ? url : null).then(function (body) {
+        var action = body && typeof body === "object" && body.action ? String(body.action) : (isStorage ? "upload" : path.split("/").pop());
+        var background = BACKGROUND.indexOf(action) >= 0 && body && (body.run || body.retry);
+        var poll = BACKGROUND.indexOf(action) >= 0 && !background;
+        post({ egb: "request", id: id, at: started, method: method, path: path, where: where, action: action, body: redact(body), step: lastStep, bg: !!background, poll: !!poll });
+        return realFetch(url, init).then(function (r) {
+          var traceId = null; try { traceId = r.headers.get("x-engelbart-trace-id"); } catch (e) { traceId = null; }
+          var done = function (reply) { post({ egb: "response", id: id, at: Date.now(), ms: Date.now() - started, status: r.status, ok: r.ok, trace_id: traceId && /^[0-9a-f]{32}$/i.test(traceId) ? traceId.toLowerCase() : null, body: reply }); return r; };
+          if (isStorage) return done({ ok: r.ok, status: r.status });
+          var copy; try { copy = r.clone(); } catch (e) { copy = null; }
+          if (!copy) return done(null);
+          return copy.text().then(function (text) { var parsed; try { parsed = JSON.parse(text); } catch (e) { parsed = text ? { text: text.slice(0, 2000) } : null; } return done(redact(parsed)); }, function () { return done(null); });
+        }, function (err) {
+          post({ egb: "response", id: id, at: Date.now(), ms: Date.now() - started, status: 0, ok: false, trace_id: null, body: null, error: String(err && err.message || err) });
+          throw err;
+        });
+      });
+    };
+    // The member's session, as setup.js reads it: reported so the debugger can say when there is none
+    // (the page then leaves for /engelbart/signin, which refuses to be framed).
+    var lib = window.supabase;
+    if (lib && typeof lib.createClient === "function") {
+      window.supabase = { createClient: function () {
+        var client = lib.createClient.apply(lib, arguments);
+        var getSession = client.auth.getSession.bind(client.auth);
+        client.auth.getSession = function () {
+          return getSession().then(function (out) {
+            var s = out && out.data && out.data.session;
+            post({ egb: "session", signedIn: !!s, email: s && s.user && s.user.email || "" });
+            return out;
+          });
+        };
+        return client;
+      } };
+    } else {
+      post({ egb: "session", signedIn: false, email: "", error: "supabase-js did not load" });
+    }
+  }
 
   function fixturePdf() {
     var head = "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >> endobj\n";
@@ -67,15 +182,22 @@
     // Commands come only from the debugger page that embeds this frame.
     if (e.origin !== ORIGIN || e.source !== window.parent) return;
     var m = e.data; if (!m || m.egb !== "cmd") return;
-    if (m.cmd === "speed") sim.setSpeed(Number(m.value));
-    if (m.cmd === "prompts") sim.setPrompts(m.value);
     if (m.cmd === "pick") { picking = true; document.body.style.cursor = "crosshair"; }
     if (m.cmd === "cancelPick") stopPick();
     if (m.cmd === "triggers") triggers = Array.isArray(m.value) ? m.value : [];
     if (m.cmd === "auto") autoAll = !!m.value;
+    if (m.cmd === "reload") window.location.reload();
+    if (!sim) {
+      // The simulator's controls do not exist here: nothing to speed up, no prompts to swap, and no
+      // record to reset, because the record is the member's real onboarding.
+      if (m.cmd === "snapshot") post({ egb: "snapshot", state: null });
+      if (m.cmd === "reset" || m.cmd === "dropFixture" || m.cmd === "speed" || m.cmd === "prompts") notice("That is a simulator control; it does nothing in Real mode.");
+      return;
+    }
+    if (m.cmd === "speed") sim.setSpeed(Number(m.value));
+    if (m.cmd === "prompts") sim.setPrompts(m.value);
     if (m.cmd === "snapshot") post({ egb: "snapshot", state: sim.state() });
     if (m.cmd === "reset") { sim.reset(); window.location.reload(); }
-    if (m.cmd === "reload") window.location.reload();
     if (m.cmd === "dropFixture") {
       var drop = document.querySelector(".ob-drop");
       if (!drop) { notice("The Paper step is not on screen; the fixture paper can only be dropped there."); return; }
@@ -85,7 +207,7 @@
       } catch (err) { notice("This browser would not let the page synthesize a drop: " + err.message); }
     }
   });
-  post({ egb: "ready", speed: speed });
+  post({ egb: "ready", speed: speed, mode: MODE });
 
   /* Which step is on screen. setup.js marks the rail's active row; the Done screen has no rail
    * row, so it is read from its own heading. Reported whenever it changes. */

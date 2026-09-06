@@ -1,6 +1,6 @@
 "use strict";
 
-// The read-only telemetry endpoint behind the debugger's Real runs mode. The
+// The read-only telemetry endpoint behind the debugger's Real mode. The
 // handler is exercised with an injected row reader, so what the tests see is
 // its own job: naming the member, refusing everyone else's runs, ordering,
 // and never issuing anything but a read.
@@ -161,4 +161,46 @@ test("every query the endpoint makes is a read of the four tables, and none is t
   const source = fs.readFileSync(path.join(__dirname, "..", "api", "engelbart-telemetry.js"), "utf8");
   assert.match(source, /selectRows\(table, query, \{ trace: false \}\)/);
   assert.doesNotMatch(source, /insertRows|deleteRows|patch|upsert|method:\s*"(POST|PATCH|DELETE)"/i, "no write helper is even imported");
+});
+
+// One action's trace, asked for by the id its reply carried: the debugger's
+// Real mode loads what a request did the moment the request is answered.
+test("a trace is read by its id and is the member's through the row it named", async () => {
+  const s = store();
+  const analysis = FIXTURE.operations.find((op) => op.name === "onboarding.analysis");
+  const out = await handler.query(ALICE, params("trace=" + analysis.trace_id), s);
+  assert.equal(out.trace_id, analysis.trace_id);
+  assert.equal(out.contract_version, FIXTURE.contract_version);
+  assert.equal(out.run.run_id, RUN);
+  assert.deepEqual(out.operations.map((op) => op.trace_id), out.operations.map(() => analysis.trace_id), "only that trace's operations");
+  assert.equal(out.operations.length, FIXTURE.operations.filter((op) => op.trace_id === analysis.trace_id).length);
+  assert.equal(out.events.length, FIXTURE.events.filter((e) => e.trace_id === analysis.trace_id).length);
+  assert.equal(out.snapshots.length, FIXTURE.snapshots.filter((x) => x.trace_id === analysis.trace_id).length);
+  assert.equal(out.snapshots_inline, true);
+  assert.equal(out.onboarding.onboarding_id, RUN);
+  assert.equal(out.onboarding.user_id, undefined);
+  // Not Bob's, and not said to exist; nor a trace that is not there, nor a malformed id.
+  await assert.rejects(handler.query(BOB, params("trace=" + analysis.trace_id), s), (e) => e.statusCode === 404);
+  await assert.rejects(handler.query(ALICE, params("trace=" + "f".repeat(32)), s), (e) => e.statusCode === 404);
+  await assert.rejects(handler.query(ALICE, params("trace=not-a-trace"), s), (e) => e.statusCode === 404);
+  await assert.rejects(handler.query(ALICE, params("trace=" + analysis.trace_id + "&run=" + RUN), s), (e) => e.statusCode === 400);
+});
+
+test("a trace that never learned its row is the member's only when every operation carries their hash", async () => {
+  const { userHash } = require("../api/_lib/telemetry");
+  const s = store();
+  const rows = s.rows;
+  const traceId = "0123456789abcdef0123456789abcdef";
+  const rootless = (hash) => ({ operation_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", trace_id: traceId, span_id: "d1", parent_span_id: null, run_id: null, onboarding_id: null, action: "open",
+    name: "onboarding.open", type: "workflow", level: "workflow", status: "failed", started_at: "2026-09-06T04:00:00.000Z", ended_at: "2026-09-06T04:00:00.300Z", duration_ms: 300,
+    attributes: { "engelbart.user_hash": hash }, snapshots: {}, error: { name: "Error", message: "Credits are not ready", status_code: 409 } });
+  let op = rootless(userHash(ALICE.id));
+  s.rows = async (table, query) => (table === "engelbart_telemetry_operations" && query.includes(traceId) ? [op] : rows(table, query));
+  const out = await handler.query(ALICE, params("trace=" + traceId), s);
+  assert.equal(out.operations.length, 1);
+  assert.equal(out.onboarding, null, "no row to describe");
+  assert.equal(out.run.status, "failed");
+  await assert.rejects(handler.query(BOB, params("trace=" + traceId), s), (e) => e.statusCode === 404);
+  op = rootless(null);
+  await assert.rejects(handler.query(ALICE, params("trace=" + traceId), s), (e) => e.statusCode === 404, "an unattributed trace is nobody's");
 });
