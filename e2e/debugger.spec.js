@@ -268,7 +268,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(call).toContainText("The PhD student's paper follows as an attached document.");
     await expect(call).toContainText("[the paper, as a PDF document block");
     await expect(call).toContainText('"title": "Speculative Decoding for Fast LLM Inference"');
-    await call.getByRole("button", { name: /open in session/ }).click();
+    await call.getByRole("button", { name: /open in session/i }).click();
     await expect(inspector).toContainText("model.analysis");
     await page.getByRole("button", { name: /^Requests/ }).click();
 

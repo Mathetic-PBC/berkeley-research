@@ -29,9 +29,14 @@
   var SANSF = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
   var MONO = "'Source Code Pro',ui-monospace,Menlo,monospace";
   var MONO2 = "'Source Code Pro',ui-monospace,SFMono-Regular,Menlo,monospace";
-  var EYEBROW = "display:block;font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#8f8f8f";
+  var EYEBROW = "display:block;font:500 11px/1 " + SANS + ";color:#8f8f8f";
   var FIELD = "display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:9px 12px;border:1px solid #eaeaea;border-radius:8px;background:#fafafa;outline:none;font:13px/1.5 " + SANS + ";color:#171717";
-  var LINK_BTN = "padding:0;border:none;background:none;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#8f8f8f;white-space:nowrap";
+  var LINK_BTN = "padding:0;border:none;background:none;font:11.5px/1 " + SANS + ";color:#8f8f8f;white-space:nowrap";
+  // A row of text tabs: the open one dark with a hairline under it, the rest grey. Used for the views, the
+  // inspector, the value panel and the prompts.
+  var TAB = function (on) { return "padding:7px 0 8px;border:none;background:transparent;font:500 12px/1 " + SANS + ";color:" + (on ? "#171717" : "#8f8f8f") + ";border-bottom:1px solid " + (on ? "#171717" : "transparent") + ";margin-bottom:-1px;white-space:nowrap"; };
+  var TABS = "display:flex;align-items:baseline;gap:16px;border-bottom:1px solid #eaeaea";
+  var NUM = ";font-variant-numeric:tabular-nums";
 
   // The template wrote styles as CSS text; React wants objects. Parsed once per distinct string.
   var styleCache = new Map();
@@ -296,7 +301,8 @@ class Debugger extends React.Component {
     }
     const st = run.stages.find(s => s.id === (ev.stage || ev.id)); if (!st) return;
     // The box the product just changed selects itself, so the panel follows the action on the left.
-    if (ev.type === "op" && ev.status === "ok" && ev.writes && ev.writes.length && ["credit", "session"].indexOf(ev.writes[0]) < 0 && run === this.target()) { this.autoSel = ev.writes[ev.writes.length - 1]; }
+    // A poll's repeated write does not: it would take the selection back every few seconds.
+    if (ev.type === "op" && ev.status === "ok" && ev.writes && ev.writes.length && ["credit", "session"].indexOf(ev.writes[0]) < 0 && !st.poll && run === this.target()) { this.autoSel = ev.writes[ev.writes.length - 1]; }
     if (ev.type === "op") { const i = st.ops.findIndex(o => o.id === ev.id); const o = { id: ev.id, seq: ev.seq, at: ev.at, kind: ev.kind, name: ev.name, target: ev.target, status: ev.status, input: ev.input, output: ev.output, ms: ev.ms, meta: ev.meta || {}, error: ev.error, reads: ev.reads || [], writes: ev.writes || [] }; if (i < 0) st.ops.push(o); else st.ops[i] = o; }
     if (ev.type === "stage.end") { st.status = ev.status; st.code = ev.code; st.ms = ev.ms; st.response = ev.response; }
   }
@@ -583,12 +589,13 @@ class Debugger extends React.Component {
       dot: s.status === "running" ? "#0070f3" : s.status === "error" ? "#e70022" : "#c9c9c9",
       opsLabel: s.ops.length + (s.ops.length === 1 ? " op" : " ops"), msLabel: this.fmtMs(s.ms || s.ops.reduce((n, o) => n + (o.ms || 0), 0)), costLabel: this.fmtCost(cost),
       chevron: open ? "⌃" : "›", open: open, reqColor: sel && sel.stage === s.id && !sel.op ? "#0070f3" : "#8f8f8f",
+      seqColor: s.status === "running" ? "#0070f3" : s.status === "error" ? "#e70022" : "#8f8f8f", labelColor: s.status === "error" ? "#e70022" : "#171717",
       toggle: () => { const o = Object.assign({}, this.state.open); o[s.id] = !open; this.setState({ open: o }); },
       inspectStage: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.select(runKey, s.id, null); },
       dots: ops.map((o, i) => ({ color: o.status === "running" ? "#3291ff" : o.status === "error" ? "#e70022" : K[o.kind].color, ring: sel && sel.op === o.id ? "0 0 0 2px #fff, 0 0 0 3.5px #0070f3" : "none",
         line: i === ops.length - 1 ? "transparent" : "#e2e2e2", title: K[o.kind].label + " · " + o.name + " · " + this.fmtMs(o.ms), select: () => this.select(runKey, s.id, o.id) })),
       ops: ops.map((o, i) => ({ id: o.id, seq: this.pad(i + 1), kindLabel: K[o.kind].label, color: K[o.kind].color, bg: K[o.kind].bg, indent: (o.depth || 0) * 12, name: o.name + (o.status === "running" ? " …" : o.status === "error" ? " — failed" : ""), nameColor: o.status === "error" ? "#e70022" : "#171717",
-        target: o.target, msLabel: o.status === "running" ? "running" : this.fmtMs(o.ms), rowBg: sel && sel.op === o.id ? "#e6f0fd" : "transparent", select: () => this.select(runKey, s.id, o.id) })) };
+        target: o.target, msLabel: o.status === "running" ? "running" : this.fmtMs(o.ms), rowBg: sel && sel.op === o.id ? "#eef4ff" : "transparent", select: () => this.select(runKey, s.id, o.id) })) };
   }
   // --- readable rendering of stored data, prompts and replies ---------------------------------------------------
   renderData(v, depth) {
@@ -746,24 +753,25 @@ class Debugger extends React.Component {
     const edges = [], junctions = [];
     groups.forEach(g => {
       const b = pos[g.to]; if (!b) return; const froms = [...g.froms].filter(f => pos[f]); if (!froms.length) return;
-      const st = g.status, kindColor = g.kind ? K[g.kind].color : "#4d4d4d", stroke = st === "running" ? "#3291ff" : kindColor;
-      const touches = selNode && (g.to === selNode || froms.indexOf(selNode) >= 0);
-      const style = w => "fill:none;stroke:" + stroke + ";stroke-width:" + w + ";opacity:" + (selNode && !touches ? 0.15 : st === "before" && !touches ? 0.45 : 1);
-      const x2 = b.x, y2 = b.y + NH / 2, width = (touches || st === "running" || st === "here" ? 2 : 1.5) * Math.max(0.6, Math.min(1.4, Z));
+      // Edges are neutral; a model call's is violet, a running one's blue, and the selected value's dark.
+      const st = g.status, touches = selNode && (g.to === selNode || froms.indexOf(selNode) >= 0);
+      const stroke = st === "running" ? "#3291ff" : touches ? "#171717" : g.kind === "model" ? K.model.color : "#c9c9c9";
+      const style = w => "fill:none;stroke:" + stroke + ";stroke-width:" + w + ";opacity:" + (selNode && !touches ? 0.25 : st === "before" && !touches ? 0.6 : 1);
+      const x2 = b.x, y2 = b.y + NH / 2, width = (touches || st === "running" ? 1.5 : 1) * Math.max(0.6, Math.min(1.4, Z));
       if (froms.length === 1) { const a = pos[froms[0]]; edges.push({ d: curve(a.x + NW, a.y + NH / 2, x2, y2), style: style(width) }); return; }
       const jx = x2 - 38, jy = y2;
       froms.forEach(f => { const a = pos[f]; edges.push({ d: curve(a.x + NW, a.y + NH / 2, jx, jy), style: style(width) }); });
       edges.push({ d: "M" + zz(jx) + " " + zz(jy) + " L" + zz(x2) + " " + zz(y2), style: style(width) });
-      junctions.push({ cx: zz(jx), cy: zz(jy), r: Math.max(2.5, 4.5 * Z), style: "fill:" + stroke + ";stroke:#fafafa;stroke-width:2;opacity:" + (selNode && !touches ? 0.15 : 1) });
+      junctions.push({ cx: zz(jx), cy: zz(jy), r: Math.max(2, 3 * Z), style: "fill:" + stroke + ";opacity:" + (selNode && !touches ? 0.25 : 1) });
     });
     const nodes = vnodes.map(v => {
       const p = pos[v.id], w = writersOf(v), ok = w.filter(x => x.op.status === "ok"), here = ok.filter(x => x.here), running = w.some(x => x.here && x.op.status === "running");
       const on = selNode === v.id, hl = opHl.has(v.base), written = ok.length > 0, wroteHere = here.length > 0, readHere = readersOf(v).some(x => x.here);
-      return { id: v.id, x: zz(p.x), y: zz(p.y), w: zz(NW), h: zz(NH), fs: zz(11), fs2: zz(9), pad: zz(6) + "px " + zz(12) + "px 0 " + zz(9) + "px", radius: zz(6), dotSize: Math.max(3, zz(5)), dotOff: zz(5), label: v.label, sub: v.sub, title: (v.group ? v.group + " · " : "") + v.label + (v.row && v.row.area ? " · " + v.row.area + " · self-rated " + v.row.self_level : "") + " · " + v.sub + (wroteHere ? " · written on this step" : written ? " · written on an earlier step" : " · not produced yet") + (readHere ? " · read on this step" : ""),
-        bg: on ? "#e6f0fd" : wroteHere ? "#fff" : written ? "#f5f5f5" : "#fff",
-        border: (on || hl || running || wroteHere ? "2px" : "1px") + " solid " + (on || hl ? "#0070f3" : running ? "#3291ff" : wroteHere ? "#171717" : readHere ? "#8f8f8f" : written ? "#c9c9c9" : "#e2e2e2"),
+      return { id: v.id, x: zz(p.x), y: zz(p.y), w: zz(NW), h: zz(NH), fs: zz(11), fs2: zz(9), pad: zz(6) + "px " + zz(12) + "px 0 " + zz(9) + "px", radius: zz(3), dotSize: Math.max(3, zz(4)), dotOff: zz(5), label: v.label, sub: v.sub, title: (v.group ? v.group + " · " : "") + v.label + (v.row && v.row.area ? " · " + v.row.area + " · self-rated " + v.row.self_level : "") + " · " + v.sub + (wroteHere ? " · written on this step" : written ? " · written on an earlier step" : " · not produced yet") + (readHere ? " · read on this step" : ""),
+        bg: on ? "#eef4ff" : "#fff",
+        border: "1px solid " + (on || hl ? "#0070f3" : running ? "#3291ff" : wroteHere ? "#171717" : readHere ? "#8f8f8f" : written ? "#c9c9c9" : "#e2e2e2"),
         color: wroteHere || on || readHere ? "#171717" : written ? "#4d4d4d" : "#8f8f8f", dot: running ? "#0070f3" : wroteHere ? "#171717" : written ? "#c9c9c9" : "#e2e2e2", written: written || running, wroteHere: wroteHere || running, readHere: readHere,
-        count: "", hasCount: false, stack: "none", hasNote: !!(S.notes[v.id] || "").trim(),
+        count: "", hasCount: false,
         down: (e) => this.dragStart(e, v.id, pos[v.id]),
         select: () => { if (this.dragMoved) { this.dragMoved = false; return; } this.setState({ flowSel: on ? null : v.id, flowTab: null }); } };
     });
@@ -809,12 +817,11 @@ class Debugger extends React.Component {
       if (realState && realState.state === "ready" && realState.truncated) json = "// cut to the byte bound when it was recorded\n" + json;
       const tabNote = realSnaps && !realSnaps.length ? "This operation kept no payload; open it in the inspector for its attributes and events." : realState && realState.state === "ready" ? (realState.redacted ? "redacted before it was stored" : "stored as sent") : "";
       detail = { label: (sel.group ? sel.group + " · " : "") + sel.label, sub: sel.sub, rendered: null, hasRendered: false, showRaw: !!json, rawLabel: "", toggleRaw: () => {},
-        tabs: tabDefs.map(([k, label]) => ({ label: label, select: () => this.setState({ flowTab: k }), bg: tabKey === k ? "#171717" : "#fff", color: tabKey === k ? "#fff" : "#4d4d4d", border: tabKey === k ? "#171717" : "#eaeaea" })),
+        tabs: tabDefs.map(([k, label]) => ({ label: label, on: tabKey === k, select: () => this.setState({ flowTab: k }) })),
         tabNote: tabNote,
         status: source ? "Last written on " + source.rec.name + " at " + this.clock(source.op.at) + " by “" + source.op.name + "”" + (source.op.kind === "model" ? " (a model call)" : "") + (w.length > 1 ? " · " + w.length + " writes so far" : "") : "",
         hasValue: !!json, json: json || "", why: why ? "Why · " + why : "", hasWhy: !!why,
-        openLabel: source ? "open in inspector ›" : "", open: () => { if (!source) return; const o = Object.assign({}, this.state.open); o[source.stage.id] = true; this.setState({ open: o, viewing: S.recordings.indexOf(source.rec) }); this.select("live", source.stage.id, source.op.id); },
-        note: S.notes[sel.id] || "", setNote: (e) => this.setNote(sel.id, e.target.value), noteCount: Object.keys(S.notes).filter(k => (S.notes[k] || "").trim()).length,
+        openLabel: source ? "Open in inspector ›" : "", open: () => { if (!source) return; const o = Object.assign({}, this.state.open); o[source.stage.id] = true; this.setState({ open: o, viewing: S.recordings.indexOf(source.rec) }); this.select("live", source.stage.id, source.op.id); },
         close: () => this.setState({ flowSel: null, detailModal: false }) };
     }
     return { nodes: nodes, edges: edges, junctions: junctions, edgeLabels: [], detail: detail, total: FLOW.nodes.length, width: Math.max(240, zz(maxX + NW + PX)), height: Math.max(60, zz(maxY + NH + PY)) };
@@ -822,7 +829,7 @@ class Debugger extends React.Component {
   inspectorVM() {
     const K = this.KINDS, found = this.findOp(this.state.sel); if (!found) return null;
     const tab = this.state.inspTab, tabs = [];
-    const mk = (key, label) => ({ label: label, select: () => this.setState({ inspTab: key, copied: false }), bg: tab === key ? "#171717" : "#fff", color: tab === key ? "#fff" : "#4d4d4d", border: tab === key ? "#171717" : "#eaeaea" });
+    const mk = (key, label) => ({ label: label, on: tab === key, select: () => this.setState({ inspTab: key, copied: false }) });
     let json, meta = [], name, target, kind, redactedNote = null;
     if (found.op && found.op.real) {
       const o = found.op; kind = o.kind; name = o.name; target = o.target; const sn = o.snaps; const list = [];
@@ -921,7 +928,7 @@ class Debugger extends React.Component {
     const promptCount = calls.length, order = this.PROMPT_ORDER();
     const keys = Array.from(new Set(calls.map(c => c.key))).sort((a, b) => { const ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
     const promptKey = keys.indexOf(S.promptSel) >= 0 ? S.promptSel : keys[0];
-    const promptTabs = keys.map(k => { const mine = calls.filter(c => c.key === k), on = k === promptKey; return { key: k, label: this.PROMPT_LABEL(k), count: String(mine.length), edited: mine.some(c => this.promptEdited(c.op)), on: on, bg: on ? "#171717" : "#fff", color: on ? "#fff" : "#4d4d4d", border: on ? "#171717" : "#eaeaea", select: () => this.setState({ promptSel: k }) }; });
+    const promptTabs = keys.map(k => { const mine = calls.filter(c => c.key === k), on = k === promptKey; return { key: k, label: this.PROMPT_LABEL(k), count: String(mine.length), edited: mine.some(c => this.promptEdited(c.op)), on: on, select: () => this.setState({ promptSel: k }) }; });
     const promptCalls = calls.filter(c => c.key === promptKey).map(c => this.promptCallVM(c.stage, c.op));
     return {
       cfg: (() => { const c = S.config; if (!c) return { open: false }; const d = c.draft, P = this.PROMPTS(), sec = c.section || "about";
@@ -965,7 +972,7 @@ class Debugger extends React.Component {
         { k: "model calls", v: String(t.model), help: "Operations that called a model through LiteLLM" },
         real ? { k: "tokens", v: tokens.toLocaleString(), help: "Input and output tokens the model calls recorded" } : { k: "est. cost", v: t.cost ? this.fmtCost(t.cost) : "$0", help: "Estimated model spend, from token counts" },
         { k: "server time", v: this.fmtMs(t.ms) === "—" ? "0 ms" : this.fmtMs(t.ms), help: real ? "Time the server recorded for each action, summed" : "Simulated time the server spent answering, summed across requests" }],
-      views: [["flow", "Data flow"], ["requests", "Requests" + (t.requests ? " · " + t.requests : "")], ["prompts", "Prompts" + (promptCount ? " · " + promptCount : "")]].map(([k, label]) => ({ key: k, label: label, color: (S.view || "flow") === k ? "#171717" : "#8f8f8f", line: (S.view || "flow") === k ? "#171717" : "transparent", select: () => this.setState({ view: k }) })),
+      views: [["flow", "Data flow"], ["requests", "Requests" + (t.requests ? " · " + t.requests : "")], ["prompts", "Prompts" + (promptCount ? " · " + promptCount : "")]].map(([k, label]) => ({ key: k, label: label, on: (S.view || "flow") === k, color: (S.view || "flow") === k ? "#171717" : "#8f8f8f", line: (S.view || "flow") === k ? "#171717" : "transparent", select: () => this.setState({ view: k }) })),
       isFlowView: (S.view || "flow") === "flow", isRequestsView: (S.view || "flow") === "requests", isPromptsView: (S.view || "flow") === "prompts",
       promptTabs: promptTabs, promptCalls: promptCalls, promptsEmpty: !promptCount, promptSelLabel: promptTabs.length ? this.PROMPT_LABEL(promptKey) : "",
       promptsEmptyText: real ? (S.real.picked ? "This run recorded no model calls." : "No model calls yet. When the product asks the model, each call lands here under its prompt.") : "No model calls on this step yet. When the product asks the model, each call lands here under its prompt.",
@@ -975,23 +982,24 @@ class Debugger extends React.Component {
       zoomIn: () => this.setState({ flowZoom: Math.min(2.5, Math.round((S.flowZoom + 0.15) * 100) / 100) }), zoomOut: () => this.setState({ flowZoom: Math.max(0.4, Math.round((S.flowZoom - 0.15) * 100) / 100) }),
       zoomReset: () => this.setState({ flowZoom: 1, flowPos: {}, flowPan: { x: 0, y: 0 } }), hasLayoutChanges: Object.keys(S.flowPos).length > 0 || S.flowZoom !== 1 || !!(S.flowPan && (S.flowPan.x || S.flowPan.y)),
       flowPanX: (S.flowPan || { x: 0 }).x, flowPanY: (S.flowPan || { y: 0 }).y,
-      toggleFlowModal: () => this.setState({ flowModal: !S.flowModal }), flowModalLabel: S.flowModal ? "close" : "expand",
-      fc: S.flowModal ? { pos: "fixed", left: "3vw", top: "4vh", w: "94vw", h: "92vh", z: 60, scrollFlex: "1 1 auto", scrollMax: "none", scrollH: "auto" } : { pos: "relative", left: "auto", top: "auto", w: "auto", h: "auto", z: "auto", scrollFlex: "0 0 auto", scrollMax: "none", scrollH: (S.flowHeight || 360) + "px" },
+      toggleFlowModal: () => this.setState({ flowModal: !S.flowModal }), flowModalLabel: S.flowModal ? "Close" : "Expand",
+      // The graph takes the height its boxes need, within bounds, until the reader drags it to a height.
+      fc: S.flowModal ? { pos: "fixed", left: "3vw", top: "4vh", w: "94vw", h: "92vh", z: 60, border: "1px solid #eaeaea", radius: "8px", scrollFlex: "1 1 auto", scrollMax: "none", scrollH: "auto" } : { pos: "relative", left: "auto", top: "auto", w: "auto", h: "auto", z: "auto", border: "none", radius: "0", scrollFlex: "0 0 auto", scrollMax: "none", scrollH: (S.flowHeight || Math.max(120, Math.min(340, (flow.height || 0) + 20))) + "px" },
       panDown: (e) => this.panDown(e), resizeDown: (e) => this.resizeDown(e),
-      toggleDetailModal: () => this.setState({ detailModal: !S.detailModal }), detailModalLabel: S.detailModal ? "close" : "expand",
+      toggleDetailModal: () => this.setState({ detailModal: !S.detailModal }), detailModalLabel: S.detailModal ? "Close" : "Expand",
       // The value's panel sits under the graph and, while its own place is below the fold, stays pinned to the
       // bottom of the panel (sticky, capped at half the window, scrolling inside): a value that selects itself
       // when the product writes it is in view at once, and nothing scrolls the panel to it.
-      dm: S.detailModal ? { pos: "fixed", left: "8vw", top: "6vh", bottom: "auto", w: "84vw", h: "88vh", maxH: "none", ov: "hidden", shadow: "none", z: 70, border: "1px solid #eaeaea", radius: "12px", pad: "16px 18px 18px", preFlex: "1 1 auto", preMax: "none" } : { pos: "sticky", left: "auto", top: "auto", bottom: "0", w: "auto", h: "auto", maxH: "min(50vh, 460px)", ov: "auto", shadow: "0 -8px 18px -10px rgba(0,0,0,.18)", z: 3, border: "none", radius: "0", pad: "12px 14px 13px", preFlex: "0 0 auto", preMax: "420px" },
+      dm: S.detailModal ? { pos: "fixed", left: "8vw", top: "6vh", bottom: "auto", w: "84vw", h: "88vh", maxH: "none", ov: "hidden", shadow: "none", z: 70, border: "1px solid #eaeaea", radius: "8px", pad: "14px 18px 18px", preFlex: "1 1 auto", preMax: "none" } : { pos: "sticky", left: "auto", top: "auto", bottom: "0", w: "auto", h: "auto", maxH: "min(38vh, 380px)", ov: "auto", shadow: "0 -6px 14px -10px rgba(0,0,0,.14)", z: 3, border: "none", radius: "0", pad: "10px 0 12px", preFlex: "0 0 auto", preMax: "420px" },
       anyModal: S.flowModal || S.detailModal, closeModals: () => this.setState({ flowModal: false, detailModal: false }),
-      lastRan: live.stages.length ? "Last run: " + this.clock(live.stages[live.stages.length - 1].at) : "Last run: —",
+      lastRan: live.stages.length ? "Last run " + this.clock(live.stages[live.stages.length - 1].at) : "No run yet",
       // Real mode names only its mode: no environment, no prefilled participant, and never the product's test
       // switch, whose reset buttons would clear the member's real record. The dashboard mounts no frame at all.
       frameSrc: real ? "/engelbart/setup/test/frame?mode=real" : S.envId ? "/engelbart/setup/test/frame?env=" + S.envId + (testMode ? "&test=true" : "") + this.participantParam((S.envs.find(e => e.id === S.envId) || {}).config) : "",
       onListScroll: (e) => { const el = e.target; const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 48; if (stick !== S.stick) this.setState({ stick: stick }); },
       isLive: S.tab === "live", isCases: S.tab === "cases", isCompare: S.tab === "compare",
       liveEmpty: !visible.length, stages: visible.map((s, i) => this.stageVM(s, live.stages.indexOf(s), "live", live)),
-      kindChips: Object.keys(K).map(k => ({ key: k, label: K[k].label, color: K[k].color, count: String(counts[k] || 0), title: K[k].title, bg: S.hideKinds[k] ? "transparent" : K[k].bg, border: S.hideKinds[k] ? "#eaeaea" : "transparent", opacity: S.hideKinds[k] ? 0.55 : 1, toggle: () => { const hk = Object.assign({}, S.hideKinds); hk[k] = !hk[k]; this.setState({ hideKinds: hk }); } })),
+      kindChips: Object.keys(K).map(k => ({ key: k, label: K[k].label, color: K[k].color, count: String(counts[k] || 0), title: K[k].title + (S.hideKinds[k] ? " · hidden, click to show" : " · click to hide"), hidden: !!S.hideKinds[k], opacity: S.hideKinds[k] ? 0.45 : 1, toggle: () => { const hk = Object.assign({}, S.hideKinds); hk[k] = !hk[k]; this.setState({ hideKinds: hk }); } })),
       casesEmpty: !S.cases.length,
       cases: S.cases.map(c => { const tc = this.totals(c.stages); return { id: c.id, name: c.name, rename: (e) => { c.name = e.target.value; const cases = S.cases.slice(); this.persist(cases); this.setState({ cases: cases }); },
         meta: "saved " + this.clock(c.savedAt) + " · " + tc.requests + " requests · " + tc.ops + " ops · " + tc.model + " model calls · " + (this.fmtCost(tc.cost) || "$0") + " · " + c.runs.length + (c.runs.length === 1 ? " isolated run" : " isolated runs"),
@@ -1045,19 +1053,20 @@ class Debugger extends React.Component {
   // belong to an open environment. In Real mode (?mode=real) it carries the run picker and the member instead.
   renderTopBar(V) {
     const R = V.real;
-    return h("div", { "data-screen-label": "Top bar", style: css("flex:none;min-height:46px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 14px 6px 16px;border-bottom:1px solid #eaeaea;white-space:nowrap") },
-      h("span", { style: css("font:500 17px/1 " + SANSF + ";letter-spacing:-0.2px") }, "Engelbart"),
+    const SELECT = "max-width:300px;padding:5px 24px 5px 9px;border:1px solid #eaeaea;border-radius:5px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer";
+    return h("div", { "data-screen-label": "Top bar", style: css("flex:none;min-height:44px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 16px;border-bottom:1px solid #eaeaea;white-space:nowrap") },
+      h("span", { style: css("font:500 15px/1 " + SANSF + ";letter-spacing:-0.2px") }, "Engelbart"),
       V.isReal
-        ? h("select", { value: R.pickerValue, onChange: R.pick, "data-run-picker": "1", title: "what the panel shows: this session, or one of your earlier runs", style: css("max-width:320px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
+        ? h("select", { value: R.pickerValue, onChange: R.pick, "data-run-picker": "1", title: "what the panel shows: this session, or one of your earlier runs", style: css(SELECT) },
           R.pickerOptions.map(o => h("option", { key: o.value, value: o.value }, o.label)))
-        : V.isDashboard ? null : h("select", { value: V.envId, onChange: V.envSelect, title: "switch environment", style: css("max-width:280px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
+        : V.isDashboard ? null : h("select", { value: V.envId, onChange: V.envSelect, title: "switch environment", style: css(SELECT) },
           V.envOptions.map(eo => h("option", { key: eo.value, value: eo.value }, eo.label))),
-      V.isReal ? h("select", { value: R.promptValue, onChange: R.pickPrompts, "data-prompt-picker": "1", title: R.promptsTitle, style: css("max-width:260px;padding:6px 28px 6px 12px;border:1px solid " + (R.promptsApplied ? "#0070f3" : "#eaeaea") + ";border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:" + (R.promptsApplied ? "#0070f3" : "#171717") + ";outline:none;cursor:pointer") },
+      V.isReal ? h("select", { value: R.promptValue, onChange: R.pickPrompts, "data-prompt-picker": "1", title: R.promptsTitle, style: css(SELECT + ";color:" + (R.promptsApplied ? "#0070f3" : "#171717")) },
           R.promptOptions.map(o => h("option", { key: o.value, value: o.value }, o.label))) : null,
       h("span", { style: css("font:12px/1.4 " + SANS + ";color:#e70022;flex:1 1 40px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, V.notice || (V.isReal ? R.error : "")),
       V.isReal ? (R.email ? h("span", { title: "the member the product runs as", style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, R.email) : null)
-        : V.isDashboard ? null : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
-          style: css("padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px;white-space:nowrap") }, "Reset test environment"));
+        : V.isDashboard ? null : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink",
+          style: css("padding:4px 0;font:12px/1 " + SANS + ";color:#8f8f8f;background:transparent;border:none;white-space:nowrap") }, "Reset test environment"));
   }
   // The environments dashboard, Simulated mode's landing screen. Every environment is a card: the whole card
   // opens it, its × deletes it, Configure edits it and Reset clears it, both without opening it. Hover changes
@@ -1168,117 +1177,117 @@ class Debugger extends React.Component {
     ];
   }
   renderStepTabs(V) {
-    return h("div", { style: css("display:flex;align-items:flex-end;gap:2px;flex-wrap:wrap;border-bottom:1px solid #eaeaea;margin:-4px 0 12px") },
-      V.recordings.map(rc => h("span", { key: rc.id, onClick: rc.select, title: rc.title, className: "hv-fafafa", style: css("display:inline-flex;align-items:center;gap:7px;padding:8px 10px 9px;border-bottom:2px solid " + rc.line + ";margin-bottom:-1px;cursor:pointer;white-space:nowrap") },
+    return h("div", { style: css("display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;border-bottom:1px solid #eaeaea") },
+      V.recordings.map(rc => h("span", { key: rc.id, onClick: rc.select, title: rc.title, style: css("display:inline-flex;align-items:center;gap:6px;padding:10px 0 9px;border-bottom:1px solid " + rc.line + ";margin-bottom:-1px;cursor:pointer;white-space:nowrap") },
         rc.on ? h("span", { style: css("position:relative;display:inline-block") },
-          h("span", { "aria-hidden": "true", style: css("visibility:hidden;display:inline-block;padding:0 2px;font:500 12.5px/1 " + SANS + ";white-space:pre;min-width:18px;max-width:240px") }, rc.label),
+          h("span", { "aria-hidden": "true", style: css("visibility:hidden;display:inline-block;padding:0 1px;font:500 12.5px/1 " + SANS + ";white-space:pre;min-width:18px;max-width:240px") }, rc.label),
           h("input", { value: rc.label, onChange: rc.rename, spellCheck: false, title: "rename this step", className: "fc-bottom-blue",
-            style: css("position:absolute;left:0;top:0;width:100%;height:100%;box-sizing:border-box;padding:0 2px;margin:0;border:none;border-bottom:1px dashed #c9c9c9;background:transparent;outline:none;font:500 12.5px/1 " + SANS + ";color:#171717") })) : null,
+            style: css("position:absolute;left:0;top:0;width:100%;height:100%;box-sizing:border-box;padding:0 1px;margin:0;border:none;background:transparent;outline:none;font:500 12.5px/1 " + SANS + ";color:#171717") })) : null,
         rc.off ? h("span", { style: css("font:500 12.5px/1 " + SANS + ";color:" + rc.color) }, rc.label) : null,
         rc.closable ? h("span", { onClick: rc.close, title: "close this step", className: "hv-red", style: css("font:13px/1 " + SANS + ";color:" + rc.subColor) }, "×") : null)));
   }
+  // An empty state is a line of text, not a box.
+  renderEmpty(title, text, label) {
+    return h("div", { "data-screen-label": label || undefined, style: css("padding:22px 0 26px;font:12.5px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") },
+      h("div", { style: css("font:500 12.5px/1.6 " + SANS + ";color:#4d4d4d") }, title), h("div", { style: css("max-width:520px") }, text));
+  }
   renderFlow(V) {
     const fc = V.fc, dm = V.dm, fd = V.flowDetail;
+    const ZOOM_BTN = "padding:2px 6px;border:none;background:transparent;font:500 13px/1 " + SANS + ";color:#8f8f8f";
     return [
       V.anyModal ? h("div", { key: "veil", onClick: V.closeModals, style: css("position:fixed;inset:0;z-index:50;background:rgba(23,23,23,0.32)") }) : null,
-      h("div", { key: "flow", "data-screen-label": "Data flow", style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:14px;background:#fff;overflow:clip;display:flex;flex-direction:column;position:" + fc.pos + ";left:" + fc.left + ";top:" + fc.top + ";width:" + fc.w + ";height:" + fc.h + ";z-index:" + fc.z) },
-        h("div", { style: css("flex:none;display:flex;align-items:center;gap:10px;padding:10px 14px") },
-          h("span", { style: css("flex:1;min-width:0;font:11px/1.4 " + SANS + ";color:#8f8f8f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, "boxes are stored values · arrows are the operations between them · violet arrows are model calls · drag a box to move it"),
-          h("span", { style: css("display:inline-flex;align-items:center;border:1px solid #eaeaea;border-radius:999px;overflow:hidden") },
-            h("button", { onClick: V.zoomOut, title: "zoom out", className: "hv-f5", style: css("padding:4px 9px;border:none;background:transparent;font:500 13px/1 " + SANS + ";color:#4d4d4d") }, "−"),
-            h("span", { style: css("min-width:40px;text-align:center;font:11px/1 " + MONO + ";color:#4d4d4d") }, V.flowZoomLabel),
-            h("button", { onClick: V.zoomIn, title: "zoom in", className: "hv-f5", style: css("padding:4px 9px;border:none;background:transparent;font:500 13px/1 " + SANS + ";color:#4d4d4d") }, "+")),
-          V.hasLayoutChanges ? h("button", { onClick: V.zoomReset, title: "undo moves and zoom", className: "hv-ink", style: css(LINK_BTN) }, "reset layout") : null,
-          h("button", { onClick: V.toggleFlowModal, className: "hv-ink", style: css(LINK_BTN) }, V.flowModalLabel)),
-        h("div", { ref: this.flowScrollRef, onPointerDown: V.panDown, style: css("border-top:1px solid #f2f2f2;background:#fafafa;overflow:hidden;position:relative;min-height:0;cursor:grab;flex:" + fc.scrollFlex + ";max-height:" + fc.scrollMax + ";height:" + fc.scrollH) },
-          V.flowEmpty ? h("div", { style: css("padding:18px 14px;font:12px/1.5 " + SANS + ";color:#8f8f8f") }, "Nothing exists yet. Values appear here as the product produces them.") : null,
+      h("div", { key: "flow", "data-screen-label": "Data flow", style: css("margin-bottom:14px;background:#fff;overflow:clip;display:flex;flex-direction:column;border:" + fc.border + ";border-radius:" + fc.radius + ";position:" + fc.pos + ";left:" + fc.left + ";top:" + fc.top + ";width:" + fc.w + ";height:" + fc.h + ";z-index:" + fc.z) },
+        h("div", { style: css("flex:none;display:flex;align-items:center;gap:12px;padding:8px 0 8px " + (V.anyModal ? "14px" : "0")) },
+          h("span", { style: css("flex:1;min-width:0;font:11.5px/1.4 " + SANS + ";color:#8f8f8f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, "Boxes are stored values, arrows the operations between them. Drag a box to move it."),
+          h("span", { style: css("display:inline-flex;align-items:center;gap:2px") },
+            h("button", { onClick: V.zoomOut, title: "zoom out", className: "hv-ink", style: css(ZOOM_BTN) }, "−"),
+            h("span", { style: css("min-width:34px;text-align:center;font:11px/1 " + SANS + ";color:#8f8f8f" + NUM) }, V.flowZoomLabel),
+            h("button", { onClick: V.zoomIn, title: "zoom in", className: "hv-ink", style: css(ZOOM_BTN) }, "+")),
+          V.hasLayoutChanges ? h("button", { onClick: V.zoomReset, title: "undo moves and zoom", className: "hv-ink", style: css(LINK_BTN) }, "Reset layout") : null,
+          h("button", { onClick: V.toggleFlowModal, className: "hv-ink", style: css(LINK_BTN + (V.anyModal ? ";margin-right:14px" : "")) }, V.flowModalLabel)),
+        h("div", { ref: this.flowScrollRef, onPointerDown: V.panDown, style: css("border-top:1px solid #eaeaea;border-bottom:1px solid #eaeaea;background:#fafafa;overflow:hidden;position:relative;min-height:0;cursor:grab;flex:" + fc.scrollFlex + ";max-height:" + fc.scrollMax + ";height:" + fc.scrollH) },
+          V.flowEmpty ? h("div", { style: css("padding:16px 12px;font:12.5px/1.5 " + SANS + ";color:#8f8f8f") }, "Nothing exists yet. Values appear here as the product produces them.") : null,
           V.flowHasNodes ? h("div", { style: css("position:relative;width:" + V.flowW + "px;height:" + V.flowH + "px;transform:translate(" + V.flowPanX + "px, " + V.flowPanY + "px)") },
             h("svg", { width: V.flowW, height: V.flowH, style: css("display:block;position:absolute;left:0;top:0;pointer-events:none") },
               V.flowEdges.map((fe, i) => h("path", { key: "e" + i, d: fe.d, style: css(fe.style) })),
               V.flowJunctions.map((fj, i) => h("circle", { key: "j" + i, cx: fj.cx, cy: fj.cy, r: fj.r, style: css(fj.style) }))),
             V.flowNodes.map(fn => h("div", { key: fn.id, "data-node": "1", onClick: fn.select, onPointerDown: fn.down, title: fn.title,
-              style: css("position:absolute;left:" + fn.x + "px;top:" + fn.y + "px;width:" + fn.w + "px;height:" + fn.h + "px;box-sizing:border-box;padding:" + fn.pad + ";border-radius:" + fn.radius + "px;cursor:grab;user-select:none;background:" + fn.bg + ";border:" + fn.border + ";box-shadow:" + fn.stack) },
+              style: css("position:absolute;left:" + fn.x + "px;top:" + fn.y + "px;width:" + fn.w + "px;height:" + fn.h + "px;box-sizing:border-box;padding:" + fn.pad + ";border-radius:" + fn.radius + "px;cursor:grab;user-select:none;background:" + fn.bg + ";border:" + fn.border) },
               h("span", { style: css("display:block;font:500 " + fn.fs + "px/1.2 " + SANS + ";color:" + fn.color + ";white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, fn.label),
               h("span", { style: css("display:block;margin-top:2px;font:" + fn.fs2 + "px/1.2 " + SANS + ";color:#8f8f8f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, fn.sub),
               h("span", { style: css("position:absolute;right:" + fn.dotOff + "px;top:" + fn.dotOff + "px;width:" + fn.dotSize + "px;height:" + fn.dotSize + "px;border-radius:50%;background:" + fn.dot) }),
-              fn.hasNote ? h("span", { title: "has a note", style: css("position:absolute;left:-1px;top:-1px;width:0;height:0;border-style:solid;border-width:9px 9px 0 0;border-color:#0070f3 transparent transparent transparent;border-top-left-radius:6px") }) : null,
               fn.hasCount ? h("span", { style: css("position:absolute;right:-7px;bottom:-7px;padding:2px 5px;border-radius:999px;background:#171717;color:#fff;font:500 9px/1 " + MONO) }, fn.count) : null))) : null),
-        h("div", { onPointerDown: V.resizeDown, title: "drag to resize the graph", style: css("flex:none;height:10px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;border-top:1px solid #f2f2f2;background:#fff") },
-          h("span", { style: css("width:36px;height:3px;border-radius:2px;background:#e2e2e2") })),
+        h("div", { onPointerDown: V.resizeDown, title: "drag to resize the graph", style: css("flex:none;height:8px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;background:#fff") },
+          h("span", { style: css("width:28px;height:2px;border-radius:1px;background:#e2e2e2") })),
         V.flowHasDetail ? h("div", { "data-flow-detail": "1", style: css("display:flex;flex-direction:column;box-sizing:border-box;overflow:" + dm.ov + ";background:#fff;border-top:1px solid #eaeaea;position:" + dm.pos + ";left:" + dm.left + ";top:" + dm.top + ";bottom:" + dm.bottom + ";width:" + dm.w + ";height:" + dm.h + ";max-height:" + dm.maxH + ";box-shadow:" + dm.shadow + ";z-index:" + dm.z + ";border:" + dm.border + ";border-radius:" + dm.radius + ";padding:" + dm.pad) },
           h("div", { style: css("flex:none;display:flex;align-items:baseline;gap:10px") },
             h("span", { style: css("font:500 13px/1.3 " + SANS + ";color:#171717") }, fd.label),
-            h("span", { style: css("font:11px/1.3 " + SANS + ";color:#8f8f8f") }, fd.sub),
+            h("span", { style: css("font:11.5px/1.3 " + SANS + ";color:#8f8f8f;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, fd.sub),
             h("span", { style: css("flex:1") }),
             h("button", { onClick: V.toggleDetailModal, className: "hv-ink", style: css(LINK_BTN) }, V.detailModalLabel),
             h("button", { onClick: fd.close, "aria-label": "close", className: "hv-ink", style: css("padding:0 2px;border:none;background:none;font:15px/1 " + SANS + ";color:#8f8f8f") }, "×")),
-          h("div", { style: css("margin-top:6px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap") },
-            h("span", { style: css("font:11.5px/1.5 " + SANS + ";color:#4d4d4d") }, fd.status),
-            h("button", { onClick: fd.open, className: "hv-ink", style: css("padding:0;border:none;background:none;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#0070f3;white-space:nowrap") }, fd.openLabel)),
-          fd.hasWhy ? h("div", { style: css("margin-top:8px;padding:8px 10px;border-radius:6px;background:#e6f0fd;font:11.5px/1.5 " + SANS + ";color:#0761d1;text-wrap:pretty") }, fd.why) : null,
-          h("div", { style: css("margin-top:10px;display:flex;align-items:center;gap:4px;flex-wrap:wrap") },
-            fd.tabs.map((ft, i) => h("button", { key: i, onClick: ft.select, style: css("padding:5px 10px;border:1px solid " + ft.border + ";border-radius:999px;background:" + ft.bg + ";font:500 9.5px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:" + ft.color + ";white-space:nowrap") }, ft.label)),
-            fd.tabNote ? h("span", { "data-tab-note": "1", style: css("font:11px/1.4 " + SANS + ";color:#8f8f8f") }, fd.tabNote) : null),
-          fd.hasRendered ? h("div", { style: css("margin-top:10px;max-height:420px;overflow:auto;padding:12px 14px;background:#fafafa;border:1px solid #eaeaea;border-radius:6px") }, fd.rendered) : null,
-          fd.showRaw ? h("pre", { style: css("margin:8px 0 0;overflow:auto;padding:10px 12px;background:#fafafa;border:1px solid #eaeaea;border-radius:6px;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word;min-height:0;flex:" + dm.preFlex + ";max-height:" + dm.preMax) }, fd.json) : null,
-          h("div", { style: css("flex:none;margin-top:10px") },
-            h("div", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#8f8f8f") }, "Notes"),
-            h("textarea", { value: fd.note, onChange: fd.setNote, placeholder: "What you make of this value — saved in this browser, kept when you come back…", rows: 2, spellCheck: false, className: "fc-blue-line",
-              style: css("display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:9px 12px;border:1px solid #eaeaea;border-radius:6px;background:#fff;resize:vertical;font:12.5px/1.6 " + SANS + ";color:#171717;outline:none") }))) : null)
+          h("div", { style: css("margin-top:4px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap") },
+            h("span", { style: css("font:11.5px/1.5 " + SANS + ";color:#8f8f8f") }, fd.status),
+            fd.openLabel ? h("button", { onClick: fd.open, className: "hv-ink", style: css("padding:0;border:none;background:none;font:11.5px/1.5 " + SANS + ";color:#0070f3;white-space:nowrap") }, fd.openLabel) : null),
+          fd.hasWhy ? h("div", { style: css("margin-top:4px;font:11.5px/1.5 " + SANS + ";color:#4d4d4d;text-wrap:pretty") }, fd.why) : null,
+          h("div", { style: css("margin-top:6px;" + TABS) },
+            fd.tabs.map((ft, i) => h("button", { key: i, onClick: ft.select, style: css(TAB(ft.on)) }, ft.label)),
+            fd.tabNote ? h("span", { "data-tab-note": "1", style: css("margin-left:auto;font:11px/1.4 " + SANS + ";color:#8f8f8f") }, fd.tabNote) : null),
+          fd.hasRendered ? h("div", { style: css("margin-top:8px;max-height:420px;overflow:auto;padding:10px 12px;background:#fafafa;border-radius:4px") }, fd.rendered) : null,
+          fd.showRaw ? h("pre", { style: css("margin:8px 0 0;overflow:auto;padding:10px 12px;background:#fafafa;border-radius:4px;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word;min-height:0;flex:" + dm.preFlex + ";max-height:" + dm.preMax) }, fd.json) : null) : null)
     ];
   }
+  // The Requests view: a trace list. A request is a row under a hairline; open, its operations are rows beneath it,
+  // the name carrying the weight, timings and cost aligned on the right.
   renderRequests(V) {
     const K = this.KINDS;
+    const META = "flex:none;font:11.5px/1.4 " + SANS + ";text-align:right;white-space:nowrap" + NUM;
     return [
-      h("div", { key: "chips", style: css("display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px") },
-        V.kindChips.map(k => h("button", { key: k.key, onClick: k.toggle, title: k.title, style: css("display:inline-flex;align-items:center;gap:7px;padding:5px 10px 5px 8px;border:1px solid " + k.border + ";border-radius:999px;background:" + k.bg + ";opacity:" + k.opacity) },
-          h("span", { style: css("width:9px;height:9px;border-radius:3px;background:" + k.color) }),
-          h("span", { style: css("font:500 11px/1 " + SANS + ";color:#171717") }, k.label),
-          h("span", { style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, k.count)))),
-      V.liveEmpty ? h("div", { key: "empty", style: css("padding:28px 18px;border:1px dashed #e2e2e2;border-radius:10px;text-align:center") },
-        h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, V.isReal ? (V.real.viewingPicked ? "No actions were recorded for this run" : "No requests yet") : "No requests on this step yet"),
-        h("div", { style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, V.isReal ? (V.real.viewingPicked ? "The run has no workflow operation on record." : "Use the product on the left. Every request it makes lands here as it happens, and the operations the server recorded to answer it follow as soon as the reply names its trace.") : "Use the product on the left. Every request it makes while on this step, and every operation the server runs to answer it, lands here as it happens.")) : null,
-      V.stages.map(s => h("div", { key: s.id, id: s.anchor, style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:8px;background:#fff;overflow:hidden") },
-        h("div", { onClick: s.toggle, className: "hv-fafafa", style: css("display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer") },
-          h("span", { style: css("font:500 10px/1 " + MONO + ";color:#8f8f8f;width:22px") }, s.seqLabel),
-          h("span", { style: css("width:8px;height:8px;border-radius:50%;flex:none;background:" + s.dot) }),
-          h("span", { style: css("flex:0 1 auto;min-width:0;font:500 13px/1.3 " + SANS + ";color:#171717;white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, s.label),
-          s.modelPill ? h("span", { title: "this request called a model", style: css("flex:none;padding:3px 6px;border-radius:4px;background:" + K.model.bg + ";color:" + K.model.color + ";font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;white-space:nowrap") }, s.modelPill) : null,
-          h("span", { style: css("flex:none;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#8f8f8f;white-space:nowrap") }, s.tag),
-          h("span", { style: css("flex:1 1 30px;min-width:0;font:11px/1.4 " + MONO + ";color:#8f8f8f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, s.path),
-          h("span", { style: css("flex:none;font:11px/1 " + SANS + ";color:#4d4d4d;white-space:nowrap") }, s.opsLabel),
-          h("span", { style: css("flex:none;font:11px/1 " + MONO + ";color:#4d4d4d;text-align:right;white-space:nowrap") }, s.msLabel),
-          h("span", { style: css("flex:none;font:11px/1 " + MONO + ";color:#8f8f8f;text-align:right;white-space:nowrap") }, s.costLabel),
-          h("span", { style: css("flex:none;font:12px/1 " + SANS + ";color:#8f8f8f;width:10px;text-align:center") }, s.chevron)),
-        h("div", { style: css("display:flex;align-items:center;flex-wrap:wrap;row-gap:6px;padding:0 12px 10px 44px") },
-          s.dots.map((d, i) => h("span", { key: i, onClick: d.select, title: d.title, style: css("display:inline-flex;align-items:center;cursor:pointer") },
-            h("span", { style: css("width:10px;height:10px;border-radius:3px;background:" + d.color + ";box-shadow:" + d.ring) }),
-            h("span", { style: css("width:9px;height:1px;background:" + d.line) }))),
-          h("button", { onClick: s.inspectStage, className: "hv-ink", style: css("margin-left:8px;padding:0;border:none;background:none;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:" + s.reqColor) }, "request · response")),
-        s.open ? h("div", { style: css("border-top:1px solid #f2f2f2;padding:5px 0") },
-          s.ops.map(o => h("div", { key: o.id, onClick: o.select, className: "hv-fafafa", style: css("display:grid;grid-template-columns:34px 64px minmax(0,1fr) 58px;align-items:baseline;gap:10px;padding:5px 12px;cursor:pointer;background:" + o.rowBg) },
+      h("div", { key: "chips", style: css("display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:0 0 4px") },
+        V.kindChips.map(k => h("button", { key: k.key, onClick: k.toggle, title: k.title, style: css("padding:4px 0;border:none;background:none;font:11.5px/1 " + SANS + ";color:#8f8f8f;opacity:" + k.opacity + (k.hidden ? ";text-decoration:line-through" : "")) },
+          h("span", { style: css("font-weight:500;color:" + (k.hidden ? "#8f8f8f" : "#4d4d4d")) }, k.label), " ",
+          h("span", { style: css(NUM.slice(1)) }, k.count)))),
+      V.liveEmpty ? this.renderEmpty(V.isReal ? (V.real.viewingPicked ? "No actions were recorded for this run" : "No requests yet") : "No requests on this step yet",
+        V.isReal ? (V.real.viewingPicked ? "The run has no workflow operation on record." : "Use the product on the left. Every request it makes lands here as it happens, and the operations the server recorded to answer it follow as soon as the reply names its trace.") : "Use the product on the left. Every request it makes while on this step, and every operation the server runs to answer it, lands here as it happens.") : null,
+      V.stages.map(s => h("div", { key: s.id, id: s.anchor, style: css("border-top:1px solid #eaeaea") },
+        h("div", { onClick: s.toggle, className: "hv-fafafa", style: css("display:flex;align-items:baseline;gap:10px;padding:7px 2px;cursor:pointer") },
+          h("span", { style: css("flex:none;width:22px;font:11px/1.4 " + MONO + ";color:" + s.seqColor) }, s.seqLabel),
+          h("span", { style: css("flex:1 1 auto;min-width:0;display:flex;align-items:baseline;gap:8px;overflow:hidden") },
+            h("span", { style: css("flex:none;max-width:100%;font:500 12.5px/1.4 " + SANS + ";color:" + s.labelColor + ";white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, s.label),
+            s.modelPill ? h("span", { title: "this request called a model", style: css("flex:none;font:500 10px/1.4 " + SANS + ";letter-spacing:0.4px;text-transform:uppercase;color:" + K.model.color + ";white-space:nowrap") }, s.modelPill) : null,
+            s.tag ? h("span", { style: css("flex:none;font:11px/1.4 " + SANS + ";color:#8f8f8f;white-space:nowrap") }, s.tag) : null,
+            h("span", { style: css("flex:1 1 20px;min-width:0;font:11px/1.4 " + MONO + ";color:#b3b3b3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, s.path)),
+          h("span", { style: css(META + ";color:#8f8f8f;min-width:42px") }, s.opsLabel),
+          h("span", { style: css(META + ";color:#4d4d4d;min-width:52px") }, s.msLabel),
+          h("span", { style: css(META + ";color:#8f8f8f;min-width:44px") }, s.costLabel)),
+        s.open ? h("div", { style: css("padding:0 0 8px") },
+          h("div", { style: css("padding:0 2px 2px 32px") },
+            h("button", { onClick: s.inspectStage, className: "hv-ink", style: css("padding:2px 0;border:none;background:none;font:11.5px/1.4 " + SANS + ";color:" + s.reqColor) }, "Request · response")),
+          s.ops.map(o => h("div", { key: o.id, onClick: o.select, className: "hv-fafafa", style: css("display:grid;grid-template-columns:22px 22px 54px minmax(0,1fr) auto;align-items:baseline;gap:10px;padding:3px 2px;cursor:pointer;background:" + o.rowBg) },
+            h("span", null),
             h("span", { style: css("font:11px/1.5 " + MONO + ";color:#c9c9c9;text-align:right") }, o.seq),
-            h("span", { style: css("display:inline-block;padding:4px 0;border-radius:4px;font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;text-align:center;background:" + o.bg + ";color:" + o.color) }, o.kindLabel),
-            h("span", { style: css("min-width:0;padding-left:" + (o.indent || 0) + "px") },
-              h("span", { style: css("font:13px/1.45 " + SANS + ";color:" + o.nameColor) }, o.name),
-              h("span", { style: css("display:block;font:11px/1.5 " + MONO + ";color:#8f8f8f;word-break:break-all") }, o.target)),
-            h("span", { style: css("font:11px/1.5 " + MONO + ";color:#4d4d4d;text-align:right") }, o.msLabel)))) : null))
+            h("span", { style: css("font:500 10px/1.5 " + SANS + ";letter-spacing:0.4px;text-transform:uppercase;color:" + o.color) }, o.kindLabel),
+            h("span", { title: o.target, style: css("min-width:0;display:flex;align-items:baseline;gap:8px;padding-left:" + (o.indent || 0) + "px") },
+              h("span", { style: css("flex:none;font:12.5px/1.5 " + SANS + ";color:" + o.nameColor) }, o.name),
+              h("span", { style: css("flex:1 1 auto;min-width:0;font:11px/1.5 " + MONO + ";color:#8f8f8f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, o.target)),
+            h("span", { style: css("font:11.5px/1.5 " + SANS + ";color:#4d4d4d;text-align:right;min-width:52px" + NUM) }, o.msLabel)))) : null))
     ];
   }
   renderLive(V) {
-    return h("div", { ref: this.listRef, onScroll: V.onListScroll, style: css("flex:1;min-height:0;overflow:auto;padding:12px 14px 20px") },
+    return h("div", { ref: this.listRef, onScroll: V.onListScroll, style: css("flex:1;min-height:0;overflow:auto;padding:0 16px 20px") },
       V.isReal ? null : this.renderStepTabs(V),
-      h("div", { style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:14px;background:#fff;overflow:hidden") },
-        h("div", { style: css("padding:16px 14px 18px;background:#fafafa") },
-          h("div", { style: css("display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap") },
-            h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#8f8f8f") }, V.isReal ? (V.real.viewingPicked ? "Earlier run · " + V.real.pickedTitle : "This session") : "This step"),
-            h("span", { style: css("font:11.5px/1.4 " + MONO + ";color:#4d4d4d") }, V.lastRan)),
-          h("div", { style: css("margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:12px 8px") },
-            V.statTiles.map(stt => h("span", { key: stt.k, title: stt.help, style: css("min-width:0") },
-              h("span", { style: css("display:block;font:500 19px/1.2 " + SANS + ";letter-spacing:-0.3px;color:#171717;font-variant-numeric:tabular-nums") }, stt.v),
-              h("span", { style: css("display:block;margin-top:5px;font:11px/1.3 " + SANS + ";color:#8f8f8f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, stt.k)))))),
-      h("div", { style: css("display:flex;align-items:center;gap:2px;margin-bottom:12px;border-bottom:1px solid #eaeaea") },
-        V.views.map(vw => h("button", { key: vw.key, onClick: vw.select, style: css("padding:8px 10px 9px;border:none;background:transparent;font:500 12.5px/1 " + SANS + ";color:" + vw.color + ";border-bottom:2px solid " + vw.line + ";margin-bottom:-1px;white-space:nowrap") }, vw.label))),
+      // One quiet summary line: what is on screen and when it last ran, then the counts.
+      h("div", { style: css("padding:12px 0 10px") },
+        h("div", { style: css("display:flex;align-items:baseline;gap:12px;font:11.5px/1.4 " + SANS + ";color:#8f8f8f") },
+          h("span", { style: css("min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, V.isReal ? (V.real.viewingPicked ? "Earlier run · " + V.real.pickedTitle : "This session") : "This step"),
+          h("span", { style: css("flex:1") }),
+          h("span", { style: css("white-space:nowrap" + NUM) }, V.lastRan)),
+        h("div", { style: css("margin-top:5px;display:flex;align-items:baseline;gap:16px;flex-wrap:wrap") },
+          V.statTiles.map(stt => h("span", { key: stt.k, title: stt.help, style: css("white-space:nowrap") },
+            h("span", { style: css("font:500 13.5px/1.3 " + SANS + ";color:#171717" + NUM) }, stt.v),
+            h("span", { style: css("margin-left:4px;font:11.5px/1.3 " + SANS + ";color:#8f8f8f") }, stt.k))))),
+      h("div", { style: css(TABS + ";margin-bottom:10px") },
+        V.views.map(vw => h("button", { key: vw.key, onClick: vw.select, style: css(TAB(vw.on)) }, vw.label))),
       V.isFlowView && V.lineageUnavailable ? this.renderLineageUnavailable() : null,
       V.isFlowView && !V.lineageUnavailable ? this.renderFlow(V) : null,
       V.isRequestsView ? this.renderRequests(V) : null,
@@ -1287,36 +1296,31 @@ class Debugger extends React.Component {
   // The Prompts view: a tab per prompt the run sent, and under it every call of that prompt, the message as
   // the model received it and the reply as parsed. The rest of the call is one click away in the inspector.
   renderPrompts(V) {
-    const K = this.KINDS;
-    const block = (label, text) => [h("div", { key: label, style: css("margin-top:10px;font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#8f8f8f") }, label),
-      h("pre", { key: label + "-pre", style: css("margin:6px 0 0;max-height:320px;overflow:auto;padding:10px 12px;background:#fafafa;border:1px solid #eaeaea;border-radius:6px;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word") }, text)];
+    const block = (label, text) => [h("div", { key: label, style: css("margin-top:10px;font:11.5px/1.4 " + SANS + ";color:#8f8f8f") }, label),
+      h("pre", { key: label + "-pre", style: css("margin:5px 0 0;max-height:320px;overflow:auto;padding:10px 12px;background:#fafafa;border-radius:4px;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word") }, text)];
     return h("div", { "data-screen-label": "Prompts" },
-      V.promptsEmpty ? h("div", { style: css("padding:28px 18px;border:1px dashed #e2e2e2;border-radius:10px;text-align:center") },
-        h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "No model calls yet"),
-        h("div", { style: css("margin-top:4px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") }, V.promptsEmptyText)) : null,
-      V.promptsEmpty ? null : h("div", { style: css("display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px") },
-        V.promptTabs.map(pt => h("button", { key: pt.key, onClick: pt.select, "data-prompt-tab": pt.key, title: pt.key, style: css("display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border:1px solid " + pt.border + ";border-radius:999px;background:" + pt.bg) },
-          h("span", { style: css("font:500 11px/1 " + SANS + ";color:" + pt.color) }, pt.label),
-          h("span", { style: css("font:11px/1 " + MONO + ";color:" + (pt.on ? "#c9c9c9" : "#8f8f8f")) }, pt.count),
-          pt.edited ? h("span", { title: "an edited prompt was sent", style: css("width:7px;height:7px;border-radius:50%;background:#0070f3") }) : null))),
-      V.promptCalls.map(pc => h("div", { key: pc.id, "data-prompt-call": "1", style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:10px;padding:10px 12px 12px;background:#fff") },
+      V.promptsEmpty ? this.renderEmpty("No model calls yet", V.promptsEmptyText) : null,
+      V.promptsEmpty ? null : h("div", { style: css(TABS + ";margin:-4px 0 4px;flex-wrap:wrap") },
+        V.promptTabs.map(pt => h("button", { key: pt.key, onClick: pt.select, "data-prompt-tab": pt.key, title: pt.key, style: css(TAB(pt.on) + ";display:inline-flex;align-items:baseline;gap:6px") },
+          h("span", null, pt.label),
+          h("span", { style: css("font:11px/1 " + SANS + ";color:#8f8f8f" + NUM) }, pt.count),
+          pt.edited ? h("span", { title: "an edited prompt was sent", style: css("font:11px/1 " + SANS + ";color:#0070f3") }, "edited") : null))),
+      V.promptCalls.map((pc, i) => h("div", { key: pc.id, "data-prompt-call": "1", style: css("padding:10px 0 14px;border-top:1px solid " + (i ? "#eaeaea" : "transparent")) },
         h("div", { style: css("display:flex;align-items:baseline;gap:10px;flex-wrap:wrap") },
-          h("span", { style: css("font:500 10px/1 " + MONO + ";color:#8f8f8f") }, pc.when),
-          h("span", { style: css("font:500 12.5px/1.3 " + SANS + ";color:#171717") }, pc.where),
-          pc.badge ? h("span", { style: css("padding:3px 6px;border-radius:4px;background:#e6f0fd;color:#0761d1;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;white-space:nowrap") }, pc.badge) : null,
+          h("span", { style: css("font:11px/1.4 " + SANS + ";color:#8f8f8f" + NUM) }, pc.when),
+          h("span", { style: css("font:500 12.5px/1.4 " + SANS + ";color:#171717") }, pc.where),
+          pc.badge ? h("span", { style: css("font:11px/1.4 " + SANS + ";color:#0070f3;white-space:nowrap") }, pc.badge) : null,
           h("span", { style: css("flex:1") }),
-          h("span", { style: css("font:11px/1.4 " + MONO + ";color:" + (pc.status === "error" ? "#e70022" : "#4d4d4d")) }, pc.status === "error" ? "failed" : pc.meta),
-          h("button", { onClick: pc.open, className: "hv-ink", style: css("padding:0;border:none;background:none;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#0070f3;white-space:nowrap") }, "open in session ›")),
-        pc.error ? h("div", { style: css("margin-top:8px;font:12px/1.5 " + SANS + ";color:#e70022;text-wrap:pretty") }, pc.error) : null,
+          h("span", { style: css("font:11.5px/1.4 " + SANS + ";color:" + (pc.status === "error" ? "#e70022" : "#8f8f8f") + NUM) }, pc.status === "error" ? "failed" : pc.meta),
+          h("button", { onClick: pc.open, className: "hv-ink", style: css("padding:0;border:none;background:none;font:11.5px/1.4 " + SANS + ";color:#0070f3;white-space:nowrap") }, "Open in session ›")),
+        pc.error ? h("div", { style: css("margin-top:6px;font:12px/1.5 " + SANS + ";color:#e70022;text-wrap:pretty") }, pc.error) : null,
         block("Input · as the model received it", pc.input),
         pc.hasOutput ? block("Response · as parsed", pc.output) : null,
         pc.note ? h("div", { style: css("margin-top:6px;font:11px/1.4 " + SANS + ";color:#8f8f8f") }, pc.note) : null)));
   }
   renderLineageUnavailable() {
-    return h("div", { "data-screen-label": "Lineage unavailable", style: css("border:1px dashed #e2e2e2;border-radius:10px;padding:28px 18px;text-align:center;margin-bottom:14px") },
-      h("div", { style: css("font:500 13px/1.5 " + SANS + ";color:#171717") }, "Lineage was not recorded for this run"),
-      h("div", { style: css("margin:4px auto 0;max-width:460px;font:12px/1.6 " + SANS + ";color:#8f8f8f;text-wrap:pretty") },
-        "The graph draws which stored values each operation read and wrote. This run was recorded before the server kept that, so its operations, timing, payloads and errors are on record but no edge is guessed from them. Use Requests to inspect every operation; runs recorded since carry their reads and writes and draw here."));
+    return this.renderEmpty("Lineage was not recorded for this run",
+      "The graph draws which stored values each operation read and wrote. This run was recorded before the server kept that, so its operations, timing, payloads and errors are on record but no edge is guessed from them. Use Requests to inspect every operation; runs recorded since carry their reads and writes and draw here.", "Lineage unavailable");
   }
   renderCases(V) {
     return h("div", { style: css("flex:1;min-height:0;overflow:auto;padding:12px 14px 20px") },
@@ -1400,27 +1404,29 @@ class Debugger extends React.Component {
                 h("span", { style: css("flex:none;font:11px/1.4 " + MONO + ";color:#8f8f8f") }, p.bMs))))) : null))
       ] : null);
   }
+  // The inspector: the selected operation's name and essentials as the header, its tabs as text, the payload
+  // beneath. Only tabs that have content are offered (the view model decides).
   renderInspector(V) {
     const insp = V.insp;
-    return h("div", { "data-screen-label": "Inspector", style: css("flex:none;height:42%;min-height:220px;display:flex;flex-direction:column;border-top:1px solid #eaeaea;background:#fafafa") },
-      h("div", { style: css("flex:none;display:flex;align-items:center;gap:10px;padding:10px 14px 0") },
-        h("span", { style: css("display:inline-block;padding:4px 7px;border-radius:4px;font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;background:" + insp.bg + ";color:" + insp.color) }, insp.kindLabel),
+    return h("div", { "data-screen-label": "Inspector", style: css("flex:none;height:42%;min-height:220px;display:flex;flex-direction:column;border-top:1px solid #eaeaea;background:#fff") },
+      h("div", { style: css("flex:none;display:flex;align-items:baseline;gap:10px;padding:10px 16px 0") },
         h("span", { style: css("font:500 13px/1.3 " + SANS + ";color:#171717;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, insp.name),
-        h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:" + insp.sideColor) }, insp.side),
+        h("span", { style: css("font:500 10px/1.3 " + SANS + ";letter-spacing:0.4px;text-transform:uppercase;color:" + insp.color + ";white-space:nowrap") }, insp.kindLabel),
+        insp.side ? h("span", { style: css("font:11px/1.3 " + SANS + ";color:" + insp.sideColor) }, insp.side) : null,
         h("span", { style: css("flex:1") }),
-        h("button", { onClick: insp.counterpart, className: "hv-ink", style: css("padding:0;border:none;background:none;font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:" + insp.counterpartColor) }, insp.counterpartLabel),
+        insp.counterpartLabel ? h("button", { onClick: insp.counterpart, className: "hv-ink", style: css("padding:0;border:none;background:none;font:11.5px/1.3 " + SANS + ";color:" + insp.counterpartColor) }, insp.counterpartLabel) : null,
         h("button", { onClick: V.closeInspector, "aria-label": "close", className: "hv-ink", style: css("padding:0 2px;border:none;background:none;font:16px/1 " + SANS + ";color:#8f8f8f") }, "×")),
-      h("div", { style: css("flex:none;padding:6px 14px 0;font:11px/1.5 " + MONO + ";color:#4d4d4d;word-break:break-all") }, insp.target),
-      h("div", { style: css("flex:none;display:flex;gap:14px;flex-wrap:wrap;padding:6px 14px 0") },
-        insp.meta.map((mr, i) => h("span", { key: i, style: css("display:inline-flex;align-items:baseline;gap:5px") },
-          h("span", { style: css("font:500 9px/1 " + SANS + ";letter-spacing:1.3px;text-transform:uppercase;color:#8f8f8f") }, mr.k),
-          h("span", { style: css("font:11.5px/1.4 " + MONO + ";color:#171717") }, mr.v)))),
-      h("div", { style: css("flex:none;display:flex;align-items:center;gap:2px;padding:8px 14px 0") },
-        insp.tabs.map((it, i) => h("button", { key: i, onClick: it.select, style: css("padding:6px 10px;border:1px solid " + it.border + ";border-radius:999px;background:" + it.bg + ";font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:" + it.color) }, it.label)),
+      h("div", { style: css("flex:none;padding:2px 16px 0;font:11px/1.5 " + MONO + ";color:#8f8f8f;word-break:break-all") }, insp.target),
+      h("div", { style: css("flex:none;display:flex;gap:14px;flex-wrap:wrap;padding:5px 16px 0;font:11.5px/1.5 " + SANS + NUM) },
+        insp.meta.map((mr, i) => h("span", { key: i, style: css("white-space:nowrap") },
+          h("span", { style: css("color:#8f8f8f") }, mr.k + " "),
+          h("span", { style: css("color:#171717") }, mr.v)))),
+      h("div", { style: css("flex:none;margin:6px 16px 0;" + TABS) },
+        insp.tabs.map((it, i) => h("button", { key: i, onClick: it.select, style: css(TAB(it.on)) }, it.label)),
         h("span", { style: css("flex:1") }),
-        h("span", { style: css("font:11px/1 " + SANS + ";color:#8f8f8f") }, insp.redacted),
-        h("button", { onClick: V.copyJson, className: "hv-ink-line", style: css("margin-left:10px;padding:5px 10px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 9px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d") }, V.copyLabel)),
-      h("pre", { style: css("flex:1;min-height:0;overflow:auto;margin:8px 14px 12px;padding:10px 12px;background:#fff;border:1px solid #eaeaea;border-radius:8px;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word") }, insp.json));
+        h("span", { style: css("font:11px/1 " + SANS + ";color:#8f8f8f;white-space:nowrap") }, insp.redacted),
+        h("button", { onClick: V.copyJson, className: "hv-ink", style: css("margin-left:12px;padding:0;border:none;background:none;font:11.5px/1 " + SANS + ";color:#8f8f8f;white-space:nowrap") }, V.copyLabel)),
+      h("pre", { style: css("flex:1;min-height:0;overflow:auto;margin:0;padding:10px 16px 12px;background:#fff;font:11.5px/1.55 " + MONO2 + ";color:#171717;white-space:pre-wrap;word-break:break-word") }, insp.json));
   }
   render() {
     const V = this.renderVals(), R = V.real;
