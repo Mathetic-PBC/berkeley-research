@@ -886,10 +886,35 @@ test("a value the product writes opens its panel in the Data flow view without s
   let V = P.d.renderVals();
   same([P.d.state.flowSel, V.flowHasDetail, V.flowDetail.label], ["profile", true, "Reader profile"], "the written value's panel opens by itself");
   assert.equal(list.scrollTop, 0, "and the panel is not scrolled down to it");
+  same([V.dm.pos, V.dm.bottom, V.dm.ov], ["sticky", "0", "auto"], "the panel is pinned to the bottom of the view instead, so it is in sight without a scroll");
+  const detail = find(P.d.render(), (n) => n.props && n.props["data-flow-detail"]);
+  assert.equal(detail.length, 1);
+  assert.match(detail[0].props.style.position, /^sticky$/);
   P.d.setState({ view: "requests" }); await flush();
   write("b"); await new Promise((r) => setTimeout(r, 80));
   assert.equal(list.scrollTop, 1000, "the Requests list, at its end, follows the new row");
   list.scrollTop = 100; P.d.renderVals().onListScroll({ target: list }); await flush();
   write("c"); await new Promise((r) => setTimeout(r, 80));
   assert.equal(list.scrollTop, 100, "scrolled up, it holds its place");
+});
+
+test("a request whose id repeats one kept from an earlier boot of the product goes to the newest tab that has it, not the old one", async () => {
+  const P = page({});
+  P.d.createEnv("Lab"); await settle();
+  P.send({ egb: "ready", speed: 1, mode: "sim" }); await flush();
+  const at = 1_700_000_000_000;
+  const burst = (t, n) => [
+    { type: "stage", id: "st-1-ab", seq: 1, at: t, path: "/api/engelbart-onboarding", method: "POST", surface: "onboarding", action: "step", label: "onboarding · step" },
+    { type: "op", id: "op-1", stage: "st-1-ab", seq: 2, at: t + 5, kind: "db", name: "store the step " + n, target: "PATCH /rest/v1/onboardings", status: "ok", input: {}, output: { ok: true }, ms: 3, meta: {}, reads: ["session"], writes: ["profile"] },
+    { type: "stage.end", id: "st-1-ab", at: t + 20, status: "ok", code: 200, ms: 20, response: { ok: true } },
+  ].forEach((ev) => P.send({ egb: "trace", event: ev }));
+  burst(at, 1); await new Promise((r) => setTimeout(r, 80));
+  // The product reloads and its counter starts over; the reader presses on the Name step.
+  P.d.pressed("Name"); await flush();
+  P.d.setState({ flowSel: null }); await flush();
+  burst(at + 60_000, 2); await new Promise((r) => setTimeout(r, 80));
+  const [start, name] = P.d.state.recordings;
+  same([start.name, start.stages.length, start.stages[0].ops.map((o) => o.name)], ["Start", 1, ["store the step 1"]], "the earlier boot's request keeps its own operation");
+  same([name.step, name.stages.length, name.stages[0].status, name.stages[0].ops.map((o) => o.name)], ["Name", 1, "ok", ["store the step 2"]], "the new request, on the step's tab, gets its operation and its end");
+  same([P.d.state.flowSel, P.d.viewed().step], ["profile", "Name"], "and the value it wrote selects itself on the tab in view");
 });

@@ -355,7 +355,8 @@ class Debugger extends React.Component {
     if (this.state.mode === "real" || !run) { this.pending.splice(0); return; }
     this.pending.splice(0).forEach(ev => {
       if (ev.type === "stage") { this.apply(run, ev); return; }
-      const home = recs.find(r => r.stages.some(s => s.id === (ev.stage || ev.id))) || run; this.apply(home, ev);
+      // The newest tab that has the stage: a tab kept from an earlier boot of the product may hold a stage of the same id.
+      const home = recs.slice().reverse().find(r => r.stages.some(s => s.id === (ev.stage || ev.id))) || run; this.apply(home, ev);
     });
     if (this.autoSel && this.autoSel !== this.state.flowSel) { const next = this.autoSel; this.autoSel = null; this.setState({ flowSel: next, flowTab: null }); } else this.autoSel = null;
     this.scheduleSave();
@@ -978,7 +979,10 @@ class Debugger extends React.Component {
       fc: S.flowModal ? { pos: "fixed", left: "3vw", top: "4vh", w: "94vw", h: "92vh", z: 60, scrollFlex: "1 1 auto", scrollMax: "none", scrollH: "auto" } : { pos: "relative", left: "auto", top: "auto", w: "auto", h: "auto", z: "auto", scrollFlex: "0 0 auto", scrollMax: "none", scrollH: (S.flowHeight || 360) + "px" },
       panDown: (e) => this.panDown(e), resizeDown: (e) => this.resizeDown(e),
       toggleDetailModal: () => this.setState({ detailModal: !S.detailModal }), detailModalLabel: S.detailModal ? "close" : "expand",
-      dm: S.detailModal ? { pos: "fixed", left: "8vw", top: "6vh", w: "84vw", h: "88vh", z: 70, border: "1px solid #eaeaea", radius: "12px", pad: "16px 18px 18px", preFlex: "1 1 auto", preMax: "none" } : { pos: "relative", left: "auto", top: "auto", w: "auto", h: "auto", z: "auto", border: "none", radius: "0", pad: "12px 14px 13px", preFlex: "0 1 auto", preMax: "420px" },
+      // The value's panel sits under the graph and, while its own place is below the fold, stays pinned to the
+      // bottom of the panel (sticky, capped at half the window, scrolling inside): a value that selects itself
+      // when the product writes it is in view at once, and nothing scrolls the panel to it.
+      dm: S.detailModal ? { pos: "fixed", left: "8vw", top: "6vh", bottom: "auto", w: "84vw", h: "88vh", maxH: "none", ov: "hidden", shadow: "none", z: 70, border: "1px solid #eaeaea", radius: "12px", pad: "16px 18px 18px", preFlex: "1 1 auto", preMax: "none" } : { pos: "sticky", left: "auto", top: "auto", bottom: "0", w: "auto", h: "auto", maxH: "min(50vh, 460px)", ov: "auto", shadow: "0 -8px 18px -10px rgba(0,0,0,.18)", z: 3, border: "none", radius: "0", pad: "12px 14px 13px", preFlex: "0 0 auto", preMax: "420px" },
       anyModal: S.flowModal || S.detailModal, closeModals: () => this.setState({ flowModal: false, detailModal: false }),
       lastRan: live.stages.length ? "Last run: " + this.clock(live.stages[live.stages.length - 1].at) : "Last run: —",
       // Real mode names only its mode: no environment, no prefilled participant, and never the product's test
@@ -1177,7 +1181,7 @@ class Debugger extends React.Component {
     const fc = V.fc, dm = V.dm, fd = V.flowDetail;
     return [
       V.anyModal ? h("div", { key: "veil", onClick: V.closeModals, style: css("position:fixed;inset:0;z-index:50;background:rgba(23,23,23,0.32)") }) : null,
-      h("div", { key: "flow", "data-screen-label": "Data flow", style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:14px;background:#fff;overflow:hidden;display:flex;flex-direction:column;position:" + fc.pos + ";left:" + fc.left + ";top:" + fc.top + ";width:" + fc.w + ";height:" + fc.h + ";z-index:" + fc.z) },
+      h("div", { key: "flow", "data-screen-label": "Data flow", style: css("border:1px solid #eaeaea;border-radius:8px;margin-bottom:14px;background:#fff;overflow:clip;display:flex;flex-direction:column;position:" + fc.pos + ";left:" + fc.left + ";top:" + fc.top + ";width:" + fc.w + ";height:" + fc.h + ";z-index:" + fc.z) },
         h("div", { style: css("flex:none;display:flex;align-items:center;gap:10px;padding:10px 14px") },
           h("span", { style: css("flex:1;min-width:0;font:11px/1.4 " + SANS + ";color:#8f8f8f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, "boxes are stored values · arrows are the operations between them · violet arrows are model calls · drag a box to move it"),
           h("span", { style: css("display:inline-flex;align-items:center;border:1px solid #eaeaea;border-radius:999px;overflow:hidden") },
@@ -1201,7 +1205,7 @@ class Debugger extends React.Component {
               fn.hasCount ? h("span", { style: css("position:absolute;right:-7px;bottom:-7px;padding:2px 5px;border-radius:999px;background:#171717;color:#fff;font:500 9px/1 " + MONO) }, fn.count) : null))) : null),
         h("div", { onPointerDown: V.resizeDown, title: "drag to resize the graph", style: css("flex:none;height:10px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;border-top:1px solid #f2f2f2;background:#fff") },
           h("span", { style: css("width:36px;height:3px;border-radius:2px;background:#e2e2e2") })),
-        V.flowHasDetail ? h("div", { style: css("display:flex;flex-direction:column;box-sizing:border-box;overflow:hidden;background:#fff;border-top:1px solid #eaeaea;position:" + dm.pos + ";left:" + dm.left + ";top:" + dm.top + ";width:" + dm.w + ";height:" + dm.h + ";z-index:" + dm.z + ";border:" + dm.border + ";border-radius:" + dm.radius + ";padding:" + dm.pad) },
+        V.flowHasDetail ? h("div", { "data-flow-detail": "1", style: css("display:flex;flex-direction:column;box-sizing:border-box;overflow:" + dm.ov + ";background:#fff;border-top:1px solid #eaeaea;position:" + dm.pos + ";left:" + dm.left + ";top:" + dm.top + ";bottom:" + dm.bottom + ";width:" + dm.w + ";height:" + dm.h + ";max-height:" + dm.maxH + ";box-shadow:" + dm.shadow + ";z-index:" + dm.z + ";border:" + dm.border + ";border-radius:" + dm.radius + ";padding:" + dm.pad) },
           h("div", { style: css("flex:none;display:flex;align-items:baseline;gap:10px") },
             h("span", { style: css("font:500 13px/1.3 " + SANS + ";color:#171717") }, fd.label),
             h("span", { style: css("font:11px/1.3 " + SANS + ";color:#8f8f8f") }, fd.sub),

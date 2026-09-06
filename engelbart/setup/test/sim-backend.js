@@ -136,7 +136,7 @@
     var speed = opts.speed == null ? 1 : opts.speed;
     var knobs = Object.assign({}, DEFAULT_KNOBS, opts.knobs || {});
     var persist = opts.persist || null;
-    var seq = 0, stageSeq = 0;
+    var seq = 0, stageSeq = 0, BOOT = Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(2, 5);
     var db = (opts.seed ? clone(opts.seed) : null) || load() || fresh();
     // A configured participant: the account has finished a setup before, so the profile is on record and
     // the next setup starts at the paper with their links and familiarity already filled in.
@@ -177,7 +177,9 @@
       return LAT.proc;
     }
     function stage(req) {
-      var ctx = { id: "st-" + (++stageSeq) + "-" + hash(req.path + stageSeq).toString(16).slice(0, 4), simMs: 0, ops: 0 };
+      // The id carries this boot's token: the counter starts over when the product reloads, and a debugger that
+      // kept an earlier boot's stages must not mistake a new stage for one it already has.
+      var ctx = { id: "st-" + (++stageSeq) + "-" + hash(req.path + stageSeq).toString(16).slice(0, 4) + "-" + BOOT, simMs: 0, ops: 0 };
       var action = req.body && req.body.action ? String(req.body.action) : (req.method === "PUT" ? "upload" : req.path.split("/").pop());
       var surface = /onboarding/.test(req.path) ? "onboarding" : /device/.test(req.path) ? "device" : /setup/.test(req.path) ? "setup" : /storage/.test(req.path) ? "storage" : /config/.test(req.path) ? "config" : "client";
       var bg = ["analysis", "assets", "leveled"].indexOf(action) >= 0 && req.body && (req.body.run || req.body.retry);
@@ -189,7 +191,7 @@
       ctx.op = function (kind, name, target, input, work, meta) {
         meta = meta || {};
         var lat = Math.max(2, latencyFor(kind, name, meta) + jitter(name + target));
-        var o = { type: "op", id: "op-" + (++seq), stage: ctx.id, seq: seq, at: Date.now(), kind: kind, name: name, target: target, status: "running",
+        var o = { type: "op", id: "op-" + (++seq) + "-" + BOOT, stage: ctx.id, seq: seq, at: Date.now(), kind: kind, name: name, target: target, status: "running",
           input: redact(input), output: null, ms: 0, meta: clone(meta) || {} };
         var decl = declare(name, input); o.reads = decl.reads; o.writes = decl.writes;
         delete o.meta.lat;
