@@ -18,7 +18,7 @@ Run  (one setup: the onboarding row)
  └─ trace  (one API action: onboarding.<action>)
      └─ Operation  (an execution with a lifetime, backed by one OTel span)
          ├─ child Operations (parent_span_id -> span_id)
-         ├─ Snapshots  (payloads, by kind, opt-in)
+         ├─ Snapshots  (payloads, by kind, on unless switched off)
          └─ Events     (started / progress / completed / failed)
 ```
 
@@ -202,11 +202,11 @@ The PDF itself is never a snapshot. `paper.download` records the object by
 reference in attributes: `engelbart.storage.object` (path), `.bytes`, `.sha256`,
 `.content_type`. The same sha256 appears in `model_request`'s `source_ref`.
 
-### Capture is opt-in
+### Capture is on by default
 
-Snapshots exist only when `ENGELBART_TRACE_CONTENT=true`. Off (the default),
-every operation, relationship, timing, attribute, status and sanitized error is
-still recorded; no prompt, reply, page text or row body is stored anywhere.
+Snapshots are captured unless `ENGELBART_TRACE_CONTENT=false`. Off, every
+operation, relationship, timing, attribute, status and sanitized error is still
+recorded; no prompt, reply, page text or row body is stored anywhere.
 
 ## Event
 
@@ -321,10 +321,11 @@ service-role key is not redacted there, it is absent.
 
 ## Persistence
 
-`ENGELBART_TELEMETRY_STORE=true` writes the three recorded entities to
-`engelbart_telemetry_operations`, `engelbart_telemetry_snapshots` and
-`engelbart_telemetry_events` (migration `20260905120000_engelbart_telemetry.sql`;
-columns are the contract's fields verbatim). Events are written within ~250 ms
+The three recorded entities are written to `engelbart_telemetry_operations`,
+`engelbart_telemetry_snapshots` and `engelbart_telemetry_events` (migration
+`20260905120000_engelbart_telemetry.sql`; columns are the contract's fields
+verbatim) wherever `SUPABASE_SERVICE_ROLE_KEY` is configured, unless
+`ENGELBART_TELEMETRY_STORE=false`. Events are written within ~250 ms
 of happening; operations and snapshots at the flush the request handler awaits
 before responding. The tables are service-role only.
 
@@ -342,9 +343,9 @@ records before it responds, bounded by `ENGELBART_TELEMETRY_FLUSH_MS` (2000).
 
 | variable | default | effect |
 |---|---|---|
-| `ENGELBART_TRACE_CONTENT` | off | store Snapshots (prompts, replies, page text, row bodies) |
+| `ENGELBART_TRACE_CONTENT` | on | `false` stops storing Snapshots (prompts, replies, page text, row bodies) |
 | `ENGELBART_TRACE_POLLS` | off | trace routine status polls as `onboarding.<action>.poll` |
-| `ENGELBART_TELEMETRY_STORE` | off | persist Operations/Snapshots/Events to Supabase |
+| `ENGELBART_TELEMETRY_STORE` | on when the service role is set | `false` persists nothing to Supabase |
 | `ENGELBART_TELEMETRY_LOG` | off | one JSON line per finished operation in the function log |
 | `ENGELBART_TELEMETRY_FLUSH_MS` | 2000 | bound on the pre-response flush |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `_TRACES_ENDPOINT` | unset | OTLP/HTTP span export |

@@ -269,6 +269,14 @@ test("untraced work produces nothing, and events share the operation's ids in li
 test("settings come from the environment, and the run learns its ids from later database reads", async () => {
   const settings = T.readSettings({ ENGELBART_TRACE_CONTENT: "true", ENGELBART_TRACE_POLLS: "1", ENGELBART_TELEMETRY_STORE: "no", ENGELBART_TELEMETRY_FLUSH_MS: "750" });
   assert.deepEqual(settings, { captureContent: true, tracePolls: true, store: false, log: false, flushMs: 750 });
+  // Unset: capture is on, and persistence is on exactly when the service role is there to write with.
+  assert.deepEqual(T.readSettings({}), { captureContent: true, tracePolls: false, store: false, log: false, flushMs: 2000 });
+  const creds = { SUPABASE_URL: "https://x.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "service-key" };
+  assert.deepEqual(T.readSettings(creds), { captureContent: true, tracePolls: false, store: true, log: false, flushMs: 2000 });
+  // ...and an explicit `false` switches either off.
+  const quiet = T.readSettings({ ...creds, ENGELBART_TRACE_CONTENT: "false", ENGELBART_TELEMETRY_STORE: "off" });
+  assert.equal(quiet.store, false);
+  assert.equal(quiet.captureContent, false);
   const { telemetry, sink } = make();
   await telemetry.withRun({ action: "open", test_run_id: "t-1" }, () => telemetry.runOperation({ name: "onboarding.open", type: "workflow" }, async () => {
     await telemetry.runOperation({ name: "db.select", type: "database" }, async () => {});

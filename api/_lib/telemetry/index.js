@@ -35,21 +35,34 @@ const { LEVELS, NoopOperation, Operation, STATUS, TYPES, levelOf } = require("./
 
 const MAX_LOGGED_ERRORS = 20;
 const TRUE = new Set(["1", "true", "yes", "on"]);
+const FALSE = new Set(["0", "false", "no", "off"]);
 
-function flag(env, name) {
-  return TRUE.has(String(env[name] || "").trim().toLowerCase());
+// An explicit `true`/`false` wins; anything else (unset, blank, a typo) is
+// the default the caller names.
+function flag(env, name, fallback = false) {
+  const value = String(env[name] || "").trim().toLowerCase();
+  if (TRUE.has(value)) return true;
+  if (FALSE.has(value)) return false;
+  return fallback;
 }
 
-// Everything the environment decides. `ENGELBART_TRACE_CONTENT` is the one
-// that matters most: without it, no prompt, reply, page text or row body is
-// ever stored -- only operations, relationships, timing, safe metadata and
-// sanitized errors.
+// Persistence needs the service role; without it there is nowhere to write.
+function canStore(env) {
+  return Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
+// Everything the environment decides. Capture and persistence are on wherever
+// they can work, so a deployment records itself without configuration. Set
+// `ENGELBART_TRACE_CONTENT=false` to keep prompts, replies, page text and row
+// bodies out of storage (operations, relationships, timing, safe metadata and
+// sanitized errors are still recorded), or `ENGELBART_TELEMETRY_STORE=false`
+// to persist nothing at all.
 function readSettings(env) {
   return {
-    captureContent: flag(env, "ENGELBART_TRACE_CONTENT"),
-    tracePolls: flag(env, "ENGELBART_TRACE_POLLS"),
-    store: flag(env, "ENGELBART_TELEMETRY_STORE"),
-    log: flag(env, "ENGELBART_TELEMETRY_LOG"),
+    captureContent: flag(env, "ENGELBART_TRACE_CONTENT", true),
+    tracePolls: flag(env, "ENGELBART_TRACE_POLLS", false),
+    store: flag(env, "ENGELBART_TELEMETRY_STORE", canStore(env)),
+    log: flag(env, "ENGELBART_TELEMETRY_LOG", false),
     flushMs: Number(env.ENGELBART_TELEMETRY_FLUSH_MS) || 2000,
   };
 }

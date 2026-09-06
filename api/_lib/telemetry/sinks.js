@@ -11,7 +11,7 @@
 // Every call is made through the telemetry layer's `safely`, so a sink that
 // throws costs a log line and nothing else. Three are provided: memory (tests,
 // the simulator), console (JSON lines in the function log), and the Supabase
-// store (the four entities as four tables, opt-in, for a future poller).
+// store (three tables, on wherever the service role is configured).
 
 const MEMORY_LIMIT = 5000;
 
