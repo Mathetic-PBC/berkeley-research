@@ -113,14 +113,14 @@ function scriptSources(html) {
   return out;
 }
 
-test("the debugger and its frame load only same-origin files besides the pinned React builds, with no inline script", () => {
+test("the debugger and its frame load only same-origin files besides the pinned React and supabase-js builds, with no inline script", () => {
   for (const file of ["index.html", "frame.html"]) {
     const html = fs.readFileSync(path.join(DIR, file), "utf8");
     const scripts = scriptSources(html);
     assert.ok(scripts.length >= 4, file + " loads its scripts");
     for (const s of scripts) {
       assert.equal(s.inline, "", file + " has no inline script (the Engelbart CSP forbids it)");
-      if (s.src.startsWith("https://cdn.jsdelivr.net/npm/react")) assert.ok(s.integrity, s.src + " is pinned by integrity");
+      if (/^https:\/\/cdn\.jsdelivr\.net\/npm\/(react|react-dom|@supabase\/supabase-js)@/.test(s.src)) assert.ok(s.integrity, s.src + " is pinned by integrity");
       else assert.match(s.src, /^\/engelbart\/setup\//, file + " loads " + s.src + " from this origin");
       const local = s.src.startsWith("/") ? path.join(ROOT, s.src) : null;
       if (local) assert.ok(fs.existsSync(local), s.src + " exists");

@@ -118,10 +118,30 @@ model; the page's `fetch` to `/api` is answered in-page from
 environment. Test environments, step recordings and notes persist in that
 browser's `localStorage`.
 
-It is a simulator: it shows what the server is designed to do for each press,
-not what production did. The persisted telemetry in the
-`engelbart_telemetry_*` tables is the record of real runs; reading those into
-this interface is a later step.
+The page has two modes, switched at the top: **Simulated** is the simulator
+above, which shows what the server is designed to do for each press, not what
+production did. **Real runs** reads the persisted telemetry in the
+`engelbart_telemetry_*` tables, the record of what production actually did,
+for the signed-in member's own onboardings: a compact list of recent runs
+(project or paper, actions, status, operations, server time), and one click
+opens a run in the same request list and inspector. A workflow root is a
+request row, the operations beneath it are its rows, and the inspector's tabs
+are the recorded snapshots (model request, raw and parsed reply, database
+request and response, page text, normalized result), attributes, events and
+error, exactly as stored. Nothing is invented: no cost is estimated, request
+bodies the server did not keep are not shown, and because the contract does
+not record which stored values an operation read and wrote, the Data flow
+view says lineage is unavailable rather than guessing edges.
+
+Real runs mode is read-only. It goes through `/api/engelbart-telemetry`
+(`GET` only; the member's own Supabase session; the service role stays on
+the server; runs are returned only for onboarding rows the member owns; the
+reads are untraced), which never changes onboarding state, calls a model or
+spends credit. The simulator's reset, environments and prompt edits are hidden
+in that mode; nothing in the debugger can replay or rerun a real action. The
+adapter is `engelbart/setup/test/real-runs.js`, tested against the example
+envelope in `docs/observability/` by `tests/debugger-real-runs.test.js`;
+the endpoint by `tests/engelbart-telemetry.test.js`.
 
 The page is flattened from the Claude Design file `Engelbart Debugger.dc.html`
 into `engelbart/setup/test/` (`debugger.js`, `debugger.css`, `frame.html`,

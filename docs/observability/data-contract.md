@@ -430,7 +430,11 @@ records before it responds, bounded by `ENGELBART_TELEMETRY_FLUSH_MS` (2000).
   `wss://` origin; the table would need an admin-scoped read policy), a polling
   read endpoint keyed by `run_id` and `sequence`, or a separate test deployment
   that tails the store. None is built.
-- **A read API.** There is no endpoint yet; the store tables and `bundle()` are
-  the read path. Any endpoint must sit behind `requireAdmin`.
+- **An admin read API.** `GET /api/engelbart-telemetry` reads the store for
+  the debugger's Real runs mode, but only a member's own runs: it names the
+  member by their session (`verifyUser`), lists the onboarding rows they own
+  and returns the operations, snapshots and events of those runs through
+  `bundle()`, untraced, with the service role kept server-side. It is not an
+  admin view across members; one would need `requireAdmin` and is not built.
 - **CLI / claude-plugins instrumentation**, and the `engelbart-setup` function's
   own actions (only its storage helpers trace, as root spans).
