@@ -45,6 +45,14 @@ test("the debugger runs the real setup page against the simulated backend under 
 
     await page.goto(`${stack.url}/engelbart/setup/test`);
     await expect(page.getByText("Engelbart", { exact: true })).toBeVisible();
+
+    // The debugger lands on the environments dashboard; nothing runs until an environment is opened.
+    await expect(page.getByText("Test environments")).toBeVisible();
+    await expect(page.getByText("No environments yet. Create one to open the product against a fresh simulated account.")).toBeVisible();
+    await expect(page.locator("iframe")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reset test environment" })).toHaveCount(0);
+    await page.getByRole("button", { name: "New environment" }).click();
+    await page.getByRole("button", { name: "Create environment" }).click();
     await expect(page.getByRole("button", { name: "Reset test environment" })).toBeVisible();
 
     // The product boots inside the frame, answered by the simulator: the Name step is on screen.
@@ -65,6 +73,20 @@ test("the debugger runs the real setup page against the simulated backend under 
     // The data-flow graph drew the value the press wrote.
     await page.getByRole("button", { name: "Data flow" }).click();
     await expect(page.locator("[data-node]").first()).toBeVisible();
+
+    // All environments… returns to the dashboard: the frame is unmounted, the card says what was recorded.
+    await page.locator('select[title="switch environment"]').selectOption("__all");
+    await expect(page.getByText("Test environments")).toBeVisible();
+    await expect(page.locator("iframe")).toHaveCount(0);
+    await expect(page.getByText("Environment 1", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^Last opened /)).toBeVisible();
+    await expect(page.getByText("Fresh participant · opens at the Start step")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Configure" })).toBeVisible();
+
+    // Opening the card brings the environment back where it was: the product resumes on the Year step.
+    await page.getByText("Environment 1", { exact: true }).click();
+    await expect(frame.locator(".ob-title", { hasText: "What year are you?" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Requests · [1-9]/ })).toBeVisible();
 
     expect(cspViolations).toEqual([]);
     expect(pageErrors).toEqual([]);
@@ -151,6 +173,9 @@ test("Real mode runs the setup page against the backend as the member and puts e
     });
 
     await page.goto(`${stack.url}/engelbart/setup/test`);
+    // Simulated mode lands on the environments dashboard; open one so there is a simulator to come back to.
+    await page.getByRole("button", { name: "New environment" }).click();
+    await page.getByRole("button", { name: "Create environment" }).click();
     const simFrame = page.frameLocator('iframe[title="Engelbart setup, running against the simulated backend"]');
     await expect(simFrame.locator(".ob-title", { hasText: "What is your name?" })).toBeVisible();
     const before = onboardingCalls.length;
@@ -275,8 +300,12 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect.poll(() => onboardingCalls.length).toBeGreaterThan(calls);
     await expect(page.locator("[id^=stage-]", { hasText: "onboarding · open" }).last()).toContainText("4 ops");
 
-    // And back to the simulator, which boots exactly as before.
+    // And back to the simulator: after a reload nothing is open, so the dashboard shows the environment, and
+    // opening it boots the product exactly as before.
     await page.getByRole("button", { name: "Simulated" }).click();
+    await expect(page.getByText("Test environments")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reset test environment" })).toHaveCount(0);
+    await page.getByText("Environment 1", { exact: true }).click();
     await expect(page.getByRole("button", { name: "Reset test environment" })).toBeVisible();
     await expect(simFrame.locator(".ob-title", { hasText: "What is your name?" })).toBeVisible();
 

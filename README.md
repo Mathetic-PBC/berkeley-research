@@ -134,8 +134,10 @@ model; the page's `fetch` to `/api` is answered in-page from
 `engelbart/setup/test/sim-backend.js`, model replies come from
 `fixture.js`, and the prompts are `prompts.js`, a verbatim copy of
 `api/_lib/onboarding-prompts.js` that the debugger lets you edit per
-environment. Test environments, step recordings and notes persist in that
-browser's `localStorage`.
+environment. The page opens on a dashboard of test environments, each with
+its own simulated account, step recordings, notes and graph layout; nothing
+runs until one is opened. Environments, step recordings and notes persist in
+that browser's `localStorage`.
 
 The page has two modes, switched at the top, with the same composition in
 both: the setup page on the left; the request list, the operation inspector
