@@ -568,6 +568,28 @@ function assistantTurnText(reply) {
   return parts.filter(Boolean).join("\n");
 }
 
+// A question round is an assistant turn that carried a questions or focus
+// card. The brainstorm gets P.BRAINSTORM_ROUNDS of them, whatever the model
+// asks for after that: the state closes the conversation, not the prompt alone.
+function isQuestionRound(turn) {
+  return turn.role === "assistant" && !!turn.card && (turn.card.card === "questions" || turn.card.card === "focus");
+}
+function questionRounds(turns) {
+  return turns.filter(isQuestionRound).length;
+}
+
+// The reply the row keeps. The model may say it is ready on any turn, and the
+// fitted resources are not a condition of that: the page waits for them
+// instead of asking the reader more. Once the rounds are spent the turn is
+// closed as ready even if the model asked again.
+function closeReply(reply, rounds) {
+  const spent = rounds >= P.BRAINSTORM_ROUNDS;
+  const ready = reply.ready === true || spent;
+  if (!ready) return { ...reply, ready: false };
+  const say = reply.say || (spent && reply.card !== "none" ? "I have enough to plan with." : "");
+  return { say, card: "none", interest: reply.interest, ready: true };
+}
+
 async function brainstormAction(user, row, calibrations, body, credentials, options = {}) {
   requireOpen(row);
   if (row.analysis_status !== "done") throw fail("The paper is still being read", 409);
@@ -584,14 +606,15 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
     // stands, so hand it back rather than ask the model to repeat itself.
     return { ...publicReply(lastAssistant), leveled_status: row.leveled_status, interest: row.interest || "" };
   }
-  // Whether they are ready to plan is the model's call, and it is only asked
-  // once the fitted resources exist: a plan before them would be premature
-  // whatever the conversation says.
-  const readyAsked = row.leveled_status === "done";
-  const reply = await OM.brainstorm({ reader: readerOf(row, calibrations), paper: paperOf(row),
+  // Whether they are ready to plan is the model's call on every turn; the
+  // fitted resources are not a condition of it. The rounds asked so far are
+  // told to the model and enforced here.
+  const rounds = questionRounds(turns);
+  const raw = await OM.brainstorm({ reader: readerOf(row, calibrations), paper: paperOf(row),
     assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })),
-    readyAsked }, credentials, options);
-  const card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: readyAsked && reply.ready === true };
+    round: rounds }, credentials, options);
+  const reply = closeReply(raw, rounds);
+  const card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: reply.ready === true };
   const made = await addTurn(user, row, "brainstorm", "", "assistant", assistantTurnText(reply), card, options);
   const values = { step: Math.max(Number(row.step) || 0, STEP.brainstorm) };
   if (reply.interest) values.interest = reply.interest;
@@ -599,9 +622,17 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
   return { ...publicReply(made), leveled_status: row.leveled_status, interest: row.interest || "" };
 }
 
+// The prose of a stored assistant turn: what it said, before the "(asked)"
+// and "(offered)" lines that record its card. Empty when it only asked.
+function sayOf(content) {
+  const lines = String(content || "").split("\n");
+  const cut = lines.findIndex((l) => /^\((asked|offered)\) /.test(l));
+  return (cut < 0 ? lines : lines.slice(0, cut)).join("\n");
+}
+
 function publicReply(turn) {
   const card = turn && turn.card ? turn.card : { card: "none" };
-  return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split("\n(")[0] : "",
+  return { turn_id: turn ? turn.id : null, say: turn ? sayOf(turn.content) : "",
     card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true };
 }
 
@@ -1034,7 +1065,7 @@ async function create(user, row, calibrations, body, options = {}) {
 module.exports = {
   STEP, STEP_FIELDS, RUNNING_STALE_MS, MAX_PDF_BYTES,
   open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
-  assets: assetsAction, topicsDone, leveled: leveledAction, brainstorm: brainstormAction, assetAsk, chooseAsset,
+  assets: assetsAction, topicsDone, leveled: leveledAction, brainstorm: brainstormAction, questionRounds, closeReply, assetAsk, chooseAsset,
   direction: directionAction, subgoals: subgoalsAction,
   areaLevels, knowledgeOf, assessedDepth, readerOf, toPayload, analysisRunning, publicRow,
   compileAssessment, verifyLinks, findAsset, userTurnText,

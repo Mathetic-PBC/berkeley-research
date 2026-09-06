@@ -311,7 +311,7 @@
         });
     }
     function addTurn(ctx, row, stage_, assetKey, role, content, card) {
-      var t = { onboarding_id: row.id, user_id: USER.id, stage: stage_, asset_key: assetKey || "", role: role, content: one(content, 4000), card: card || null };
+      var t = { onboarding_id: row.id, user_id: USER.id, stage: stage_, asset_key: assetKey || "", role: role, content: String(content == null ? "" : content).trim().slice(0, 4000), card: card || null };
       return ctx.op("db", "insert engelbart_onboarding_turns", "POST /rest/v1/engelbart_onboarding_turns · " + stage_ + "/" + role, [t], function () {
         var made = Object.assign({ id: uid("turn"), created_at: now() }, t); db.turns.push(made); save(); return [publicTurn(made)];
       }).then(function (rows) { return db.turns.filter(function (x) { return x.id === rows[0].id; })[0]; });
@@ -601,9 +601,14 @@
         });
     };
 
+    function sayOf(content) {
+      var lines = String(content || "").split("\n"), cut = -1;
+      lines.forEach(function (l, i) { if (cut < 0 && /^\((asked|offered)\) /.test(l)) cut = i; });
+      return (cut < 0 ? lines : lines.slice(0, cut)).join("\n");
+    }
     function publicReply(turn) {
       var card = turn && turn.card ? turn.card : { card: "none" };
-      return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split("\n(")[0] : "", card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true };
+      return { turn_id: turn ? turn.id : null, say: turn ? sayOf(turn.content) : "", card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true };
     }
     A.brainstorm = function (ctx, row, cals, body) {
       requireOpen(row);
@@ -628,20 +633,25 @@
           return !!(turns.length && !body.again);
         }).then(function (short) {
           if (short) return Object.assign(publicReply(lastAssistant), { leveled_status: row.leveled_status, interest: row.interest || "" });
-          var readyAsked = row.leveled_status === "done";
+          // A question round is an assistant turn that carried a questions or focus card;
+          // the model is told how many there were and the state closes the conversation
+          // after PR.BRAINSTORM_ROUNDS of them, ready or not, fitted or not.
+          var rounds = turns.filter(function (t) { return t.role === "assistant" && t.card && (t.card.card === "questions" || t.card.card === "focus"); }).length;
           var assistants = turns.filter(function (t) { return t.role === "assistant"; }).length;
           var reader = readerOf(row, cals);
-          return ctx.op("model", "brainstorm turn", "sonnet · " + turns.length + " turns of transcript · ready asked: " + readyAsked, modelRequest("sonnet", [{ type: "text", text: promptText("brainstormPrompt", { reader: reader, paper: paperOf(row), assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), readyAsked: readyAsked }, knobs) }], 4096, { key: "brainstormPrompt", prompt: "brainstormPrompt: one card at a time about what the reader wants to build; knows the paper's concrete things by name and what the grades found; the opening card comes without a preamble" + (readyAsked ? "; also say whether the reader is ready to plan." : "."),
-              context: { reader: reader, paper: paperOf(row), assessment: row.assessment ? { depth: row.assessment.depth, depth_shift: row.assessment.depth_shift, areas: row.assessment.areas.map(function (a) { return a.area + " = " + a.graded_level; }) } : null, brief: row.assets_brief || [], transcript: turns.map(function (t) { return { role: t.role, content: t.content }; }), ready_asked: readyAsked, not_included: "the assets' links and descriptions (only the brief)" } }),
+          return ctx.op("model", "brainstorm turn", "sonnet · " + turns.length + " turns of transcript · question rounds so far: " + rounds, modelRequest("sonnet", [{ type: "text", text: promptText("brainstormPrompt", { reader: reader, paper: paperOf(row), assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), round: rounds }, knobs) }], 4096, { key: "brainstormPrompt", prompt: "brainstormPrompt: one card at a time about what the reader wants to build; knows the paper's concrete things by name and what the grades found; the opening card comes without a preamble; says on every turn whether the reader is ready to plan, and is told how many question rounds were asked (two at most).",
+              context: { reader: reader, paper: paperOf(row), assessment: row.assessment ? { depth: row.assessment.depth, depth_shift: row.assessment.depth_shift, areas: row.assessment.areas.map(function (a) { return a.area + " = " + a.graded_level; }) } : null, brief: row.assets_brief || [], transcript: turns.map(function (t) { return { role: t.role, content: t.content }; }), question_rounds: rounds, not_included: "the assets' links and descriptions (only the brief)" } }),
             function () {
               var B = FX.BRAINSTORM;
               reply = clone(body.again ? B.more : assistants === 0 ? B.opening : assistants === 1 ? B.focus : assistants === 2 ? B.ready : B.more);
-              if (knobs.readyGate === "always" && readyAsked) reply.ready = true;
+              if (knobs.readyGate === "always") reply.ready = true;
               return reply;
             }, Object.assign(modelMeta("sonnet", { input: 2600 + 120 * turns.length + Math.round(tokens(JSON.stringify(reader))), output: assistants === 0 ? 420 : assistants === 1 ? 300 : 120 }),
-              { why: readyAsked ? "the fitted list exists, so the model was asked whether the reader is ready to plan" : "the fitted list does not exist yet, so readiness was not asked and the plan cannot be offered" }))
+              { why: rounds >= PR.BRAINSTORM_ROUNDS ? "both question rounds are spent, so this turn is closed as ready whatever the model asked" : "the model may say the reader is ready on any turn; the fitted list is not a condition of it" }))
             .then(function () {
-              var card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: readyAsked && reply.ready === true };
+              var spent = rounds >= PR.BRAINSTORM_ROUNDS;
+              if (reply.ready === true || spent) reply = { say: reply.say || (spent && reply.card !== "none" ? "I have enough to plan with." : ""), card: "none", interest: reply.interest, ready: true };
+              var card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: reply.ready === true };
               var text = [reply.say]; if (reply.card === "questions") text = text.concat(reply.questions.items.map(function (q) { return "(asked) " + q.title; }));
               if (reply.card === "focus") text.push("(offered) " + reply.focus.options.map(function (o) { return o.label; }).join(" / "));
               return addTurn(ctx, row, "brainstorm", "", "assistant", text.filter(Boolean).join("\n"), card);

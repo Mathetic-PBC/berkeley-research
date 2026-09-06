@@ -32,8 +32,9 @@ const CASES = {
   assetsPrompt: [{}],
   levelPrompt: [{ reader, assessment, assets, interest: "the speedup" }, { reader, assessment: { areas: [] }, assets: [], interest: "" }],
   brainstormPrompt: [
-    { reader, paper, assessment, brief: [{ title: "Reference code", type: "code", one_liner: "the decoder" }], turns: [], readyAsked: false },
-    { reader, paper, assessment, brief: [], turns, readyAsked: true },
+    { reader, paper, assessment, brief: [{ title: "Reference code", type: "code", one_liner: "the decoder" }], turns: [], round: 0 },
+    { reader, paper, assessment, brief: [], turns, round: 1 },
+    { reader, paper, assessment: { areas: [] }, brief: [], turns, round: 2 },
   ],
   directionPrompt: [
     { reader, paper, interest: "the speedup", assessment, turns, asset: assets[0], leveled: { locus: "the verifier", sticky: ["shapes", "masks"] }, previous: null, feedback: "" },

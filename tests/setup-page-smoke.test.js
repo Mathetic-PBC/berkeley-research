@@ -141,7 +141,7 @@ function mount(options = {}) {
       if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 7 }; return answer({ assessment: ASSESSMENT }); }
       if (body.action === "leveled") return answer({ leveled_status: "done", leveled: LEVELED, assets_status: "done" });
       if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick || body.again
-        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status, ready: row.leveled_status === "done" }
+        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status, ready: true }
         : { turn_id: "t1", say: "", card: "questions", leveled_status: row.leveled_status,
             questions: { eyebrow: "first", items: [{ id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math", why: "w" }] }] } });
       if (body.action === "asset_ask") return answer({ answer: "Start with the toy.", turn_id: "a1" });
@@ -177,11 +177,13 @@ function mount(options = {}) {
 
   // Timers that do not hold the process open: a test may end on a step whose
   // keyboard is still animating, or whose poll has not fired yet.
-  const loose = (fn, ms) => { const t = setInterval(fn, ms); if (t.unref) t.unref(); return t; };
+  const ticks = [];
+  const loose = (fn, ms) => { const t = setInterval(fn, ms); if (t.unref) t.unref(); ticks.push({ t, fn }); return t; };
+  const clear = (t) => { clearInterval(t); const i = ticks.findIndex((x) => x.t === t); if (i >= 0) ticks.splice(i, 1); };
   const doc = makeEl("document");
   doc.getElementById = (id) => (id === "app" ? app : (find(app, (n) => n.id === id || n.attrs.id === id)[0] || null));
   doc.createElement = makeEl;
-  const sandbox = { window: win, fetch: fetchStub, setTimeout, clearTimeout, setInterval: loose, clearInterval, console, URL,
+  const sandbox = { window: win, fetch: fetchStub, setTimeout, clearTimeout, setInterval: loose, clearInterval: clear, console, URL,
     navigator: {}, document: doc };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(INSTALL, sandbox, { filename: "engelbart/setup/install.js" });
@@ -189,6 +191,7 @@ function mount(options = {}) {
 
   return { app, actions, bodies, win, doc,
     row: () => row,
+    tick: () => ticks.slice().forEach((x) => x.fn()),                  // fire every live interval once, as if its time had come
     title: () => textOf(one(app, "ob-title")) || textOf(one(app, "ob-as-h1")) || textOf(one(app, "ob-question")) || textOf(one(app, "ob-goal-title"))
       || textOf(one(app, "ob-done-t")) || textOf(one(app, "ob-wait-t")),
     error: () => textOf(one(app, "ob-err")),
@@ -509,8 +512,8 @@ test("a follow-up is a stored row: it survives a reload, the slider cannot move 
   assert.equal(textOf(one(page.app, "ob-area-name")), "B", "and the next area is up");
 });
 
-test("the brainstorm opens on the card, keeps answered cards as cards, and offers the plan only when the model says ready", async () => {
-  const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
+test("the brainstorm opens on the card, keeps answered cards as cards, and offers the plan when the model says ready", async () => {
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
   await settle();
   assert.equal(page.title(), "What do you want to build?");
   assert.equal(page.actions.filter((a) => a === "brainstorm").length, 1, "the opening turn is asked for once");
@@ -518,7 +521,7 @@ test("the brainstorm opens on the card, keeps answered cards as cards, and offer
   assert.equal(byClass(page.app, "ob-bs-turn").length, 0, "no prose before the opening card");
   assert.match(textOf(page.app), /What drew you\?/);
   assert.equal(find(page.app, (n) => n.tagName === "textarea").length, 0, "no free-text composer: the card is the conversation");
-  assert.equal(one(page.app, "ob-bs-offer"), undefined, "no plan offer while the resources are being fitted");
+  assert.equal(one(page.app, "ob-bs-offer"), undefined, "no plan offer before the model has said ready");
   byClass(page.app, "ob-goal")[1].fire("click");
   assert.equal(byClass(page.app, "ob-goal")[1].attrs["data-on"], "1", "the pick is marked");
   page.cta().fire("click");
@@ -532,19 +535,41 @@ test("the brainstorm opens on the card, keeps answered cards as cards, and offer
   assert.equal(byClass(done[0], "ob-cta").length, 0, "an answered card has no buttons");
   assert.doesNotMatch(textOf(page.app), /What drew you\? The math/, "the answer is not repeated as prose");
   assert.match(textOf(page.app), /Angles it is/);
-  assert.equal(one(page.app, "ob-bs-offer"), undefined, "the model was not asked about readiness yet");
+  assert.ok(one(page.app, "ob-bs-offer"), "ready to plan is offered on the turn the model said ready");
+  assert.equal(one(page.app, "ob-bs-wait"), undefined, "nothing to wait for: the resources are fitted");
+  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Keep brainstorming").fire("click");
+  assert.equal(one(page.app, "ob-bs-offer"), undefined);
   assert.equal(textOf(page.cta()), "Go on›", "a prose-only turn gets a way to continue");
-  // The fitting finishes; the next turn carries the model's verdict.
-  page.row().leveled_status = "done"; page.row().leveled = LEVELED;
   page.cta().fire("click");
   await settle();
   assert.equal(page.bodies.filter((b) => b.action === "brainstorm").pop().again, true);
-  assert.ok(one(page.app, "ob-bs-offer"), "ready to plan is offered when the model said ready");
-  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Keep brainstorming").fire("click");
-  assert.equal(one(page.app, "ob-bs-offer"), undefined);
+  assert.ok(one(page.app, "ob-bs-offer"), "and offered again after the next turn");
   page.cta().fire("click");
   await settle();
-  assert.ok(one(page.app, "ob-bs-offer"), "and offered again after the next turn");
+  assert.equal(page.title(), "What do you want to build on?");
+});
+
+test("ready before the resources are fitted waits on them instead of asking more, and offers the plan the moment they are", async () => {
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
+  await settle();
+  byClass(page.app, "ob-goal")[1].fire("click");
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.row().leveled_status, "running");
+  const wait = one(page.app, "ob-bs-wait");
+  assert.ok(wait, "the wait card is up");
+  assert.match(textOf(wait), /Got it — I have enough to plan\.Finishing up the resources…/);
+  assert.equal(one(page.app, "ob-bs-offer"), undefined, "the plan is not offered before the resources exist");
+  assert.equal(byClass(page.app, "ob-bs-card").filter((c) => c.attrs["data-done"] === "0").length, 0, "no live question card: the reader is not the loading screen");
+  assert.equal(byClass(page.app, "ob-cta").length, 0, "nothing to send or go on with");
+  assert.equal(page.actions.filter((a) => a === "brainstorm").length, 2, "no further turn was asked for");
+  // The poll finds the fitting done; the page continues on its own.
+  page.tick();
+  await settle();
+  assert.equal(page.actions.filter((a) => a === "leveled").length, 1, "the poll asked for the fitted list");
+  assert.equal(one(page.app, "ob-bs-wait"), undefined);
+  assert.ok(one(page.app, "ob-bs-offer"), "the offer replaces the wait");
+  assert.equal(page.actions.filter((a) => a === "brainstorm").length, 2, "still no further turn");
   page.cta().fire("click");
   await settle();
   assert.equal(page.title(), "What do you want to build on?");

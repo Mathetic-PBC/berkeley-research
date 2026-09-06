@@ -554,7 +554,7 @@ function normalizeBrainstorm(raw) {
       }
       if (item.type === "free" || item.type === "open") item.placeholder = one(q.placeholder, 120);
       return item;
-    }).filter(Boolean).slice(0, 3);
+    }).filter(Boolean).slice(0, 2);
     if (items.length) { out.card = "questions"; out.questions = { eyebrow: one(raw.questions.eyebrow, 40), items }; }
   } else if (raw.card === "focus" && raw.focus && typeof raw.focus === "object") {
     const options = normalizeOptions(raw.focus.options);
