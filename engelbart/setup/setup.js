@@ -18,7 +18,7 @@
   var SETUP_API = "/api/engelbart-setup";
   var DEVICE_API = "/api/engelbart-device";
 
-  var LABELS = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"];
+  var LABELS = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Topics", "Brainstorm", "Assets", "Direction", "Subgoals", "Todos"];
   var DONE = LABELS.length;  // the step after the last label
   var YEARS = ["First year", "Second year", "Third year", "Fourth year"];
   var MAJORS = ["Computer Science", "Electrical Engineering & Computer Sciences", "Data Science", "Cognitive Science",
@@ -195,8 +195,8 @@
     var r = st.row || {}, u = st.ui;
     return [str(r.name), str(r.year), str(r.major), r.depth ? DEPTHS[depthIndex()].label : "",
       u.pfile ? trunc(u.pfile.name, 26) : "", st.step > 5 ? "Connected" : "",
-      st.step > 6 ? trunc(str(r.interest) || "Brainstormed", 26) : "",
-      r.assessment && st.step > 7 ? r.assessment.areas.length + " areas" : "",
+      r.assessment && st.step > 6 ? r.assessment.areas.length + " areas" : "",
+      st.step > 7 ? trunc(str(r.interest) || "Brainstormed", 26) : "",
       r.asset_chosen && st.step > 8 ? trunc(str(r.asset_chosen.title), 26) : "",
       r.direction && st.step > 9 ? trunc(str(r.direction.title), 26) : "",
       r.subgoals && st.step > 10 ? r.subgoals.length + " pieces" : "",
@@ -473,7 +473,7 @@
     var main = el("div", "ob-main"), body = el("div", "ob-body"), content = el("div", "ob-content");
     content.id = "content";
     lastContent = content;
-    var drawers = [drawName, drawYear, drawMajor, drawDepth, drawPaper, drawInstall, drawBrainstorm, drawTopics, drawAssets,
+    var drawers = [drawName, drawYear, drawMajor, drawDepth, drawPaper, drawInstall, drawTopics, drawBrainstorm, drawAssets,
       drawDirection, drawSubgoals, drawTodos, drawDone];
     drawers[Math.min(st.step, drawers.length - 1)](content);
     if (st.error) content.appendChild(el("div", "ob-err", st.error));
@@ -870,7 +870,7 @@
 
   function generating(content, text) { var w = el("div", "ob-wait"); w.appendChild(dots()); w.appendChild(el("div", "ob-wait-t", text)); content.appendChild(w); }
 
-  // --- 7 Topics ------------------------------------------------------------------
+  // --- 6 Topics ------------------------------------------------------------------
   //
   // Per area: a familiarity slider and the question at its level. Answering
   // sends it for grading; a grade that disagrees brings one follow-up at the
@@ -893,7 +893,7 @@
   function pollAnalysis() {
     if (poll) return;
     poll = setInterval(function () {
-      if ((st.step !== 6 && st.step !== 7) || (st.row && st.row.analysis_status === "done")) { clearInterval(poll); poll = null; return; }
+      if (st.step !== 6 || (st.row && st.row.analysis_status === "done")) { clearInterval(poll); poll = null; return; }
       api("analysis").then(function (out) {
         if (out.analysis_status !== "running") { clearInterval(poll); poll = null; }
         readingUpdate(out);
@@ -914,7 +914,7 @@
       startReading({ run: true });
     }
     if (r.analysis_status === "error") {
-      var box = stepBox(content, count(7), "The paper could not be read");
+      var box = stepBox(content, count(6), "The paper could not be read");
       box.appendChild(el("div", "ob-sub", r.analysis_error || "Something went wrong while reading it."));
       var acts = el("div", "ob-actions");
       acts.appendChild(cta("Try again", false, function () { startReading({ retry: true }); draw(); }));
@@ -927,7 +927,7 @@
     }
     var a = r.analysis, areas = a.areas, fi = Math.min(st.ui.fIdx || 0, areas.length - 1), area = areas[fi];
     var box2 = el("div", "ob-step");
-    box2.appendChild(el("div", "ob-count", count(7, "Topics")));
+    box2.appendChild(el("div", "ob-count", count(6, "Topics")));
     box2.appendChild(el("div", "ob-title", "How familiar are you with the paper's concepts?"));
     var paper = el("div", "ob-paper"); paper.appendChild(el("div", "ob-paper-icon"));
     var pt = el("div", "ob-grow"), line = el("div", "ob-paper-line");
@@ -969,13 +969,13 @@
     function advance() {
       if (!last) { st.ui.fIdx = fi + 1; draw(); return; }
       // The last answer compiles the assessment; the fitting of the resources
-      // to them starts at once and reports into the resource step.
+      // to them starts at once and reports into the brainstorm.
       st.busy = "compiling"; draw();
       api("topics_done").then(function (out) {
         st.busy = "";
         st.row.assessment = out.assessment;
         startLeveled();
-        go(8);
+        go(7);
       }).catch(fail);
     }
     function submit() {
@@ -1015,7 +1015,8 @@
   // --- the leveled resources, fitted to them in the background ------------------
   //
   // Started when the topics are answered. Until the hunt has finished it is
-  // allowed to continue; after Topics, the resource step polls until ready.
+  // told to wait; the brainstorm asks again every few seconds, and the
+  // "ready to plan?" card appears once it is done.
 
   var levelTimer = null;
   function leveledUpdate(out) {
@@ -1042,7 +1043,7 @@
     if (levelTimer) return;
     levelTimer = setInterval(function () {
       var r = st.row;
-      if (!r || (st.step !== 6 && st.step !== 8) || r.leveled_status === "done" && !checkingAccess(r.leveled && r.leveled.assets)) { clearInterval(levelTimer); levelTimer = null; return; }
+      if (!r || (st.step !== 7 && st.step !== 8) || r.leveled_status === "done" && !checkingAccess(r.leveled && r.leveled.assets)) { clearInterval(levelTimer); levelTimer = null; return; }
       if (r.leveled_status === "running" || checkingAccess(r.leveled && r.leveled.assets)) {
         api("leveled").then(function (out) { leveledUpdate(out); if (out.leveled_status !== "running") draw(); }).catch(function () {});
       } else if (r.assets_status === "error" || r.leveled_status === "error") {
@@ -1053,7 +1054,7 @@
     }, 6000);
   }
 
-  // --- 6 Brainstorm ---------------------------------------------------------------
+  // --- 7 Brainstorm ---------------------------------------------------------------
   //
   // A conversation, one card at a time, about what in this paper is worth
   // building on. The transcript is the server's; this draws it and sends
@@ -1127,23 +1128,16 @@
 
   function drawBrainstorm(content) {
     var r = st.row, bs = st.ui.bs;
-    if (r.analysis_status === "none" && r.paper_id) startReading({ run: true });
-    if (r.analysis_status === "error") {
-      var errorBox = stepBox(content, count(6), "The paper could not be read");
-      errorBox.appendChild(el("div", "ob-sub", r.analysis_error || "Something went wrong while reading it."));
-      errorBox.appendChild(cta("Try again", false, function () { startReading({ retry: true }); }));
-      return;
-    }
-    if (r.analysis_status !== "done") {
+    if (r.analysis_status !== "done" || !r.assessment) {
       var w = el("div", "ob-wait"); w.appendChild(dots());
-      w.appendChild(el("div", "ob-wait-t", "Still reading your paper"));
+      w.appendChild(el("div", "ob-wait-t", r.analysis_status !== "done" ? "Still reading your paper" : "Answer the topic questions first"));
       content.appendChild(w); if (r.analysis_status !== "done") pollAnalysis(); return;
     }
     if (!st.turns.length && !bs.thinking) { sendTurn({}); return; }
-    if (r.assessment && r.leveled_status !== "done") pollLeveled();
+    if (r.leveled_status !== "done") pollLeveled();
     var box = el("div", "ob-step ob-bs-step");
-    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(6, "Brainstorm")));
-    head.appendChild(el("span", "ob-count", r.assessment ? (r.leveled_status === "done" ? "resources ready" : "fitting resources to you") : "your interests")); box.appendChild(head);
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(7, "Brainstorm")));
+    head.appendChild(el("span", "ob-count", r.leveled_status === "done" ? "resources ready" : "fitting resources to you")); box.appendChild(head);
     box.appendChild(el("div", "ob-title", "What do you want to build?"));
     var humanDone = (lastCard() && lastCard().ready) || st.turns.filter(function (t) {
       return t.role === "user" && str(t.content).trim() && str(t.content).trim() !== "(skipped those)";
@@ -1182,7 +1176,7 @@
     if (bs.thinking) { var th = attr(el("div", "ob-bs-turn"), "data-thinking", "1"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); thread.appendChild(th); }
     box.appendChild(thread);
     var last = lastCard();
-    // Human readiness ends the conversation; Topics supplies assessment before resources are fitted.
+    // Human readiness ends the conversation; the resource step handles waiting.
     if (!bs.thinking && last && (humanDone || last.card === "none")) drawPlanOffer(box);
     if (!bs.thinking && (r.leveled_status === "error" || r.assets_status === "error")) {
       var bad = el("div", "ob-grade"); bad.appendChild(el("span", "tag", "Resources"));
@@ -1243,9 +1237,9 @@
         else if (given.text && !given.answers) qcard.appendChild(el("div", "ob-bs-said", given.text));
       } else {
         var acts = attr(el("div", "ob-actions"), "data-between", "1");
-        var skip = el("button", "ob-ghost", st.row.assessment ? "Skip to resources" : "Skip to Topics"); skip.type = "button";
+        var skip = el("button", "ob-ghost", "Skip to resources"); skip.type = "button";
         acts.appendChild(on(skip, "click", function () {
-          save(st.row.assessment ? 8 : 7, {}).then(function () { go(st.row.assessment ? 8 : 7); }).catch(fail);
+          save(8, {}).then(function () { go(8); }).catch(fail);
         }));
         sendBtn = cta("Send answers", !ready(), function () { sendTurn({ answers: bs.answers }); });
         acts.appendChild(sendBtn); qcard.appendChild(acts);
@@ -1284,7 +1278,7 @@
     card.appendChild(el("div", "ob-cap", "ready when you are"));
     card.appendChild(el("div", "ob-question", "Enough to propose a direction."));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
-    acts.appendChild(cta("Continue", false, function () { save(st.row.assessment ? 8 : 7, {}).then(function () { go(st.row.assessment ? 8 : 7); }).catch(fail); }));
+    acts.appendChild(cta("Continue", false, function () { save(8, {}).then(function () { go(8); }).catch(fail); }));
     card.appendChild(acts); box.appendChild(card);
   }
 
