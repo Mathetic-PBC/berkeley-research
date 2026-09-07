@@ -103,6 +103,25 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     await page.getByText("Pair an isolated machine", { exact: true }).first().click();
     await expect(page.getByRole("textbox", { name: "Todo", exact: true }).first()).toHaveValue("Redeem the setup code with the checked-out CLI");
 
+    // The installed artifact carries the production TODO/layout/completion controls.
+    const todo = page.getByRole("textbox", { name: "Todo", exact: true }).first();
+    expect(await todo.evaluate(el => el.tagName)).toBe("TEXTAREA");
+    await expect(page.getByRole("button", { name: "Build todo: Redeem the setup code with the checked-out CLI", exact: true })).toBeVisible();
+    const planDivider = page.getByRole("separator", { name: "Plan width", exact: true });
+    const plan = page.getByLabel("Plan", { exact: true });
+    const width = (await plan.boundingBox()).width;
+    await planDivider.focus();
+    await planDivider.press("ArrowRight");
+    expect((await plan.boundingBox()).width).toBeGreaterThan(width);
+    await expect(page.getByRole("separator", { name: "Conversation and Todos width", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Complete subgoal: Pair an isolated machine", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Reopen subgoal: Pair an isolated machine", exact: true })).toBeVisible();
+    await page.reload();
+    expect((await plan.boundingBox()).width).toBeGreaterThan(width);
+    await page.getByRole("button", { name: "Reopen subgoal: Pair an isolated machine", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Complete subgoal: Pair an isolated machine", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Complete goal", exact: true })).toBeVisible();
+
     const browserGoal = "Browser edit reaches Claude context";
     await page.getByRole("button", { name: "+ Add subgoal", exact: true }).click();
     await page.getByRole("textbox", { name: "New subgoal", exact: true }).fill(browserGoal);
