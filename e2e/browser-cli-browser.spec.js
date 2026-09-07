@@ -116,11 +116,15 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     await expect(page.getByRole("separator", { name: "Conversation and Todos width", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Complete subgoal: Pair an isolated machine", exact: true }).click();
     await expect(page.getByRole("button", { name: "Reopen subgoal: Pair an isolated machine", exact: true })).toBeVisible();
+    const completed = page.getByRole("button", { name: "Reopen subgoal: Pair an isolated machine", exact: true });
+    await expect(completed).toHaveText("✓");
+    expect(await completed.evaluate(el => getComputedStyle(el).borderTopWidth)).toBe("0px");
     await page.reload();
     expect((await plan.boundingBox()).width).toBeGreaterThan(width);
     await page.getByRole("button", { name: "Reopen subgoal: Pair an isolated machine", exact: true }).click();
     await expect(page.getByRole("button", { name: "Complete subgoal: Pair an isolated machine", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Complete goal", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Complete goal", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reopen goal", exact: true })).toHaveCount(0);
 
     const browserGoal = "Browser edit reaches Claude context";
     await page.getByRole("button", { name: "+ Add subgoal", exact: true }).click();
