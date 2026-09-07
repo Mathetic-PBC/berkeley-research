@@ -1065,8 +1065,8 @@ class Debugger extends React.Component {
     const R = V.real;
     return h("div", { "data-screen-label": "Top bar", style: css("flex:none;min-height:46px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 14px 6px 16px;border-bottom:1px solid #eaeaea;white-space:nowrap") },
       h("span", { style: css("font:500 17px/1 " + SANSF + ";letter-spacing:-0.2px") }, "Engelbart"),
-      h("span", { "data-backend-mode": V.isReal ? "real" : "sim", style: css("font:11px/1.4 " + SANS + ";color:#666") },
-        V.isReal ? "Live · your uploads and model results" : "Simulated · fixed sample results"),
+      V.isReal ? null : h("span", { "data-backend-mode": "sim", style: css("font:11px/1.4 " + SANS + ";color:#666") },
+        "Simulated · fixed sample results"),
       V.isReal
         ? h("select", { value: R.pickerValue, onChange: R.pick, "data-run-picker": "1", title: "what the panel shows: this session, or one of your earlier runs", style: css("max-width:320px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
           R.pickerOptions.map(o => h("option", { key: o.value, value: o.value }, o.label)))
