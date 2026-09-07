@@ -93,6 +93,7 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
         : /Ask 3 or 4 questions/.test(text) ? model.details
         : /exactly four goals/.test(text) ? model.goals
         : /identify the concrete inputs and outputs/.test(text) ? model.assets
+        : /The selected research dataset is inaccessible/.test(text) ? model.resourceFallback
         : /locus of problem solving would lie/.test(text) ? model.leveled
         : /You are brainstorming with them/.test(text) ? (typeof model.brainstorm === "function" ? model.brainstorm(text) : model.brainstorm)
         : /The thing they are asking about/.test(text) ? model.assetAsk
@@ -971,6 +972,59 @@ test('dataset-dependent direction and subgoals are gated, while an unrelated dir
   assert.equal((await OB.direction(USER,row,[],{},CREDS,db.options)).direction.title,DIRECTION.title);
 });
 
+
+test('Direction discovers an access fallback without leveled children and persists only a usable plan',async()=>{
+  const original={title:'Request-only records',type:'dataset',description:'Available upon request',links:[{kind:'other',url:'https://lab.example/data'}]};
+  const candidate={title:'Authors public subset',type:'dataset',links:[{kind:'download',url:'https://lab.example/subset.csv'}],fallbackKind:'authors_example',compatible:true,compatibilityReason:'Same event schema and session grouping'};
+  const direction={...DIRECTION,uses:[candidate.title]};
+  const db=fake({model:{resourceFallback:{candidates:[candidate]},direction,subgoals:SUBGOALS}});
+  const fetch=db.options.fetchImpl;
+  db.options.fetchImpl=(url,init)=>url==='https://lab.example/subset.csv'?Promise.resolve(new Response('session,event\n1,edit\n')):fetch(url,init);
+  const row=await ready(db,{asset_chosen:original,leveled:{assets:[original]},leveled_status:'done',direction:null});
+  const result=await OB.direction(USER,row,[],{},CREDS,db.options);
+  assert.equal(result.asset_chosen.title,candidate.title);
+  assert.equal(result.leveled.assets[0].access.state,'restricted');
+  assert.equal(result.asset_chosen.access.state,'available');
+  const modelRequests=db.calls.filter(c=>c.url.endsWith('/v1/messages')).map(c=>JSON.parse(c.init.body));
+  assert.equal(modelRequests[0].tools[0].max_uses,4);
+  assert.match(modelRequests[1].messages[0].content[0].text,/Authors public subset/);
+  assert.match(modelRequests[1].messages[0].content[0].text,/fallbackOf/);
+  const cached=await OB.direction(USER,row,[],{},CREDS,db.options);
+  assert.equal(modelCalls(db),2,'resolved fallback does not rediscover on reload');
+  assert.deepEqual(cached.direction.uses,[candidate.title]);
+  await OB.subgoals(USER,row,[],{},CREDS,db.options);
+  assert.equal(row.subgoals.length,3);
+});
+
+test('synthetic recovery is explicit in model context and cannot persist misleading direction',async()=>{
+  const original={title:'Blocked events',type:'dataset',description:'Available upon request',links:[]};
+  const fallback={candidates:[],synthetic:{reason:'All real access paths failed',compatibilityReason:'Exercise grouping invented sessions',columns:['session','event'],rows:[['demo','edit']]}};
+  for (const truthful of [false,true]) {
+    const title='Synthetic stand-in for Blocked events';
+    const direction={...DIRECTION,title:truthful?'Test a synthetic stand-in':'Analyze real events',uses:[title]};
+    const db=fake({model:{resourceFallback:fallback,direction}});
+    const row=await ready(db,{asset_chosen:{...original},leveled:{assets:[{...original}]},direction:null});
+    if (truthful) {
+      await OB.direction(USER,row,[],{},CREDS,db.options);
+      assert.equal(row.asset_chosen.fallbackOf.kind,'synthetic_fallback');
+      assert.match(row.asset_chosen.inlineCsv,/session/);
+    } else {
+      await assert.rejects(OB.direction(USER,row,[],{},CREDS,db.options),{statusCode:409});
+      assert.equal(row.direction,null);
+    }
+    const sent=JSON.parse(db.calls.filter(c=>c.url.endsWith('/v1/messages')).pop().init.body);
+    assert.match(sent.messages[0].content[0].text,/SYNTHETIC STAND-IN/);
+  }
+});
+
+
+test('an independent cached Direction does not start fallback discovery for irrelevant unavailable data',async()=>{
+  const db=fake();
+  const row=await ready(db,{direction:DIRECTION,asset_chosen:{title:'Irrelevant clinical records',type:'dataset',access:{state:'checking'},links:[]}});
+  const result=await OB.direction(USER,row,[],{},CREDS,db.options);
+  assert.deepEqual(result.direction,DIRECTION);assert.equal(modelCalls(db),0);
+  assert.equal(row.asset_chosen.access.state,'checking');
+});
 test("Brainstorm gathers material, activity, and inquiry signals without repeatedly narrowing one preference", async () => {
   const prompts = [];
   const questions = ["Which part interests you?", "What would you like to do with those sessions?", "What would you like to discover or compare?"];

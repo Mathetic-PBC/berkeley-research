@@ -851,3 +851,17 @@ test('a blocked resource direction shows the existing error and does not automat
   assert.match(textOf(page.app),/Back to Assets/);
   assert.match(textOf(page.app),/verified alternative/);
 });
+
+
+test('Assets shows access fallbacks separately from the restricted original and pedagogical children',async()=>{
+  for (const kind of ['authors_example','synthetic_fallback']) {
+    const original={title:'Original ICU records',type:'dataset',links:[],access:{state:'restricted',reason:'Requires author approval'}};
+    const child={title:kind === 'synthetic_fallback'?'Synthetic stand-in for ICU records':'Authors released subset',type:'dataset',links:[],access:{state:'available'},fallbackOf:{title:original.title,kind,access:original.access}};
+    const chosen={...child,key:original.title+' :: '+child.title};
+    const page=mount({row:fullRow({step:8,asset_chosen:chosen,leveled_status:'done',leveled:{assets:[{...original,children:[child]}]}})});
+    await settle();
+    assert.match(textOf(page.app),/! Restricted/);assert.match(textOf(page.app),/✓ Available/);
+    assert.match(textOf(page.app),/instead of Original ICU records/);
+    assert.equal(textOf(one(page.app,'ob-as-level')),kind === 'synthetic_fallback'?'synthetic':'fallback');
+  }
+});

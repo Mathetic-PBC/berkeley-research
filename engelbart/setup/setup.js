@@ -1331,7 +1331,7 @@
     acts.appendChild(cta("Continue", !picked || st.busy === "choose", function () {
       st.busy = "choose"; draw();
       api("choose_asset", { key: as.picked }).then(function (out) {
-        st.busy = ""; st.row.asset_chosen = out.asset_chosen; st.ui.as.picked = out.asset_chosen.key; st.row.direction = null; st.row.subgoals = null; st.row.todos = null;
+        st.busy = ""; st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; st.row.direction = null; st.row.subgoals = null; st.row.todos = null;
         st.ui.change = { open: false, text: "", thinking: false, log: [] }; go(9);
       }).catch(fail);
     }));
@@ -1366,7 +1366,7 @@
       var labels = { checking: "Checking access…", available: "✓ Available", restricted: "! Restricted", too_large: "Too large", remote_only: "Remote only", unavailable: "Unavailable" };
       line.appendChild(el("span", "ob-as-meta ob-as-access", labels[access.state] || "Checking access…"));
     }
-    if (parent) line.appendChild(el("span", "ob-as-level", "simpler"));
+    if (parent) line.appendChild(el("span", "ob-as-level", a.fallbackOf ? (a.fallbackOf.kind === "synthetic_fallback" ? "synthetic" : "fallback") : "simpler"));
     text.appendChild(line);
     if (a.type === "dataset" && shown && access.reason && access.state !== "available") text.appendChild(el("span", "ob-as-desc", access.reason));
     if (shown) {
@@ -1425,7 +1425,7 @@
       ch.log.push({ role: "user", content: text }); ch.text = ""; ch.thinking = true; draw();
       api(action, { revise: text }).then(function (out) {
         ch.thinking = false;
-        if (out.direction) { st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; st.ui.as.picked = out.asset_chosen.key; } st.row.subgoals = null; st.row.todos = null; ch.log.push({ role: "assistant", content: "Revised: " + out.direction.title }); }
+        if (out.direction) { st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } st.row.subgoals = null; st.row.todos = null; ch.log.push({ role: "assistant", content: "Revised: " + out.direction.title }); }
         if (out.subgoals) { st.row.subgoals = out.subgoals; st.row.todos = null; ch.log.push({ role: "assistant", content: "Revised the three pieces." }); }
         draw();
       }).catch(function (e) { ch.thinking = false; ch.log.push({ role: "assistant", content: e.message }); draw(); });
@@ -1442,7 +1442,7 @@
     if (!r.asset_chosen) { stepBox(content, count(9), "Pick what to build on first"); return; }
     if (!r.direction) {
       if (st.error) { var blocked = stepBox(content, count(9), "Choose a usable resource before planning"); blocked.appendChild(cta("Back to Assets", false, function () { go(8); })); return; }
-      if (st.busy !== "direction") { st.busy = "direction"; api("direction").then(function (out) { st.busy = ""; st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; st.ui.as.picked = out.asset_chosen.key; } draw(); }).catch(fail); }
+      if (st.busy !== "direction") { st.busy = "direction"; api("direction").then(function (out) { st.busy = ""; st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } draw(); }).catch(fail); }
       generating(content, "Choosing a direction"); return;
     }
     var d = r.direction, box = el("div", "ob-step");
