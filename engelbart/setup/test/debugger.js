@@ -246,7 +246,7 @@ class Debugger extends React.Component {
   // acts there. Until then the view stays on the step whose press caused what is on screen.
   stepShown(label) { void label; }
   openStep(label, arrived) {
-    const ORDER = ["Start", "Name", "Year", "Major", "Explanations", "Paper", "Install", "Topics", "Brainstorm", "Assets", "Direction", "Subgoals", "Todos", "Done"];
+    const ORDER = ["Start", "Name", "Year", "Major", "Explanations", "Paper", "Install", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos", "Done"];
     if (!label) return;
     const recs = this.state.recordings.slice();
     let r = recs.find(x => x.step === label);

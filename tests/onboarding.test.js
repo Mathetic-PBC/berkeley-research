@@ -686,7 +686,7 @@ test("topics_done compiles the assessment from the calibration rows without the 
   assert.deepEqual(out.assessment.areas[1].answers, ["I have seen tensors"]);
   assert.equal(out.assessment.mean, 38);
   assert.equal(out.assessment.depth, "technical", "a mean between the shifts leaves the register alone");
-  assert.equal(row.step, OB.STEP.brainstorm);
+  assert.equal(row.step, OB.STEP.assets);
   await assert.rejects(OB.topicsDone(USER, row, [], {}, db.options), (e) => e.statusCode === 400);
 });
 
@@ -1072,4 +1072,37 @@ test("Brainstorm gathers material, activity, and inquiry signals without repeate
     assert.match(prompt, /Stop earlier only.*unusually specific intent/);
     assert.match(prompt, /Do not re-ask dimensions already supplied/);
   }
+});
+
+test("Brainstorm before Topics needs no assessment; resource fitting waits and later receives the interest", async () => {
+  const interest = "Visualize repeated attempts and compare progress after help";
+  const seen = [];
+  const db = fake({ model: { brainstorm: text => { seen.push(text); return { card: "none", ready: true, interest }; }, leveled: LEVELED } });
+  const row = await ready(db, { step: OB.STEP.brainstorm, assessment: null, leveled_status: "none", assets_status: "done", assets: ASSETS });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const result = await OB.brainstorm(USER, row, [], { text: interest }, CREDS, db.options);
+  assert.equal(result.ready, true);
+  assert.equal(row.step, 6);
+  assert.match(seen[0], /Topics follows Brainstorm/);
+  await assert.rejects(OB.leveled(USER, row, [], { run: true }, CREDS, db.options), { statusCode: 409 });
+  await OB.topicsDone(USER, row, cals, {}, db.options);
+  assert.equal(row.step, 8);
+  assert.equal(row.interest, interest);
+  await OB.leveled(USER, row, cals, { run: true }, CREDS, db.options);
+  const calls = db.calls.filter(c => c.url.endsWith("/v1/messages"));
+  assert.ok(calls.at(-1).init.body.includes(interest));
+});
+
+test("old in-flight Brainstorm resumes with its assessment and answers intact after reordering", async () => {
+  const db = fake();
+  const row = await ready(db, { step: 7, assessment: { areas: [] }, interest: "geometry" });
+  const cals = db.tables.engelbart_onboarding_calibrations.length;
+  const out = await OB.open(USER, {}, db.options);
+  assert.equal(out.onboarding.step, 6);
+  assert.deepEqual(out.onboarding.assessment, { areas: [] });
+  assert.equal(out.onboarding.interest, "geometry");
+  assert.equal(out.calibrations.length, cals);
+  row.step = 7;
+  db.tables.engelbart_onboarding_turns.push({ id: "done", onboarding_id: row.id, stage: "brainstorm", role: "assistant", content: "Enough", card: { card: "none", ready: true } });
+  assert.equal((await OB.open(USER, {}, db.options)).onboarding.step, 8);
 });
