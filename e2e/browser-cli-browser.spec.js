@@ -86,15 +86,19 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     // /test or a source-tree server. Resource preparation crosses the same
     // claim boundary as the plan and remains durable after a reload.
     expect(new URL(page.url()).pathname).toBe("/");
-    await expect(page.getByRole("button", { name: /Synthetic protocol events.*Ready/ })).toBeVisible();
-    await page.getByRole("button", { name: /Synthetic protocol events.*Ready/ }).click();
+    await expect(page.getByLabel("Plan").getByText("Resources", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("tab").nth(0)).toHaveText("Bart");
+    await expect(page.getByRole("tab").nth(1)).toHaveText("Live preview");
+    await expect(page.getByRole("tab").nth(2)).toHaveText("Terminal");
+    await expect(page.getByRole("tab", { name: "Dataset", exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: "Dataset", exact: true }).click();
     await expect(page.locator(".resource-detail")).toContainText("event (text)");
     await expect(page.locator(".resource-detail")).toContainText("Private protocol traces");
     const dataset = await page.evaluate(() => window.engelbart.store.get().project.resources.find(r => r.kind === "dataset"));
     expect(dataset.status).toBe("ready");
     expect(dataset.access.primaryFiles[0].split(/[\\/]/)[0]).toBe(".engelbart-resources");
     await page.reload();
-    await expect(page.getByRole("button", { name: /Synthetic protocol events.*Ready/ })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Dataset", exact: true })).toBeVisible();
     await page.getByRole("tab", { name: "Bart", exact: true }).click();
     await page.getByText("Pair an isolated machine", { exact: true }).first().click();
     await expect(page.getByRole("textbox", { name: "Todo", exact: true }).first()).toHaveValue("Redeem the setup code with the checked-out CLI");
