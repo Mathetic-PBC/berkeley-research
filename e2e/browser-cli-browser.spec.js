@@ -92,7 +92,7 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     await expect(page.locator(".resource-detail")).toContainText("Private protocol traces");
     const dataset = await page.evaluate(() => window.engelbart.store.get().project.resources.find(r => r.kind === "dataset"));
     expect(dataset.status).toBe("ready");
-    expect(dataset.access.primaryFiles[0]).toContain(".engelbart-resources/");
+    expect(dataset.access.primaryFiles[0].split(/[\\/]/)[0]).toBe(".engelbart-resources");
     await page.reload();
     await expect(page.getByRole("button", { name: /Synthetic protocol events.*Ready/ })).toBeVisible();
     await page.getByRole("tab", { name: "Bart", exact: true }).click();
