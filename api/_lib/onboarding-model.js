@@ -7,6 +7,7 @@
 
 const { pickModel } = require("./setup-chat");
 const P = require("./onboarding-prompts");
+const Grounding = require("./paper-grounding");
 const { telemetry } = require("./telemetry");
 const { hostOf, safeUrl } = require("./telemetry/redaction");
 const { resolveUpstream } = require("./upstream");
@@ -227,6 +228,7 @@ function normalizeAnalysis(raw) {
     one_liner: long(raw.one_liner, 300),
     date: normalizeDate(raw.date),
     areas,
+    ...(Grounding.normalize(raw.grounding) ? {grounding: Grounding.normalize(raw.grounding)} : {}),
   };
 }
 
@@ -255,7 +257,7 @@ async function analyze(input, credentials, options = {}) {
     // diagnostic's own text follows verbatim, its paper tag pointing up. An
     // edited template is rendered whole, the urls in its slot.
     const body = edited ? P.render("analyzePrompt", { ...input, urls }, options.promptOverrides) : before + "(the paper attached above)" + tail;
-    return [...paperPrefix(input), text(body)];
+    return [...paperPrefix(input), text(body + "\n\n" + Grounding.EXTRACTION)];
   });
   const raw = await callModel({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS,
     timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "analysis", template: "analyzePrompt", templateEdited: edited }, credentials, options);
@@ -372,14 +374,38 @@ async function generate(key, input, normalize, credentials, options, what, purpo
   const pr = promptFor(key, input, options);
   const synthetic = input.asset?.fallbackOf?.kind === "synthetic_fallback" || input.resources?.some(r => r.fallbackOf?.kind === "synthetic_fallback");
   const resourceRule = synthetic ? "The selected resource is a SYNTHETIC STAND-IN. Explicitly call it synthetic or a stand-in in the Direction description. Scope the first subgoals/todos to testing or learning the mechanism on invented examples. Never imply observations or research conclusions about the inaccessible original. Do not make acquiring the original a human prerequisite." : "";
-  const raw = await callModel({ content: [text([pr.text, resourceRule].filter(Boolean).join("\n\n"))], family: "sonnet", purpose, reads, template: pr.template, templateEdited: pr.edited }, credentials, options);
-  const out = await normalized(purpose, raw, normalize);
-  if (!out) {
-    const error = new Error(`The ${what} did not come back in a usable shape`);
-    error.statusCode = 502;
-    throw error;
+  const grounded = Grounding.normalize(input.paper?.grounding);
+  const checked = grounded && ["direction", "subgoals", "todos"].includes(purpose);
+  let correction = "", accessError = null;
+  for (let attempt = 0; attempt < (checked ? 2 : 1); attempt++) {
+    const raw = await callModel({ content: [text([pr.text, resourceRule, (["direction","subgoals","todos","brainstorm","goals"].includes(purpose) ? Grounding.rules(input,purpose) : ""), correction].filter(Boolean).join("\n\n"))], family: "sonnet", purpose, reads, template: pr.template, templateEdited: pr.edited }, credentials, options);
+    const out = await normalized(purpose, raw, normalize);
+    accessError = null;
+    if (out && purpose === "direction") {
+      try { require("./project-resources").assertUsable(out,input.asset,[]); }
+      catch (error) {
+        if (!checked || error.statusCode !== 409) throw error;
+        accessError = error;
+        correction = "Revise the plan to resolve this access validation failure: " + error.message;
+        continue;
+      }
+    }
+    if (out && !checked) return out;
+    if (out && checked) {
+      out.paperBasis = Grounding.basis(raw,input);
+      correction = Grounding.structuralIssue(out,purpose,input);
+      if (!correction) {
+        const review = await callModel({content:[text(Grounding.reviewPrompt(out,input,purpose))],family:"sonnet",purpose:"paper_plan_check",maxTokens:1200},credentials,options);
+        if (Grounding.reviewPass(review)) return out;
+        correction = one(review?.reason,600) || "The plan does not establish a paper-grounded runnable progression";
+      }
+    } else correction = "The reply did not match the requested JSON shape";
+    correction = "Revise the plan to resolve this validation failure: " + correction;
   }
-  return out;
+  if (accessError) throw accessError;
+  const error = new Error(checked ? "Could not ground the plan in a runnable part of the paper. Please retry the direction." : `The ${what} did not come back in a usable shape`);
+  error.statusCode = 502;
+  throw error;
 }
 
 const details = (input, c, o) => generate("detailsPrompt", input, normalizeDetails, c, o, "questions", "details");
@@ -418,6 +444,13 @@ function paperPrefix(input) {
   }
   return [{ type: "text", text: P.PAPER_PREFIX + "\n\n<paper_text>\n" + long(input.pdfText, 400000) + "\n</paper_text>",
     cache_control: { type: "ephemeral" } }];
+}
+
+async function paperGrounding(input, credentials, options = {}) {
+  const raw = await callModel({content:[...paperPrefix(input),text(Grounding.EXTRACTION + " Return only {grounding: ...} as JSON.")],family:"sonnet",purpose:"paper_grounding",maxTokens:4000},credentials,options);
+  const result=Grounding.normalize(raw?.grounding);
+  if (!result) {const error=new Error("Could not identify a supported runnable contribution in this paper");error.statusCode=502;throw error;}
+  return result;
 }
 
 // --- assets ---------------------------------------------------------------------
@@ -620,7 +653,7 @@ module.exports = {
   LEVELS, LINEAGE, MAX_PAGE_TEXT,
   callModel, pickModel, extractJson, promptFor,
   analyze, grade, followUp, rewrite, details, goals, todos, ask, assets, levelAssets, resourceFallback, brainstorm, assetAsk, direction, subgoals,
-  paperPrefix, briefOf,
+  paperPrefix, paperGrounding, briefOf,
   normalizeAnalysis, normalizeGrade, normalizeFollowUp, normalizeRewrite, normalizeDetails, normalizeGoals, normalizeTodos, normalizeAsk,
   normalizeAssets, normalizeLeveled, normalizeBrainstorm, normalizeDirection, normalizeSubgoals,
 };

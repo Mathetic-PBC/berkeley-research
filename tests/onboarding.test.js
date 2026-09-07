@@ -86,7 +86,13 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
     if (u.pathname.startsWith("/storage/v1/object/")) return { ok: true, status: 200, async arrayBuffer() { return pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength); }, async text() { return ""; } };
     if (u.pathname === "/v1/messages") {
       const text = body.messages[0].content.map((b) => b.text || "").join("\n");
-      const reply = /prior-knowledge diagnostic/.test(text) ? model.analysis
+      // Storage/model routing fixtures focus on persistence; semantic rejection
+      // is covered separately at the same model boundary in paper-grounding.test.
+      const grounding={contribution:"Reconstruct the paper's transformation",evidence:[{id:"p1",kind:"method",claim:"Transform one input into an output",quote:"The method transforms the input",location:"Methods"}],limits:"Fixture"};
+      const paperBasis={evidenceIds:["p1"],reproduce:"Reconstruct one input/output transformation",interrogate:"Vary input and compare output",extend:"After comparison test a new input",limitation:"Fixture"};
+      if (/Return only \{grounding:/.test(text)) return json({content:[{type:"text",text:JSON.stringify({grounding})}]});
+      if (/^Validate this (direction|subgoals|todos) against/.test(text)) return json({content:[{type:"text",text:JSON.stringify({grounded:true,actionable:true,mechanismFirst:true,resourceHonest:true,progression:true})}]});
+      let reply = /prior-knowledge diagnostic/.test(text) ? model.analysis
         : /calibration question/.test(text) ? model.grade
         : /Write ONE follow-up question/.test(text) ? (typeof model.followUp === "function" ? model.followUp(text) : model.followUp)
         : /Rewrite each passage at the new register/.test(text) ? (typeof model.rewrite === "function" ? model.rewrite(text) : model.rewrite)
@@ -100,6 +106,7 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
         : /Choose ONE direction|Revise the direction/.test(text) ? (typeof model.direction === "function" ? model.direction(text) : model.direction)
         : /\{"subgoals": \[\{"label":/.test(text) ? model.subgoals
         : /Write the TODO rows for that first piece/.test(text) ? model.todos : model.ask;
+      if (reply && /Alongside the normal JSON return paperBasis/.test(text)) reply={...reply,paperBasis};
       return json({ content: [{ type: "text", text: reply === undefined ? "I could not do that." : JSON.stringify(reply) }] });
     }
     if (u.hostname === "x.org") return { ok: true, status: 200, headers: { get: () => "text/html" }, async text() { return "<p>project page</p>"; } };
@@ -570,9 +577,9 @@ test("todos serves the stored rows and regenerates only when asked; it needs the
   assert.equal(first.name, "zebra tuner");
   assert.equal(row.goal_chosen, "G2");
   await OB.todos(USER, row, [], {}, CREDS, db.options);
-  assert.equal(modelCalls(db), 1);
+  assert.equal(modelCalls(db), 3);
   await OB.todos(USER, row, [], { regenerate: true }, CREDS, db.options);
-  assert.equal(modelCalls(db), 2);
+  assert.equal(modelCalls(db), 5);
   row.subgoals = null;
   await assert.rejects(OB.todos(USER, row, [], {}, CREDS, db.options), (e) => e.statusCode === 409);
 });
@@ -1005,10 +1012,11 @@ test('Direction discovers an access fallback without leveled children and persis
   assert.equal(result.asset_chosen.access.state,'available');
   const modelRequests=db.calls.filter(c=>c.url.endsWith('/v1/messages')).map(c=>JSON.parse(c.init.body));
   assert.equal(modelRequests[0].tools[0].max_uses,4);
-  assert.match(modelRequests[1].messages[0].content[0].text,/Authors public subset/);
-  assert.match(modelRequests[1].messages[0].content[0].text,/fallbackOf/);
+  const directionRequest=modelRequests.find(r=>r.messages[0].content.some(b=>/Choose ONE direction/.test(b.text||'')));
+  assert.match(directionRequest.messages[0].content[0].text,/Authors public subset/);
+  assert.match(directionRequest.messages[0].content[0].text,/fallbackOf/);
   const cached=await OB.direction(USER,row,[],{},CREDS,db.options);
-  assert.equal(modelCalls(db),2,'resolved fallback does not rediscover on reload');
+  assert.equal(modelCalls(db),4,'fallback discovery, legacy grounding, direction and review run once; reload reuses them');
   assert.deepEqual(cached.direction.uses,[candidate.title]);
   await OB.subgoals(USER,row,[],{},CREDS,db.options);
   assert.equal(row.subgoals.length,3);
@@ -1030,8 +1038,8 @@ test('synthetic recovery is explicit in model context and cannot persist mislead
       await assert.rejects(OB.direction(USER,row,[],{},CREDS,db.options),{statusCode:409});
       assert.equal(row.direction,null);
     }
-    const sent=JSON.parse(db.calls.filter(c=>c.url.endsWith('/v1/messages')).pop().init.body);
-    assert.match(sent.messages[0].content[0].text,/SYNTHETIC STAND-IN/);
+    const sent=db.calls.filter(c=>c.url.endsWith('/v1/messages')).map(c=>JSON.parse(c.init.body)).find(c=>c.messages[0].content[0].text?.includes('SYNTHETIC STAND-IN'));
+    assert.ok(sent, 'synthetic resource rule reaches generation');
   }
 });
 

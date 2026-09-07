@@ -1,0 +1,380 @@
+{
+  "note": "Captured real-provider outputs on fictional source excerpts, September 7 2026. These fixtures test the boundary, not a guarantee that future model outputs are correct.",
+  "cases": [
+    {
+      "id": "hci-instruction-mapping",
+      "domain": "HCI / systems",
+      "source": "FICTIONAL REGRESSION PAPER: From Therapist Instructions to Exercise Software. Methods §3: We map the action and repetition count to an exercise template. The parser extracts arm side and repetitions from a controlled-language instruction. Example 2 / Figure 4: 'Raise the right arm five times' becomes 'for i in range(5): raise_right_arm()'. Changing the requested repetitions changes the loop bound while arm side selects the action function. The appendix releases three worked instruction/program pairs. Evaluation §5 compared generated programs with therapist-specified behavior, but patient records and the full proprietary generator are unavailable. This excerpt reports no numerical clinical improvement.",
+      "grounding": {
+        "version": 1,
+        "contribution": "A parser that converts controlled-language therapist instructions into exercise program code by extracting arm side and repetition count, mapping them to parameterized function calls and loop bounds.",
+        "evidence": [
+          {
+            "id": "p1",
+            "kind": "method",
+            "claim": "The system maps action and repetition count from instructions to exercise templates",
+            "quote": "We map the action and repetition count to an exercise template. The parser extracts arm side and repetitions from a controlled-language instruction.",
+            "location": "Methods §3"
+          },
+          {
+            "id": "p2",
+            "kind": "method",
+            "claim": "The parser converts natural language instructions to Python-like code with loops and function calls",
+            "quote": "'Raise the right arm five times' becomes 'for i in range(5): raise_right_arm()'",
+            "location": "Example 2 / Figure 4"
+          },
+          {
+            "id": "p3",
+            "kind": "variable",
+            "claim": "Repetition count controls the loop bound in generated code",
+            "quote": "Changing the requested repetitions changes the loop bound",
+            "location": "Example 2 / Figure 4"
+          },
+          {
+            "id": "p4",
+            "kind": "variable",
+            "claim": "Arm side parameter selects which action function is called",
+            "quote": "arm side selects the action function",
+            "location": "Example 2 / Figure 4"
+          },
+          {
+            "id": "p5",
+            "kind": "artifact",
+            "claim": "Three worked instruction/program pairs are provided in the appendix",
+            "quote": "The appendix releases three worked instruction/program pairs.",
+            "location": "Methods §3"
+          },
+          {
+            "id": "p6",
+            "kind": "experiment",
+            "claim": "Evaluation compared generated programs against therapist-specified behavior",
+            "quote": "Evaluation §5 compared generated programs with therapist-specified behavior",
+            "location": "Evaluation §5"
+          },
+          {
+            "id": "p7",
+            "kind": "result",
+            "claim": "No numerical clinical improvement data is reported",
+            "quote": "This excerpt reports no numerical clinical improvement.",
+            "location": "Evaluation §5"
+          }
+        ],
+        "limits": "Patient records unavailable. Full proprietary generator unavailable. No numerical results reported. No dataset characteristics provided. Cannot establish clinical efficacy, parser accuracy metrics, or scale of evaluation from supplied evidence."
+      },
+      "evidenceFaithful": true,
+      "before": {
+        "title": "Instruction Mistake Highlighter",
+        "what_you_would_make": "You'd build a window where you type made-up therapist instructions and it highlights the parts it understands—arm side in one color, repetition count in another—so you can see exactly what the parser catches and what confuses it. When the parser misses something or gets it wrong, you immediately see which words it ignored or misread.",
+        "uses": [
+          "Synthetic instruction examples"
+        ],
+        "why_it_fits": "You want to make the parser's behavior tangible, and watching it succeed or fail in real time as you type different phrasings turns the abstract parsing steps into something you can see and poke at. The synthetic stand-in gives you safe invented sentences to test without needing anyone's approval or waiting to collect real data.",
+        "first_visible_result": "You type a fake instruction like 'raise left arm 5 times' and instantly see 'left' and '5' light up in different colors where the parser found them."
+      },
+      "direction": {
+        "title": "Instruction rewriter",
+        "what_you_would_make": "You'll build a window where you type a synthetic therapist instruction—like \"raise the left arm three times\"—press a button, and immediately see the exercise code the parser generates: the loop and the function call. Then you'll add a second box that lets you change just the number or just the side, re-run the parser, and watch which part of the code changes.",
+        "uses": [
+          "Synthetic instruction examples"
+        ],
+        "why_it_fits": "You said you want to make an important part tangible, and the paper's core is this mapping from instruction to code. A window that shows you the transformation happening—and lets you poke one variable at a time—turns the abstract parser into something you can see and test with the synthetic stand-in examples.",
+        "first_visible_result": "A window with a text box, a button, and the generated Python loop-and-function code appearing below it when you click.",
+        "paperBasis": {
+          "evidenceIds": [
+            "p2",
+            "p3",
+            "p4",
+            "p5"
+          ],
+          "reproduce": "Generate the loop-and-function-call code from one of the three worked instruction/program pairs in the appendix, displaying input instruction and output code side-by-side.",
+          "interrogate": "Change only the repetition count in the instruction and observe whether only the loop bound changes in the output; then change only the arm side and observe whether only the function name changes.",
+          "extend": "After observing which code fragments stay stable and which vary, add a third box that highlights or colors the parts of the generated code that changed between runs.",
+          "limitation": "Uses synthetic invented instructions; cannot measure parser accuracy, evaluate therapist acceptance, or compare against real patient programs because the proprietary generator and private therapist instructions are unavailable."
+        }
+      },
+      "subgoals": {
+        "subgoals": [
+          {
+            "label": "Display one synthetic instruction as parsed code",
+            "description": "Type one invented instruction into a box, press a button, and see the loop-and-function code appear below it on screen.",
+            "why": "You need to see the parser work once before you can explore what makes the output change."
+          },
+          {
+            "label": "Compare code when changing repetition count",
+            "description": "Edit just the number in the same instruction, re-run the parser, and watch the loop bound update while the function stays the same.",
+            "why": "Isolating one variable—repetitions—shows exactly which part of the code the count controls."
+          },
+          {
+            "label": "Compare code when swapping arm side",
+            "description": "Change only the side word in the instruction, re-run, and see the function name switch while the loop bound stays unchanged.",
+            "why": "Isolating the other variable—side—demonstrates how each input piece maps to a distinct output piece."
+          }
+        ],
+        "paperBasis": {
+          "evidenceIds": [
+            "p2",
+            "p3",
+            "p4"
+          ],
+          "reproduce": "Generate loop-and-function code from one synthetic controlled-language instruction (Example 2 structure).",
+          "interrogate": "Change repetition count alone, then arm side alone, and observe which code element updates in each case.",
+          "extend": "After seeing both mappings work, test whether the parser handles combined changes or edge cases like zero repetitions.",
+          "limitation": "Synthetic stand-in instructions only; no real therapist data, no parser accuracy metrics, no clinical outcomes."
+        }
+      },
+      "elapsedSeconds": 61.5
+    },
+    {
+      "id": "ml-threshold-classifier",
+      "domain": "ML / quantitative data",
+      "source": "FICTIONAL REGRESSION PAPER: Thresholded Margin Classification. Methods §2: Method M computes z = 0.7*x1 + 0.3*x2 and predicts class 1 when z exceeds threshold tau. Baseline B predicts class 1 when x1 exceeds tau. Experiment §4 compares M with B on the released evaluation split using precision and recall. Condition C varies tau from 0.2 to 0.8; higher thresholds trade recall for precision on this split. Appendix A includes x1, x2 and true_label in evaluation.csv. No training or GPU is required for the released scoring rule. A study of other input distributions is proposed but not evaluated.",
+      "grounding": {
+        "version": 1,
+        "contribution": "Method M combines two features (x1, x2) with fixed weights (0.7, 0.3) for binary classification using a threshold tau, compared against a baseline B that uses only x1. Evaluation on a released split examines precision-recall tradeoffs as tau varies from 0.2 to 0.8.",
+        "evidence": [
+          {
+            "id": "p1",
+            "kind": "method",
+            "claim": "Method M computes a weighted combination z = 0.7*x1 + 0.3*x2 and predicts class 1 when z exceeds threshold tau",
+            "quote": "Method M computes z = 0.7*x1 + 0.3*x2 and predicts class 1 when z exceeds threshold tau",
+            "location": "Methods §2"
+          },
+          {
+            "id": "p2",
+            "kind": "method",
+            "claim": "Baseline B predicts class 1 when x1 exceeds threshold tau",
+            "quote": "Baseline B predicts class 1 when x1 exceeds tau",
+            "location": "Methods §2"
+          },
+          {
+            "id": "p3",
+            "kind": "variable",
+            "claim": "The method uses input features x1 and x2, with fixed weights 0.7 and 0.3 respectively",
+            "quote": "Method M computes z = 0.7*x1 + 0.3*x2",
+            "location": "Methods §2"
+          },
+          {
+            "id": "p4",
+            "kind": "experiment",
+            "claim": "Experiment compares M with B on the released evaluation split using precision and recall metrics",
+            "quote": "Experiment §4 compares M with B on the released evaluation split using precision and recall",
+            "location": "Experiment §4"
+          },
+          {
+            "id": "p5",
+            "kind": "experiment",
+            "claim": "Condition C varies tau from 0.2 to 0.8 to examine precision-recall tradeoffs",
+            "quote": "Condition C varies tau from 0.2 to 0.8; higher thresholds trade recall for precision on this split",
+            "location": "Experiment §4"
+          },
+          {
+            "id": "p6",
+            "kind": "result",
+            "claim": "Higher thresholds trade recall for precision on the evaluation split",
+            "quote": "higher thresholds trade recall for precision on this split",
+            "location": "Experiment §4"
+          },
+          {
+            "id": "p7",
+            "kind": "artifact",
+            "claim": "Appendix A includes evaluation.csv containing x1, x2, and true_label columns",
+            "quote": "Appendix A includes x1, x2 and true_label in evaluation.csv",
+            "location": "Appendix A"
+          },
+          {
+            "id": "p8",
+            "kind": "constraint",
+            "claim": "No training or GPU is required for the released scoring rule",
+            "quote": "No training or GPU is required for the released scoring rule",
+            "location": "Experiment §4"
+          }
+        ],
+        "limits": "Cannot establish quantitative precision/recall values, dataset size, statistical significance, or performance differences between M and B. A study of other input distributions is proposed but not evaluated, so generalization is unestablished."
+      },
+      "evidenceFaithful": true,
+      "before": {
+        "title": "Slide the Threshold, Watch Precision Change",
+        "what_you_would_make": "You'll build a window with a slider that lets you drag the threshold value from 0.2 to 0.8. As you move it, the screen instantly shows how many predictions flip from yes to no, and displays the precision and recall numbers for that threshold using the real evaluation rows.",
+        "uses": [
+          "Released evaluation split"
+        ],
+        "why_it_fits": "You chose the actual data rows, and moving a slider to see numbers jump makes the threshold idea—the core piece you're trying to understand—something you control with your hand instead of something abstract in a paper.",
+        "first_visible_result": "A window appears with a slider set to 0.5, and dragging it immediately updates two numbers labeled precision and recall."
+      },
+      "direction": {
+        "title": "Threshold Slider Comparison",
+        "what_you_would_make": "You'll build a window with a slider that lets you drag the threshold up and down. As you move it, you instantly see how many true positives, false positives, and false negatives each method produces on the real evaluation rows, so you can watch the precision-recall tradeoff happen live for both the combined method and the baseline.",
+        "uses": [
+          "Released evaluation split"
+        ],
+        "why_it_fits": "You want to make an important part tangible, and the paper's core claim is that combining two features with a threshold produces a different precision-recall tradeoff than using one feature alone. Moving a slider and watching the numbers change makes that tradeoff concrete in seconds, and you'll see immediately whether the combination actually helps on the real data.",
+        "first_visible_result": "A window appears with a slider and two rows of numbers showing how many predictions each method got right and wrong at the starting threshold.",
+        "paperBasis": {
+          "evidenceIds": [
+            "p1",
+            "p2",
+            "p5",
+            "p6",
+            "p7"
+          ],
+          "reproduce": "Load evaluation.csv, compute z = 0.7*x1 + 0.3*x2 for method M and threshold both z and x1 against tau, then count true positives, false positives, false negatives, and calculate precision and recall for both M and B at tau values from 0.2 to 0.8.",
+          "interrogate": "Vary tau interactively and observe how precision and recall change differently for M versus B, confirming whether higher thresholds consistently trade recall for precision and whether the weighted combination shifts the tradeoff curve.",
+          "extend": "After observing the tradeoff curves, try different weight pairs (e.g., 0.5/0.5 or 0.9/0.1) to see how the balance between x1 and x2 affects the precision-recall relationship on this split.",
+          "limitation": "Reproduction uses only the released evaluation split; training data and statistical significance testing are unavailable, so performance differences remain descriptive rather than validated."
+        }
+      },
+      "subgoals": {
+        "subgoals": [
+          {
+            "label": "Display predictions for ten real rows",
+            "description": "See the first ten rows from the evaluation file showing their feature values, true labels, and what each method predicts at threshold 0.5.",
+            "why": "Puts real data in your hands so you can see what the methods are actually deciding on."
+          },
+          {
+            "label": "Apply both scoring rules to those rows",
+            "description": "Watch method M compute its weighted combination and baseline B use only the first feature, showing both scores side-by-side for each row.",
+            "why": "Makes the difference between the two methods concrete by showing the numbers they calculate."
+          },
+          {
+            "label": "Change threshold and see prediction counts update",
+            "description": "Move a slider between 0.2 and 0.8 and immediately see how many true positives, false positives, and false negatives each method produces on those ten rows.",
+            "why": "Lets you control the one variable the paper varies and observe the precision-recall tradeoff happen."
+          }
+        ],
+        "paperBasis": {
+          "evidenceIds": [
+            "p1",
+            "p2",
+            "p3",
+            "p5",
+            "p7"
+          ],
+          "reproduce": "Apply the fixed scoring rules (M: 0.7*x1 + 0.3*x2; B: x1) to real evaluation rows and classify using tau, then count true positives, false positives, and false negatives as tau varies from 0.2 to 0.8.",
+          "interrogate": "Vary tau across the paper's 0.2–0.8 range and compare the observable confusion counts (TP/FP/FN) between method M and baseline B on the same evaluation rows.",
+          "extend": "After observing the tradeoff on the full evaluation set, investigate whether the performance difference between M and B holds consistently across different regions of the feature space (e.g., high x1 vs. low x1 subsets).",
+          "limitation": "Using a subset (ten rows) in early subgoals for initial visibility; quantitative precision/recall values and statistical significance are not established by the paper evidence."
+        }
+      },
+      "elapsedSeconds": 58.637
+    },
+    {
+      "id": "biology-dose-response",
+      "domain": "Biology / data science",
+      "source": "FICTIONAL REGRESSION PAPER: Normalized Fluorescence Dose Response. Methods §2: For each well, normalized response is (fluorescence - blank)/(untreated - blank). Figure 2 plots the median normalized response at each drug concentration. Experiment §3 repeats the measurements at 24 and 48 hours and compares the resulting curves. The authors release measurements.csv with concentration, time_hours, replicate, fluorescence, blank and untreated. Recreating the reported analysis requires only the released measurements, not a new wet-lab experiment. The paper does not test other compounds and does not claim a causal molecular mechanism.",
+      "grounding": {
+        "version": 1,
+        "contribution": "The paper presents normalized fluorescence dose-response measurements of a drug at multiple time points (24 and 48 hours), providing the normalization method and releasing the complete dataset to enable reproduction of the reported analysis.",
+        "evidence": [
+          {
+            "id": "p1",
+            "kind": "method",
+            "claim": "Normalized response is calculated by subtracting blank fluorescence and dividing by the untreated control difference",
+            "quote": "normalized response is (fluorescence - blank)/(untreated - blank)",
+            "location": "Methods §2"
+          },
+          {
+            "id": "p2",
+            "kind": "variable",
+            "claim": "The study measures fluorescence as the primary outcome variable, along with blank and untreated control values",
+            "quote": "normalized response is (fluorescence - blank)/(untreated - blank)",
+            "location": "Methods §2"
+          },
+          {
+            "id": "p3",
+            "kind": "result",
+            "claim": "Figure 2 displays median normalized response values plotted against drug concentration",
+            "quote": "Figure 2 plots the median normalized response at each drug concentration",
+            "location": "Methods §2"
+          },
+          {
+            "id": "p4",
+            "kind": "experiment",
+            "claim": "Experiment 3 measures dose-response at two time points (24 and 48 hours) and compares the resulting curves",
+            "quote": "Experiment §3 repeats the measurements at 24 and 48 hours and compares the resulting curves",
+            "location": "Experiment §3"
+          },
+          {
+            "id": "p5",
+            "kind": "dataset",
+            "claim": "The released dataset contains concentration, time points, replicates, and raw fluorescence measurements including controls",
+            "quote": "measurements.csv with concentration, time_hours, replicate, fluorescence, blank and untreated",
+            "location": "Experiment §3"
+          },
+          {
+            "id": "p6",
+            "kind": "artifact",
+            "claim": "The complete measurements are publicly released, enabling computational reproduction without new experiments",
+            "quote": "The authors release measurements.csv with concentration, time_hours, replicate, fluorescence, blank and untreated. Recreating the reported analysis requires only the released measurements, not a new wet-lab experiment.",
+            "location": "Experiment §3"
+          }
+        ],
+        "limits": "The paper does not test additional compounds beyond the single drug studied, does not propose or test causal molecular mechanisms, and does not provide information about sample size, statistical significance, or curve-fitting parameters."
+      },
+      "evidenceFaithful": true,
+      "before": {
+        "title": "Curve Shape Explorer",
+        "what_you_would_make": "You'll make a window where you drag a slider to pick a time point, and it instantly draws the dose-response curve—showing how fluorescence changes as drug concentration increases. Click any dot on the curve to see the actual measurements from all the repeats that went into it.",
+        "uses": [
+          "Released fluorescence measurements"
+        ],
+        "why_it_fits": "The paper's core finding lives in these curves, but right now they're just numbers in a table; you'll make them visible and touchable so you can see what 'dose-response' actually looks like and how the repeats scatter around the pattern.",
+        "first_visible_result": "A window appears with a curve drawn from the real measurements, and moving the time slider redraws it immediately."
+      },
+      "direction": {
+        "title": "Normalize and Compare Time Curves",
+        "what_you_would_make": "You'll build a tool that takes the raw fluorescence measurements and shows you side-by-side curves of how the drug's effect changes with dose at 24 hours versus 48 hours. You can adjust how the blank and untreated controls are used in the calculation and immediately see how sensitive the final curves are to those choices.",
+        "uses": [
+          "Released fluorescence measurements"
+        ],
+        "why_it_fits": "The paper's core contribution is the normalization method and the two-timepoint comparison, which you said you barely understand—this makes that math and its consequences something you can see and manipulate. You'll touch the actual calculation that transforms raw numbers into the paper's main figure, not just read about it.",
+        "first_visible_result": "Two dose-response curves appear on screen, one for each time point, drawn from the normalized data you just calculated.",
+        "paperBasis": {
+          "evidenceIds": [
+            "p1",
+            "p2",
+            "p3",
+            "p4",
+            "p5"
+          ],
+          "reproduce": "Apply the normalization formula (fluorescence - blank)/(untreated - blank) to the released measurements and plot median normalized response against concentration for the 24-hour and 48-hour time points as shown in Figure 2",
+          "interrogate": "Change which replicates contribute to the blank or untreated values (e.g., use mean instead of a single value, exclude an outlier replicate) and observe how the shape and separation of the two time curves shift",
+          "extend": "After seeing how blank/untreated choice affects curve separation, test whether a different normalization denominator (e.g., untreated alone, or fluorescence alone) better separates the time points or reduces replicate variance",
+          "limitation": "Reproduces the normalization and plotting for the single drug studied; does not fit curve parameters or assess statistical significance, which the paper does not provide"
+        }
+      },
+      "subgoals": {
+        "subgoals": [
+          {
+            "label": "Display raw fluorescence values for one concentration",
+            "description": "Load the released measurements and show the fluorescence numbers recorded at a single drug concentration at both time points.",
+            "why": "You need to see what the actual recorded numbers look like before calculating anything from them."
+          },
+          {
+            "label": "Apply the normalization formula to that concentration",
+            "description": "Calculate normalized response using the blank-and-untreated formula from the paper and show the before-and-after numbers side by side.",
+            "why": "This makes the paper's calculation concrete on real data you've already inspected."
+          },
+          {
+            "label": "Compare normalized curves at both time points",
+            "description": "Draw the complete dose-response curve for 24 hours and 48 hours so you can see how the drug effect changes over time.",
+            "why": "This reproduces the paper's comparison and gives you the foundation to test how sensitive the curves are to control choices."
+          }
+        ],
+        "paperBasis": {
+          "evidenceIds": [
+            "p2",
+            "p5",
+            "p1",
+            "p3",
+            "p4"
+          ],
+          "reproduce": "Calculate normalized response (fluorescence - blank)/(untreated - blank) on the released measurements.csv and plot median normalized response against concentration for 24h and 48h time points, reproducing the comparison in Experiment §3 and the plotting approach in Figure 2.",
+          "interrogate": "Adjust how blank and untreated control values are used in the normalization formula (e.g., using replicate-specific vs. averaged controls, or excluding outlier controls) and observe how the resulting dose-response curves shift or change shape at each time point.",
+          "extend": "After observing the 24h vs 48h comparison, test whether the time-dependent difference is consistent across concentration ranges by calculating the ratio of 48h/24h normalized response at each dose, or fit parametric dose-response models to quantify the shift in potency or maximum effect between time points.",
+          "limitation": "The dataset provides only one drug; comparing across compounds is not possible. The paper does not report curve-fitting parameters or statistical tests, so reproduction is limited to calculating normalized values and plotting medians as shown in Figure 2."
+        }
+      },
+      "elapsedSeconds": 63.009
+    }
+  ]
+}

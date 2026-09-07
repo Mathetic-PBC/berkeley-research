@@ -6,7 +6,7 @@ function fromOnboarding(row) {
   const out = [];
   if (row.paper_id) out.push({ id: `paper-${row.paper_id}`, kind: 'paper', name: row.paper_title || row.analysis?.title || 'Research paper',
     status: 'selected', source: { paperId: row.paper_id, objectPath: Storage.paperObjectPath(row.paper_id), url: row.project_url || '' },
-    metadata: { title: row.analysis?.title || row.paper_title || '', summary: row.analysis?.one_liner || '' },
+    metadata: { title: row.analysis?.title || row.paper_title || '', summary: row.analysis?.one_liner || '', ...(row.analysis?.grounding ? {grounding:row.analysis.grounding} : {}) },
     provenance: { onboardingId: row.id || '', selectedBy: 'onboarding' } });
   const a = row.asset_chosen;
   if (a?.type === 'dataset') {
