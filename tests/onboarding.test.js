@@ -885,7 +885,7 @@ test("TutorTrace opens with grounded possibilities, then captures a preference w
   await OB.brainstorm(USER, row, cals, { again: true }, CREDS, db.options);
   await OB.brainstorm(USER, row, cals, { text: "Please keep interviewing me" }, CREDS, db.options);
   assert.equal(seen.length, 2, "ready is terminal, including again and stale submissions");
-  row.asset_chosen = { title: "TutorTrace", type: "dataset" };
+  row.asset_chosen = { title: "TutorTrace", type: "dataset", access: { state: "available", downloadUrl: "https://x.org/tutortrace.csv" } };
   await OB.direction(USER, row, cals, {}, CREDS, db.options);
   const sent = JSON.parse(db.calls.filter(c => c.url.endsWith("/v1/messages")).pop().init.body);
   assert.ok(sent.messages[0].content[0].text.includes(interest), "Direction receives concise interest");
@@ -936,4 +936,34 @@ test("the two-response cap still settles if the final summarizing model call fai
   assert.equal(result.ready, true);
   assert.equal(result.card, "none");
   assert.ok(result.interest, "best available human context survives a failed summary");
+});
+
+test('dataset direction uses a verified simpler fallback and preserves the original access result', async () => {
+  const original = { title:'Clinical records', type:'dataset', description:'Available upon request', links:[],
+    children:[{title:'Official public sample',type:'dataset',links:[{kind:'download',url:'https://data.example/sample.csv'}]}] };
+  const db = fake({model:{direction:{...DIRECTION,uses:['Official public sample']}}});
+  const fetch = db.options.fetchImpl;
+  db.options.fetchImpl = (url,init) => url === 'https://data.example/sample.csv' ? Promise.resolve(new Response('time,event\n1,edit\n',{headers:{'Content-Type':'text/csv'}})) : fetch(url,init);
+  const row = await ready(db,{leveled_status:'done',leveled:{assets:[original]},direction:null});
+  const selected = await OB.chooseAsset(USER,row,{key:'Clinical records'},db.options);
+  assert.equal(selected.asset_chosen.title,'Official public sample');
+  assert.equal(row.leveled.assets[0].access.state,'restricted');
+  assert.equal(selected.asset_chosen.access.state,'available');
+  const result = await OB.direction(USER,row,[],{},CREDS,db.options);
+  assert.deepEqual(result.direction.uses,['Official public sample']);
+  const sent = JSON.parse(db.calls.filter(c=>c.url.endsWith('/v1/messages')).pop().init.body);
+  assert.match(sent.messages[0].content[0].text,/Official public sample/);
+  assert.match(sent.messages[0].content[0].text,/fallbackOf/);
+});
+
+test('dataset-dependent direction and subgoals are gated, while an unrelated direction remains usable',async()=>{
+  const dependent={...DIRECTION,title:'Analyze Events',uses:['Events']};
+  const db=fake({model:{direction:dependent,subgoals:SUBGOALS}});
+  const row=await ready(db,{asset_chosen:{title:'Events',type:'dataset',links:[],access:{state:'checking'}},direction:null});
+  await assert.rejects(OB.direction(USER,row,[],{},CREDS,db.options),{statusCode:409});
+  assert.equal(row.direction,null,'a dependent plan was not persisted');
+  row.direction=dependent;
+  await assert.rejects(OB.subgoals(USER,row,[],{},CREDS,db.options),{statusCode:409});
+  row.direction=DIRECTION;
+  assert.equal((await OB.direction(USER,row,[],{},CREDS,db.options)).direction.title,DIRECTION.title);
 });
