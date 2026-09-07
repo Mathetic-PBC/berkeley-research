@@ -1138,7 +1138,7 @@
     box.appendChild(el("div", "ob-title", "What do you want to build?"));
     var humanDone = (lastCard() && lastCard().ready) || st.turns.filter(function (t) {
       return t.role === "user" && str(t.content).trim() && str(t.content).trim() !== "(skipped those)";
-    }).length >= 2;
+    }).length >= 3;
     var thread = el("div", "ob-bs");
     // Each assistant turn: its prose (if any), then its card. A card that has
     // been answered is drawn again with the answers marked, from the user

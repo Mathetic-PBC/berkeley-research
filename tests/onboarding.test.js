@@ -856,7 +856,7 @@ test("create refuses without a direction, three subgoals, and two rows", async (
   assert.equal(row.status, "open");
 });
 
-test("TutorTrace opens with grounded possibilities, then captures a preference while resources load", async () => {
+test("TutorTrace opens with grounded possibilities, then captures unusually specific intent while resources load", async () => {
   const seen = [];
   const interest = "Interested in repeated failed-run loops as a signal of student struggle.";
   const db = fake({ model: { brainstorm: text => {
@@ -876,7 +876,7 @@ test("TutorTrace opens with grounded possibilities, then captures a preference w
   assert.ok(opening.focus.options.length >= 2 && opening.focus.options.length <= 4);
   assert.match(seen[0], /TutorTrace \(dataset\): Timestamped edits/);
   assert.match(seen[0], /Start by contributing 2–4 grounded possibilities/);
-  const result = await OB.brainstorm(USER, row, cals, { text: "The repeated failure one sounds interesting." }, CREDS, db.options);
+  const result = await OB.brainstorm(USER, row, cals, { text: "I want to visualize repeated failed runs and compare whether progress resumes after help requests." }, CREDS, db.options);
   assert.equal(result.ready, true);
   assert.equal(result.card, "none");
   assert.equal(result.interest, interest);
@@ -891,7 +891,7 @@ test("TutorTrace opens with grounded possibilities, then captures a preference w
   assert.ok(sent.messages[0].content[0].text.includes(interest), "Direction receives concise interest");
 });
 
-test("one genuine ambiguity gets one follow-up, then the persisted two-response cap wins over ready:false", async () => {
+test("three responses end even a nonconvergent interview, and the persisted three-response cap wins over ready:false", async () => {
   const seen = [];
   const db = fake({ model: { brainstorm: text => {
     seen.push(text);
@@ -910,30 +910,64 @@ test("one genuine ambiguity gets one follow-up, then the persisted two-response 
   assert.equal(follow.ready, false);
   assert.equal(follow.questions.items.length, 1);
   assert.equal(follow.say, "");
+  const second = await OB.brainstorm(USER, row, cals, { text: "Visualize the patterns" }, CREDS, db.options);
+  assert.equal(second.ready, false, "two responses leave room for the third dimension");
   const finish = await OB.brainstorm(USER, row, cals, { answers: { ambiguity: "Repeated attempts" } }, CREDS, db.options);
   assert.equal(finish.ready, true);
   assert.equal(finish.card, "none");
   assert.equal(finish.questions, undefined);
   assert.doesNotMatch(finish.say, /\?/);
-  assert.match(seen[2], /Meaningful user responses so far: 2/);
+  assert.match(seen[3], /Meaningful user responses so far: 3/);
   const reopened = await OB.open(USER, {}, db.options);
   assert.equal(reopened.turns.at(-1).card.ready, true);
   await OB.brainstorm(USER, row, cals, { again: true }, CREDS, db.options);
-  assert.equal(seen.length, 3, "opening plus at most two response calls");
+  assert.equal(seen.length, 4, "opening plus at most three response calls");
 });
 
-test("the two-response cap still settles if the final summarizing model call fails", async () => {
+test("the three-response cap still settles if the final summarizing model call fails", async () => {
   let calls = 0;
   const db = fake({ model: { brainstorm: () => {
-    if (++calls === 3) throw new Error("model unavailable");
+    if (++calls === 4) throw new Error("model unavailable");
     return { card: "questions", ready: false, questions: { items: [{ id: "q", type: "free", title: "Which angle?" }] } };
   } } });
   const row = await ready(db, {});
   const cals = db.tables.engelbart_onboarding_calibrations;
   await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
   await OB.brainstorm(USER, row, cals, { text: "Something visual" }, CREDS, db.options);
+  await OB.brainstorm(USER, row, cals, { text: "Compare the patterns" }, CREDS, db.options);
   const result = await OB.brainstorm(USER, row, cals, { text: "Help seeking, especially repeated requests" }, CREDS, db.options);
   assert.equal(result.ready, true);
   assert.equal(result.card, "none");
   assert.ok(result.interest, "best available human context survives a failed summary");
+});
+
+test("Brainstorm gathers material, activity, and inquiry signals without repeatedly narrowing one preference", async () => {
+  const prompts = [];
+  const questions = ["Which part interests you?", "What would you like to do with those sessions?", "What would you like to discover or compare?"];
+  const interest = "Interested in visualizing failed-run loops and comparing progress before and after help requests.";
+  const db = fake({ model: { brainstorm: prompt => {
+    prompts.push(prompt);
+    const i = prompts.length - 1;
+    return i < 3 ? { card: "questions", ready: false, questions: { items: [{ id: "signal", type: "free", title: questions[i] }] } }
+      : { card: "none", ready: true, say: "That gives me enough to propose a direction.", interest };
+  } } });
+  const row = await ready(db, { leveled_status: "running" });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
+  const activity = await OB.brainstorm(USER, row, cals, { text: "Repeated failed runs" }, CREDS, db.options);
+  assert.equal(activity.ready, false, "a topic alone need not end Brainstorm");
+  const inquiry = await OB.brainstorm(USER, row, cals, { text: "Visualize them" }, CREDS, db.options);
+  assert.equal(inquiry.ready, false);
+  assert.notEqual(activity.questions.items[0].title, inquiry.questions.items[0].title);
+  const done = await OB.brainstorm(USER, row, cals, { text: "Compare progress before and after help requests" }, CREDS, db.options);
+  assert.equal(done.ready, true);
+  assert.equal(done.interest, interest);
+  for (const prompt of prompts) {
+    assert.match(prompt, /what part of the material interests/);
+    assert.match(prompt, /what they want to do with it/);
+    assert.match(prompt, /what they would like to discover, change, or compare/);
+    assert.match(prompt, /Never ask multiple questions that merely narrow the same preference/);
+    assert.match(prompt, /Stop earlier only.*unusually specific intent/);
+    assert.match(prompt, /Do not re-ask dimensions already supplied/);
+  }
 });

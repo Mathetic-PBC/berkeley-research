@@ -624,24 +624,24 @@
             var card = {}; if (body.answers) card.answers = body.answers; if (body.pick) card.pick = body.pick; if (body.note) card.note = body.note; if (body.text) card.text = body.text;
             return addTurn(ctx, row, "brainstorm", "", "user", said, Object.keys(card).length ? card : null).then(function (t) { turns.push(t); return false; });
           }
-          return !!(turns.length && turns.filter(function (t) { return t.role === "user" && t.content && t.content.trim() !== "(skipped those)"; }).length < 2);
+          return !!(turns.length && turns.filter(function (t) { return t.role === "user" && t.content && t.content.trim() !== "(skipped those)"; }).length < 3);
         }).then(function (short) {
           if (short) return Object.assign(publicReply(lastAssistant), { leveled_status: row.leveled_status, interest: row.interest || "" });
           var readyAsked = true;
           var rounds = turns.filter(function (t) { return t.role === "user" && String(t.content || "").trim() && t.content.trim() !== "(skipped those)"; }).length;
           var assistants = turns.filter(function (t) { return t.role === "assistant"; }).length;
           var reader = readerOf(row, cals);
-          return ctx.op("model", "brainstorm turn", "sonnet · " + turns.length + " turns of transcript · ready asked: " + readyAsked, modelRequest("sonnet", [{ type: "text", text: promptText("brainstormPrompt", { reader: reader, paper: paperOf(row), assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), readyAsked: readyAsked }, knobs) }], 4096, { key: "brainstormPrompt", prompt: "brainstormPrompt: grounded possibilities, at most one preference question, usually one response and at most two; human readiness is independent of resource fitting" + (readyAsked ? "; also say whether the reader is ready to plan." : "."),
+          return ctx.op("model", "brainstorm turn", "sonnet · " + turns.length + " turns of transcript · ready asked: " + readyAsked, modelRequest("sonnet", [{ type: "text", text: promptText("brainstormPrompt", { reader: reader, paper: paperOf(row), assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), readyAsked: readyAsked }, knobs) }], 4096, { key: "brainstormPrompt", prompt: "brainstormPrompt: grounded possibilities, at most one preference question, three distinct preference signals and at most three responses; human readiness is independent of resource fitting" + (readyAsked ? "; also say whether the reader is ready to plan." : "."),
               context: { reader: reader, paper: paperOf(row), assessment: row.assessment ? { depth: row.assessment.depth, depth_shift: row.assessment.depth_shift, areas: row.assessment.areas.map(function (a) { return a.area + " = " + a.graded_level; }) } : null, brief: row.assets_brief || [], transcript: turns.map(function (t) { return { role: t.role, content: t.content }; }), ready_asked: readyAsked, not_included: "the assets' links and descriptions (only the brief)" } }),
             function () {
               var B = FX.BRAINSTORM;
-              reply = clone(rounds ? B.ready : B.opening);
+              reply = clone(rounds === 0 ? B.opening : rounds === 1 ? B.focus : rounds === 2 ? B.inquiry : B.ready);
               if (knobs.readyGate === "always" && readyAsked) reply.ready = true;
               return reply;
             }, Object.assign(modelMeta("sonnet", { input: 2600 + 120 * turns.length + Math.round(tokens(JSON.stringify(reader))), output: assistants === 0 ? 420 : assistants === 1 ? 300 : 120 }),
-              { why: "human readiness is independent of resources, with a hard cap of two user responses" }))
+              { why: "human readiness is independent of resources, with a hard cap of three user responses" }))
             .then(function () {
-              if (rounds >= 2 || reply.ready || reply.card === "none") {
+              if (rounds >= 3 || reply.ready || reply.card === "none") {
                 if (reply.card !== "none" || !reply.say) reply.say = "Got it — I have enough to propose a direction.";
                 reply.card = "none"; reply.ready = true; delete reply.questions; delete reply.focus;
               } else {

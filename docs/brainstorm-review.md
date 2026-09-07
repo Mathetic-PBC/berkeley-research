@@ -1,17 +1,22 @@
 # Onboarding Brainstorm review
 
-Implemented locally; uncommitted. No claude-plugins files accessed or changed. No Path Agent is introduced. Direction, Subgoals, Todos, grading, asset hunt and paper analysis semantics are unchanged.
+Current policy: usually gather about three complementary preference signals, one question per turn, with a hard cap of three nonempty user responses. Stop earlier only for unusually specific intent that already covers the useful dimensions. Runtime, debugger, simulator and reload guards are synchronized.
 
-## Behavior
+The dimensions are what part of the material interests the student, what they want to do with it, and what they would like to discover, change, or compare. Skip dimensions already covered; do not repeatedly narrow the same preference. Readiness remains independent of resource loading. Direction, Subgoals and Todos retain their existing jobs.
 
-- Grounded opening: 2–4 possibilities from existing context, one preference question.
-- Usually finish after one meaningful preference. Allow one follow-up only for an ambiguity that materially changes Direction.
-- Hard application cap: two nonempty stored user responses (excluding the legacy skip marker). Opening, polling, reload and empty again requests do not count as responses.
-- The second response can receive one final model call to summarize interest, but a nonconvergent or failed call cannot produce another card. A ready conversation stays terminal, even on again or a stale new submission.
-- Readiness never depends on resource-fitting status. The frontend offers Continue immediately, suppresses further cards, and also handles old two-response transcripts whose last ready flag is false. The resource-selection step handles waiting; it still precedes Direction.
-- Skip never calls Brainstorm as filler. Removed the Keep brainstorming/Go on loop.
-- Normalization keeps at most one question-card item and four options. An active card owns the question; extra say prose is suppressed. A ready reply drops its question/focus card.
-- Interest remains a concise 240-character field consumed by the existing Direction call alongside the transcript. Offered choices are now retained in the transcript so references such as “the second option” have context.
+Example (illustrative, not a live model output):
+
+1. Bart offers repeated failure loops, silent stalls and help-seeking patterns. Student: “Repeated failure loops.”
+2. Bart: “What would you like to do with those sessions?” Student: “Visualize them.”
+3. Bart: “What would you like to discover or compare?” Student: “Compare progress before and after help requests.”
+
+Interest: “Interested in visualizing failed-run loops and comparing progress before and after help requests.” Ready is true; no fourth question.
+
+Early-stop example: “I want to visualize repeated failed runs and compare whether progress resumes after help requests.” This already supplies the useful signals, so Bart can finish after one response.
+
+Tests cover three complementary dimensions, the topic-only case continuing, unusually specific intent ending early, a nonconvergent model reaching the three-response cap, final-summary failure, readiness while resources load, reloads and prompt equivalence. Live model wording is unverified; question quality and signal recognition remain model judgments. The three-response application cap is deterministic.
+
+The previous two-response policy has been superseded. Historical prompts below document the earlier review only.
 
 ## Exact old prompt (opening, resources unfinished)
 
@@ -66,70 +71,3 @@ Always return ready. Human context alone determines readiness; background resour
 ```
 
 The readyAsked input and legacy ready-related override slots remain compatible, but their values no longer depend on resource completion. The runtime Brainstorm function renders the canonical template directly. Browser/server template and rendering equivalence tests pass.
-
-## Example conversations for review
-
-These are illustrative/test-fixture conversations, not live Sonnet outputs. Model credentials remain unavailable; no claim of live behavioral evaluation is made.
-
-### TutorTrace: one response
-
-Bart offers one card:
-- Repeated failure loops — repeated runs that still fail.
-- Silent stalls — long pauses after errors.
-- Help-seeking spirals — repeated questions without editor progress.
-
-“Which angle feels worth investigating?”
-
-User: “The repeated failure one sounds interesting.”
-
-Bart: “That points toward failed attempts without progress.”
-
-Result: ready=true, card=none; interest="Interested in repeated failed-run loops as a signal of student struggle."
-
-Continue leads to resources and then Direction. Brainstorm supplies no project title, architecture or implementation sequence.
-
-### Genuine ambiguity: two responses
-
-User: “Both pauses and attempts seem interesting, but for different reasons.”
-
-Bart: “Pauses after errors, or repeated failed attempts?”
-
-User: “Repeated attempts.”
-
-Bart: “Got it — I have enough to propose a direction.”
-
-Result: ready=true, card=none. The regression deliberately makes the model keep ready=false and return two questions; normalization limits the card after the first response, and the application removes it entirely after the second.
-
-### Resources still loading
-
-User: “The repeated failure one sounds interesting.”
-
-Bart reflects the preference and sets ready=true while leveled_status remains running. Continue reaches the resource-loading screen. No Go on, Keep brainstorming, filler question, or additional Brainstorm call is made while waiting.
-
-## Changed files in this pass
-
-- api/_lib/onboarding-prompts.js — canonical short Brainstorm template and unconditional readiness slots.
-- api/_lib/onboarding-model.js — one question, four options, ready reply normalization.
-- api/_lib/onboarding.js — persisted response cap, terminal readiness, interest fallback, offered-choice transcript.
-- engelbart/setup/setup.js — human-ready continuation, legacy cap on reload, no filler/restart buttons.
-- engelbart/setup/test/prompts.js — synchronized template and slots.
-- engelbart/setup/test/sim-backend.js — matching readiness/cap/normalization behavior.
-- engelbart/setup/test/fixture.js — short grounded opening and terminal response fixtures.
-- engelbart/setup/test/debugger.js — updated readyGate description only; preexisting unrelated edits preserved.
-- tests/onboarding.test.js — preference, ambiguity, cap, background loading, summary failure and Direction handoff.
-- tests/onboarding-model.test.js — question/option limits and ready reply cleanup.
-- tests/onboarding-prompts.test.js — readiness and overrides with unfinished resources.
-- tests/setup-page-smoke.test.js — continuation while loading, skip without filler, reload cap.
-- tests/debugger-sim.test.js — simulator convergence and cap independent of fitting.
-- docs/onboarding-harness.md — corrected interaction/readiness documentation.
-- docs/brainstorm-review.md — this review.
-
-## Verification and remaining limits
-
-125 focused tests passed. All 400 tests in the full suite passed with loopback access allowed. JavaScript syntax and git diff --check passed.
-
-The cap is deterministic; recognizing a meaningful preference or genuinely necessary ambiguity on the first response remains a model judgment. A one-item question card can still contain a poorly written compound question: semantic wording quality is governed by the prompt rather than a grammar parser. Model generation has not been evaluated live in this environment.
-
-If the final summary fails or omits interest, the application retains the latest human response as a bounded fallback rather than inventing a proposal; the full transcript still reaches Direction. An ordinal fallback may therefore be less polished than a successful summary. Persisted nonempty user rows define rounds, not model-rated response quality, so even an uncertain response counts toward the cap. No new counter column or migration is needed.
-
-Custom prompt overrides remain supported, but cannot bypass the application response cap or card-size normalization. No commit or merge was performed. Cross-repository installed round-trip and platform gates remain required before merge; setup/browser installation handoff code was not changed in this pass.

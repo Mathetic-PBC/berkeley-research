@@ -94,11 +94,14 @@
         { label: "Misread intentions", why: "Explore where inferred goals differ from what someone meant." },
         { label: "Changing plans", why: "Follow how goals shift during a conversation." }
       ] } },
-    focus: { say: "", card: "focus", interest: "Interested in how inferred goals differ from intended goals", ready: false,
-      focus: { title: "Are you more interested in missed goals or mistaken ones?", options: [
-        { label: "Missed goals", why: "Intentions that were never recognized." },
-        { label: "Mistaken goals", why: "Intentions that were inferred incorrectly." }
+    focus: { say: "", card: "focus", interest: "", ready: false,
+      focus: { title: "What would you like to do with those chats?", options: [
+        { label: "Visualize patterns", why: "Make behavior easier to inspect." },
+        { label: "Test an explanation", why: "Check an idea against recorded behavior." },
+        { label: "Try a change", why: "Investigate how a different approach affects the result." }
       ] } },
+    inquiry: { say: "", card: "questions", interest: "", ready: false,
+      questions: { items: [{ id: "inquiry", type: "free", title: "What would you most like to discover, change, or compare?", placeholder: "A difference or effect you are curious about…" }] } },
     ready: { say: "Got it — I have enough to propose a direction.", card: "none", interest: "", ready: true },
     more: { say: "Got it — I have enough to propose a direction.", card: "none", interest: "", ready: true }
   };

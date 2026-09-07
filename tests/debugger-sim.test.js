@@ -145,7 +145,7 @@ test("vercel serves the debugger and lets only the frame page be embedded, by th
   assert.equal(frame.headers.find((h) => h.key === "X-Frame-Options").value, "SAMEORIGIN");
 });
 
-test("simulated Brainstorm uses human readiness while resources load and obeys the two-response cap", async () => {
+test("simulated Brainstorm uses human readiness while resources load and obeys the three-response cap", async () => {
   const w = browserish(), persist = "brainstorm-cap-test";
   let sim = w.EngelbartSim.create({ emit() {}, speed: 0, persist });
   const call = async body => {
@@ -168,9 +168,12 @@ test("simulated Brainstorm uses human readiness while resources load and obeys t
     { id: "a", type: "free", title: "Which angle?" }, { id: "b", type: "free", title: "Another question?" },
   ] } };
   const next = await call({ action: "brainstorm", text: "Two possibilities appeal to me" });
-  assert.equal(next.questions.items.length, 1);
+  assert.equal(next.card, "focus", "second question probes the intended activity");
   assert.equal(next.ready, false);
-  const capped = await call({ action: "brainstorm", text: "Goal drift" });
+  const inquiry = await call({ action: "brainstorm", text: "Visualize patterns" });
+  assert.equal(inquiry.questions.items.length, 1);
+  assert.equal(inquiry.ready, false);
+  const capped = await call({ action: "brainstorm", text: "Compare before and after help" });
   assert.equal(capped.ready, true);
   assert.equal(capped.card, "none");
   assert.equal(capped.leveled_status, "running");
