@@ -96,3 +96,15 @@ test("overrides are the editable prompts only, as bounded strings that differ fr
   assert.equal(P.sanitizeOverrides({ gradePrompt: "x".repeat(P.OVERRIDE_MAX_CHARS + 1) }), null, "past the bound");
   assert.deepEqual(P.sanitizeOverrides({ gradePrompt: "Grade\r\n{{answer}}", askPrompt: "a", __proto__: { levelPrompt: "inherited" } }), { gradePrompt: "Grade\n{{answer}}", askPrompt: "a" });
 });
+
+test("Brainstorm readiness slots stay available with unfinished resources, including overrides", () => {
+  for (const readyAsked of [false, true]) {
+    const input = { reader, paper, assessment, brief: [], turns, readyAsked };
+    const prompt = P.brainstormPrompt(input);
+    assert.match(prompt, /at most ONE meaningful question/);
+    assert.match(prompt, /NEVER resource fitting/);
+    assert.match(prompt, /"ready": true \| false/);
+    const override = { brainstormPrompt: "{{ready_key}}{{none_rule}}{{ready_line}}" };
+    assert.match(P.render("brainstormPrompt", input, override), /Human context alone determines readiness/);
+  }
+});

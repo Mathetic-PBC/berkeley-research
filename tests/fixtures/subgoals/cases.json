@@ -1,0 +1,119 @@
+[
+  {
+    "id": "stuck-moment-detector",
+    "input": {
+      "reader": {
+        "depth": "everyday",
+        "major": "Education",
+        "knowledge": []
+      },
+      "paper": {
+        "title": "Coding session replay",
+        "one_liner": "Recorded coding events reveal how students work."
+      },
+      "direction": {
+        "title": "Stuck Moment Detector",
+        "what_you_would_make": "Build a tool that identifies stuck/looping moments in real student coding sessions.",
+        "first_visible_result": "A coding session replay highlights possible stuck moments."
+      },
+      "asset": {
+        "title": "TutorTrace coding event logs",
+        "type": "dataset",
+        "description": "Real timestamped edit and run events, grouped by session. The reader has never used these logs."
+      }
+    },
+    "rubric": [
+      "First: Bart selects and shows one real coding session/example; the human is not asked to browse or choose it, and a detector is not required yet.",
+      "Second: one stuck behavior/default rule is demonstrated on that same example.",
+      "Third: the user controls one rule parameter/threshold and immediately sees the changed highlights on that example.",
+      "No initial multi-rule comparison system, cross-student dashboard, clustering/grouping, or aggregate cohort analytics."
+    ]
+  },
+  {
+    "id": "unfamiliar-scientific-dataset",
+    "input": {
+      "reader": {
+        "depth": "everyday",
+        "major": "Design",
+        "knowledge": []
+      },
+      "paper": {
+        "title": "Cell image measurements",
+        "one_liner": "Microscope images show how cell shapes vary."
+      },
+      "direction": {
+        "title": "Cell Shape Explorer",
+        "what_you_would_make": "Build a tool to investigate how a cell segmentation threshold changes measured cell area."
+      },
+      "asset": {
+        "title": "Microscopy image collection",
+        "type": "dataset",
+        "description": "Real microscopy images; the reader has never seen the images or performed segmentation."
+      }
+    },
+    "rubric": [
+      "First: Bart selects one real image or small subset and makes it inspectable before asking the reader to choose analyses.",
+      "Second: show one meaningful segmentation/measurement result using an agent-chosen default on that same image/subset.",
+      "Third: alter one meaningful threshold/variable and show the changed result on that same artifact.",
+      "No prerequisite study, user-selected analysis plan, general image-processing pipeline, or collection-wide analytics."
+    ]
+  },
+  {
+    "id": "software-without-dataset",
+    "input": {
+      "reader": {
+        "depth": "some",
+        "major": "English",
+        "knowledge": []
+      },
+      "paper": {
+        "title": "Plain text editing",
+        "one_liner": "A small editor turns plain text into formatted notes."
+      },
+      "direction": {
+        "title": "Markdown Note Preview",
+        "what_you_would_make": "Build a local note editor where users can see how their Markdown becomes formatted text."
+      },
+      "asset": {
+        "title": "Existing local editor code",
+        "type": "code",
+        "description": "An existing runnable editor repository with a sample note; no external dataset is needed."
+      }
+    },
+    "rubric": [
+      "First: make a concrete part of the existing editor visible/runnable with an agent-selected sample note.",
+      "Second: make one representative Markdown-to-preview workflow work on that same note.",
+      "Third: let the user change/test one meaningful formatting behavior and see the result on that same example.",
+      "No fabricated dataset dependency, prerequisite codebase study, general plugin framework, sync system, or full product feature milestones."
+    ]
+  },
+  {
+    "id": "tutortrace-struggle-explorer",
+    "input": {
+      "reader": {
+        "depth": "everyday",
+        "major": "Education",
+        "knowledge": []
+      },
+      "paper": {
+        "title": "Coding session replay",
+        "one_liner": "Recorded coding events reveal how students work."
+      },
+      "direction": {
+        "title": "Student Struggle Pattern Explorer",
+        "what_you_would_make": "Explore struggle patterns in real TutorTrace coding sessions."
+      },
+      "asset": {
+        "title": "TutorTrace coding event logs",
+        "type": "dataset",
+        "description": "Real timestamped edit and run events, grouped by session. The reader has never used these logs."
+      }
+    },
+    "rubric": [
+      "First: Bart selects and shows one real coding session/example; the human is not asked to browse or choose it, and a detector is not required yet.",
+      "Second: one stuck behavior/default rule is demonstrated on that same example.",
+      "Third: the user controls one rule parameter/threshold and immediately sees the changed highlights on that example.",
+      "No initial multi-rule comparison system, cross-student dashboard, clustering/grouping, or aggregate cohort analytics."
+    ]
+  }
+]

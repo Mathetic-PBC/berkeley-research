@@ -1,0 +1,17 @@
+{
+  "tutortrace": [
+    {"label":"Inspect one student’s session","description":"Inspect one real TutorTrace session chosen by Bart and follow its coding events in time order.","why":"See what the data looks like before deciding what might signal struggle."},
+    {"label":"Highlight one struggle signal","description":"Apply one simple default struggle rule to that same session and mark the moments where it fires.","why":"See what one definition of struggle picks out before trying to refine it."},
+    {"label":"Adjust the struggle rule","description":"Change one time threshold on that same session and check which moments become highlighted or disappear.","why":"Start judging what counts as struggle by seeing the effect of one change."}
+  ],
+  "scientific-dataset": [
+    {"label":"Inspect one microscope image","description":"Inspect one real microscope image chosen by Bart and locate a single cell to examine more closely.","why":"Start with a visible example before deciding how to measure a cell."},
+    {"label":"Measure the cell’s area","description":"Apply a default brightness threshold to outline that cell in the same image and measure its area in pixels.","why":"See what a threshold includes before trying to improve the measurement."},
+    {"label":"Adjust the brightness threshold","description":"Change the brightness threshold for that same cell and compare its new outline and area with the original result.","why":"Judge how one choice affects the measurement on an example you already know."}
+  ],
+  "software-project": [
+    {"label":"Run the editor’s sample note","description":"Open the existing editor with its bundled sample note, ready to inspect the text without setting up the project yourself.","why":"Start with something running before working out how its formatting should behave."},
+    {"label":"Render the sample as Markdown","description":"Render that same sample note as Markdown and check how its heading appears in the formatted result.","why":"See one formatting case work before experimenting with the rules behind it."},
+    {"label":"Test a different heading level","description":"Change the heading level in that same note and check how its appearance changes in the formatted result.","why":"Connect one edit to its effect before trying other formatting behaviors."}
+  ]
+}

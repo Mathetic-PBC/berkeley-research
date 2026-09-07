@@ -144,3 +144,36 @@ test("vercel serves the debugger and lets only the frame page be embedded, by th
   assert.doesNotMatch(csp, /unsafe-(inline|eval)/);
   assert.equal(frame.headers.find((h) => h.key === "X-Frame-Options").value, "SAMEORIGIN");
 });
+
+test("simulated Brainstorm uses human readiness while resources load and obeys the two-response cap", async () => {
+  const w = browserish(), persist = "brainstorm-cap-test";
+  let sim = w.EngelbartSim.create({ emit() {}, speed: 0, persist });
+  const call = async body => {
+    const response = await sim.handle("/api/engelbart-onboarding", { method: "POST", body: JSON.stringify(body) });
+    const out = await response.json();
+    assert.equal(response.ok, true, JSON.stringify(out));
+    return out;
+  };
+  await call({ action: "open" });
+  const db = JSON.parse(w.localStorage.getItem(persist));
+  Object.assign(db.onboardings[0], { analysis_status: "done", analysis: w.EGB_FIXTURE.PAPER, leveled_status: "running", assets_brief: [] });
+  w.localStorage.setItem(persist, JSON.stringify(db));
+  sim = w.EngelbartSim.create({ emit() {}, speed: 0, persist });
+  const first = await call({ action: "brainstorm" });
+  assert.equal(first.card, "focus");
+  assert.equal(first.ready, false);
+  const readyFixture = w.EGB_FIXTURE.BRAINSTORM.ready;
+  // Deliberately nonconvergent model fixture: the application still stops.
+  w.EGB_FIXTURE.BRAINSTORM.ready = { card: "questions", ready: false, questions: { items: [
+    { id: "a", type: "free", title: "Which angle?" }, { id: "b", type: "free", title: "Another question?" },
+  ] } };
+  const next = await call({ action: "brainstorm", text: "Two possibilities appeal to me" });
+  assert.equal(next.questions.items.length, 1);
+  assert.equal(next.ready, false);
+  const capped = await call({ action: "brainstorm", text: "Goal drift" });
+  assert.equal(capped.ready, true);
+  assert.equal(capped.card, "none");
+  assert.equal(capped.leveled_status, "running");
+  assert.equal((await call({ action: "brainstorm", again: true })).turn_id, capped.turn_id);
+  w.EGB_FIXTURE.BRAINSTORM.ready = readyFixture;
+});

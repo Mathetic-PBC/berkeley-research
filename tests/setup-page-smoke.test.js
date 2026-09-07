@@ -141,7 +141,7 @@ function mount(options = {}) {
       if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 7 }; return answer({ assessment: ASSESSMENT }); }
       if (body.action === "leveled") return answer({ leveled_status: "done", leveled: LEVELED, assets_status: "done" });
       if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick || body.again
-        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status, ready: row.leveled_status === "done" }
+        ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status, ready: true }
         : { turn_id: "t1", say: "", card: "questions", leveled_status: row.leveled_status,
             questions: { eyebrow: "first", items: [{ id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math", why: "w" }] }] } });
       if (body.action === "asset_ask") return answer({ answer: "Start with the toy.", turn_id: "a1" });
@@ -265,12 +265,8 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
   page.cta().fire("click");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "Two things you can do on every screen", "the tour sits between Install and Topics");
   assert.equal(page.row().step, 6);
-  assert.ok(one(page.app, "ob-tour-hl") && one(page.app, "ob-tour-regen"), "both demos are drawn");
-  assert.ok(one(one(page.app, "ob-tour-regdemo"), "ob-slider"), "the second demo is the real control's slider");
-  assert.equal(byClass(page.app, "ob-ghost").filter((b) => textOf(b) === "Skip").length, 0, "nothing to skip: one Continue");
-  page.cta().fire("click");
+  assert.doesNotMatch(textOf(page.app), /Two things you can do on every screen/);
   assert.equal(page.title(), "How familiar are you with the paper's concepts?");
 });
 
@@ -532,22 +528,13 @@ test("the brainstorm opens on the card, keeps answered cards as cards, and offer
   assert.equal(byClass(done[0], "ob-cta").length, 0, "an answered card has no buttons");
   assert.doesNotMatch(textOf(page.app), /What drew you\? The math/, "the answer is not repeated as prose");
   assert.match(textOf(page.app), /Angles it is/);
-  assert.equal(one(page.app, "ob-bs-offer"), undefined, "the model was not asked about readiness yet");
-  assert.equal(textOf(page.cta()), "Go on›", "a prose-only turn gets a way to continue");
-  // The fitting finishes; the next turn carries the model's verdict.
-  page.row().leveled_status = "done"; page.row().leveled = LEVELED;
+  assert.ok(one(page.app, "ob-bs-offer"), "human readiness ends the questions while resources load");
+  assert.doesNotMatch(textOf(page.app), /Keep brainstorming|Go on/);
   page.cta().fire("click");
   await settle();
-  assert.equal(page.bodies.filter((b) => b.action === "brainstorm").pop().again, true);
-  assert.ok(one(page.app, "ob-bs-offer"), "ready to plan is offered when the model said ready");
-  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Keep brainstorming").fire("click");
-  assert.equal(one(page.app, "ob-bs-offer"), undefined);
-  page.cta().fire("click");
-  await settle();
-  assert.ok(one(page.app, "ob-bs-offer"), "and offered again after the next turn");
-  page.cta().fire("click");
-  await settle();
-  assert.equal(page.title(), "What do you want to build on?");
+  assert.equal(page.row().step, 8, "the resource step handles waiting");
+  assert.equal(page.actions.filter((a) => a === "brainstorm").length, 2, "no filler model call");
+
 });
 
 test("the main column keeps its scroll across redraws, a sent turn scrolls to the thinking row, and Skip goes to the resources once they are ready", async () => {
@@ -564,11 +551,11 @@ test("the main column keeps its scroll across redraws, a sent turn scrolls to th
 
   const early = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
   await settle();
-  assert.equal(textOf(byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b)))), "Skip");
+  assert.equal(textOf(byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b)))), "Skip to resources");
   byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b))).fire("click");
-  assert.ok(one(early.app, "ob-bs-turn") && find(early.app, (n) => n.attrs["data-thinking"] === "1")[0], "the thinking row is marked for the scroll");
   await settle();
-  assert.equal(early.bodies.filter((b) => b.action === "brainstorm").pop().text, "(skipped those)");
+  assert.equal(early.row().step, 8);
+  assert.equal(early.bodies.filter((b) => b.action === "brainstorm").length, 1, "skipping never asks filler questions");
 });
 
 test("clicking a block offers Ask about this in the gutter, and the button opens the ask panel on that text", async () => {
@@ -818,4 +805,20 @@ test("a member who arrives with a key sees it named in the rail", async () => {
   await settle();
   assert.equal(keyLine(page), "Claude runs on your own Anthropic key (…9zzz)");
   assert.ok(keyLink(page, "Change or remove the key"));
+});
+
+test("reloading an old two-response Brainstorm hides another question even if its stored ready is false", async () => {
+  const question = { card: "questions", ready: false, questions: { items: [{ id: "q", type: "free", title: "Another intake question?" }] } };
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }), turns: [
+    { role: "assistant", content: "(asked) Another intake question?", card: question },
+    { role: "user", content: "Something visual", card: { text: "Something visual" } },
+    { role: "assistant", content: "(asked) Another intake question?", card: question },
+    { role: "user", content: "Repeated attempts", card: { text: "Repeated attempts" } },
+    { role: "assistant", content: "(asked) Another intake question?", card: question },
+  ] });
+  await settle();
+  assert.ok(one(page.app, "ob-bs-offer"));
+  assert.doesNotMatch(textOf(page.app), /\(asked\)/, "stored transcript annotations are not shown as prose");
+  assert.equal(find(page.app, n => n.tagName === "textarea").length, 0, "no unanswered question composer after the cap");
+  assert.equal(page.actions.filter(a => a === "brainstorm").length, 0, "reload does not restart the interview");
 });

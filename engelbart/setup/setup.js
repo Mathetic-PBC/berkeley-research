@@ -70,12 +70,11 @@
       fIdx: 0, fam: {}, fAnswers: {},
       qIdx: 0, goalPick: "", goalOther: "", goalOtherOn: false, todos: [], newTodo: "", projName: "",
       askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null,
-      bs: { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false },   // brainstorm
+      bs: { answers: {}, pick: "", note: "", text: "", thinking: false },   // brainstorm
       as: { open: {}, picked: "" },     // assets
       reg: { open: false, pos: null, busy: false, rewrites: {} },   // the register control: unfolded, pending slider position, in-flight, rewritten text by step
       key: { open: false, text: "", busy: false, err: "" },         // the own-key control: unfolded, what is typed, in-flight, what went wrong
       todoConfirm: -1,                  // the todo row whose × was pressed once
-      tour: false,                      // the one-time tour between Install and Topics
       change: { open: false, text: "", thinking: false, log: [] }                             // direction / subgoals
     },
     busy: "",           // what is being generated, for the indicator
@@ -175,7 +174,7 @@
     st.ui.fam = {}; st.ui.fAnswers = {}; st.ui.fIdx = 0; st.ui.qIdx = 0;
     st.ui.goalPick = ""; st.ui.goalOther = ""; st.ui.goalOtherOn = false; st.ui.todos = []; st.ui.newTodo = ""; st.ui.projName = "";
     st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.draft = "";
-    st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false, planAsked: false };
+    st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false };
     st.ui.as = { open: {}, picked: "", threads: {}, drafts: {}, chatOpen: {}, thinking: {} };
     st.ui.change = { open: false, text: "", thinking: false, log: [] };
     st.turns = [];
@@ -865,7 +864,7 @@
     }
     if (!window.EngelbartInstall) { stepBox(content, count(5), "Install Engelbart on your machine"); return; }
     window.EngelbartInstall.render(content, { variant: "install", code: st.ui.made.code, expiresInSeconds: st.ui.made.expiresInSeconds,
-      onDone: function () { save(6, {}).then(function () { st.ui.tour = true; go(6); }).catch(fail); },
+      onDone: function () { save(6, {}).then(function () { go(6); }).catch(fail); },
       onNewCode: function () { st.ui.made = null; draw(); } });
   }
 
@@ -908,44 +907,8 @@
   // A follow-up row: written for this area, its own question, not answered yet.
   function pendingFollow(i) { return st.cals.filter(function (c) { return Number(c.area_index) === i && !c.answered_at && c.question; })[0] || null; }
 
-  // Between Install and Topics, once: the two things the rest of the page can
-  // do. A short animation, then Continue or Skip.
-  function drawTour(content) {
-    var box = el("div", "ob-step ob-tour");
-    box.appendChild(el("div", "ob-count", "Before the questions"));
-    box.appendChild(el("div", "ob-title", "Two things you can do on every screen"));
-    var demo1 = el("div", "ob-tour-demo"); demo1.appendChild(el("div", "ob-cap", "Ask about anything"));
-    var line = el("p", "ob-tour-line");
-    line.appendChild(el("span", "", "Highlight any words, like "));
-    line.appendChild(el("mark", "ob-tour-hl", "a term you have not met"));
-    line.appendChild(el("span", "", ", and a link appears in the margin."));
-    var ask = el("span", "ob-tour-ask", "Ask about this");
-    demo1.appendChild(ask); demo1.appendChild(line);
-    demo1.appendChild(el("div", "ob-sub", "The answer comes back at your level, and you can ask for it simpler or deeper."));
-    box.appendChild(demo1);
-    var demo2 = el("div", "ob-tour-demo"); demo2.appendChild(el("div", "ob-cap", "Change how technical the page is"));
-    // The control itself, as it opens in the top right, with its slider
-    // dragged one stop up and Regenerate appearing: the same markup the real
-    // one draws, animated by the stylesheet.
-    var demo = attr(attr(el("div", "ob-reg ob-tour-regdemo"), "data-open", "1"), "data-busy", "0");
-    var dhead = el("div", "ob-reg-head"); dhead.appendChild(el("span", "ob-reg-word", "Everyday")); dhead.appendChild(el("span", "ob-reg-x", "×")); demo.appendChild(dhead);
-    var sl = slider({ stops: DEPTHS, pos: 0.25, grid: true, onCommit: function () {} });
-    var nm = sl.children[0] && sl.children[0].children[0];
-    if (nm) { nm.textContent = ""; nm.appendChild(el("span", "ob-tour-name-a", "Everyday")); nm.appendChild(el("span", "ob-tour-name-b", "Technical")); }
-    demo.appendChild(sl);
-    var dacts = el("div", "ob-reg-acts"); dacts.appendChild(el("span", "ob-pill ob-reg-go ob-tour-regen", "Regenerate")); demo.appendChild(dacts);
-    demo2.appendChild(demo);
-    demo2.appendChild(el("div", "ob-sub", "The slider in the top right rewrites what is on the screen at the level you drag it to."));
-    box.appendChild(demo2);
-    var acts = el("div", "ob-actions");
-    acts.appendChild(cta("Continue", false, function () { st.ui.tour = false; draw(); }));
-    box.appendChild(acts);
-    content.appendChild(box);
-  }
-
   function drawTopics(content) {
     var r = st.row;
-    if (st.ui.tour) { drawTour(content); return; }
     if (r.analysis_status === "none" && r.paper_id) {
       // The tab closed between the paper step's sources and its run.
       startReading({ run: true });
@@ -1098,13 +1061,12 @@
     // The stored assistant turn is what it said plus what it asked, one line
     // each; only the prose is shown, the card draws the rest.
     var text = str(turn.content);
-    var cut = text.indexOf("\n(");
-    return turn.role === "assistant" && cut >= 0 ? text.slice(0, cut) : text;
+    return turn.role === "assistant" ? text.split(/(?:^|\n)\((?:asked|offered)\)/)[0] : text;
   }
 
   function sendTurn(body) {
     var bs = st.ui.bs;
-    bs.thinking = true; bs.planAsked = false; st.error = "";
+    bs.thinking = true; st.error = "";
     // Shown at once; the server writes it in the same call. The answers ride
     // on the turn so the answered card can be drawn with them marked.
     var said = [];
@@ -1174,6 +1136,9 @@
     var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(7, "Brainstorm")));
     head.appendChild(el("span", "ob-count", r.leveled_status === "done" ? "resources ready" : "fitting resources to you")); box.appendChild(head);
     box.appendChild(el("div", "ob-title", "What do you want to build?"));
+    var humanDone = (lastCard() && lastCard().ready) || st.turns.filter(function (t) {
+      return t.role === "user" && str(t.content).trim() && str(t.content).trim() !== "(skipped those)";
+    }).length >= 2;
     var thread = el("div", "ob-bs");
     // Each assistant turn: its prose (if any), then its card. A card that has
     // been answered is drawn again with the answers marked, from the user
@@ -1202,18 +1167,14 @@
         row.appendChild(body); thread.appendChild(row);
       }
       var next = st.turns[i + 1], live = latest && !bs.thinking;
-      if (live) { var before = thread.children.length; drawCard(thread, t.card || { card: "none" }, null); if (!say.trim() && thread.children[before]) attr(thread.children[before], "data-latest", "1"); }
+      if (live && !humanDone) { var before = thread.children.length; drawCard(thread, t.card || { card: "none" }, null); if (!say.trim() && thread.children[before]) attr(thread.children[before], "data-latest", "1"); }
       else if (next && next.role === "user") drawCard(thread, t.card || { card: "none" }, next.card || legacyGiven(t.card, next.content));
     });
     if (bs.thinking) { var th = attr(el("div", "ob-bs-turn"), "data-thinking", "1"); th.appendChild(el("span", "ob-bs-who", "claude")); th.appendChild(dots()); thread.appendChild(th); }
     box.appendChild(thread);
     var last = lastCard();
-    // The plan is offered when the model, asked only once the resources were
-    // fitted, said they are ready -- not on a timer and not by this page.
-    if (!bs.thinking && last && last.ready && r.leveled_status === "done" && !bs.planAsked) drawPlanOffer(box);
-    else if (!bs.thinking && last && last.card === "none") {
-      var go_ = el("div", "ob-actions"); go_.appendChild(cta("Go on", false, function () { sendTurn({ again: true }); })); box.appendChild(go_);
-    }
+    // Human readiness ends the conversation; the resource step handles waiting.
+    if (!bs.thinking && last && (humanDone || last.card === "none")) drawPlanOffer(box);
     if (!bs.thinking && (r.leveled_status === "error" || r.assets_status === "error")) {
       var bad = el("div", "ob-grade"); bad.appendChild(el("span", "tag", "Resources"));
       bad.appendChild(el("span", "", (r.assets_status === "error" ? r.assets_error : r.leveled_error) || "Something went wrong finding the resources."));
@@ -1273,13 +1234,9 @@
         else if (given.text && !given.answers) qcard.appendChild(el("div", "ob-bs-said", given.text));
       } else {
         var acts = attr(el("div", "ob-actions"), "data-between", "1");
-        // Skipping once the resources are ready means "enough brainstorming":
-        // it goes on to choosing what to build on. Before that, it asks again.
-        var fitted = st.row.leveled_status === "done";
-        var skip = el("button", "ob-ghost", fitted ? "Skip to resources" : "Skip"); skip.type = "button";
+        var skip = el("button", "ob-ghost", "Skip to resources"); skip.type = "button";
         acts.appendChild(on(skip, "click", function () {
-          if (fitted) { save(8, {}).then(function () { go(8); }).catch(fail); return; }
-          sendTurn({ text: "(skipped those)" });
+          save(8, {}).then(function () { go(8); }).catch(fail);
         }));
         sendBtn = cta("Send answers", !ready(), function () { sendTurn({ answers: bs.answers }); });
         acts.appendChild(sendBtn); qcard.appendChild(acts);
@@ -1316,11 +1273,9 @@
   function drawPlanOffer(box) {
     var card = el("div", "ob-bs-card ob-bs-offer");
     card.appendChild(el("div", "ob-cap", "ready when you are"));
-    card.appendChild(el("div", "ob-question", "Ready to start planning your project?"));
+    card.appendChild(el("div", "ob-question", "Enough to propose a direction."));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
-    var later = el("button", "ob-ghost", "Keep brainstorming"); later.type = "button";
-    acts.appendChild(on(later, "click", function () { st.ui.bs.planAsked = true; draw(); }));
-    acts.appendChild(cta("Yes, let's plan", false, function () { save(8, {}).then(function () { go(8); }).catch(fail); }));
+    acts.appendChild(cta("Continue", false, function () { save(8, {}).then(function () { go(8); }).catch(fail); }));
     card.appendChild(acts); box.appendChild(card);
   }
 

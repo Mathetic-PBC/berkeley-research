@@ -601,7 +601,7 @@
 
     function publicReply(turn) {
       var card = turn && turn.card ? turn.card : { card: "none" };
-      return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split("\n(")[0] : "", card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true };
+      return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split(/(?:^|\n)\((?:asked|offered)\)/)[0] : "", card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true };
     }
     A.brainstorm = function (ctx, row, cals, body) {
       requireOpen(row);
@@ -619,28 +619,39 @@
             said = parts.join("\n"); return { said: said };
           });
         }).then(function () {
+          if (lastAssistant && lastAssistant.card && lastAssistant.card.ready) return true;
           if (said) {
             var card = {}; if (body.answers) card.answers = body.answers; if (body.pick) card.pick = body.pick; if (body.note) card.note = body.note; if (body.text) card.text = body.text;
             return addTurn(ctx, row, "brainstorm", "", "user", said, Object.keys(card).length ? card : null).then(function (t) { turns.push(t); return false; });
           }
-          return !!(turns.length && !body.again);
+          return !!(turns.length && turns.filter(function (t) { return t.role === "user" && t.content && t.content.trim() !== "(skipped those)"; }).length < 2);
         }).then(function (short) {
           if (short) return Object.assign(publicReply(lastAssistant), { leveled_status: row.leveled_status, interest: row.interest || "" });
-          var readyAsked = row.leveled_status === "done";
+          var readyAsked = true;
+          var rounds = turns.filter(function (t) { return t.role === "user" && String(t.content || "").trim() && t.content.trim() !== "(skipped those)"; }).length;
           var assistants = turns.filter(function (t) { return t.role === "assistant"; }).length;
           var reader = readerOf(row, cals);
-          return ctx.op("model", "brainstorm turn", "sonnet · " + turns.length + " turns of transcript · ready asked: " + readyAsked, modelRequest("sonnet", [{ type: "text", text: promptText("brainstormPrompt", { reader: reader, paper: paperOf(row), assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), readyAsked: readyAsked }, knobs) }], 4096, { key: "brainstormPrompt", prompt: "brainstormPrompt: one card at a time about what the reader wants to build; knows the paper's concrete things by name and what the grades found; the opening card comes without a preamble" + (readyAsked ? "; also say whether the reader is ready to plan." : "."),
+          return ctx.op("model", "brainstorm turn", "sonnet · " + turns.length + " turns of transcript · ready asked: " + readyAsked, modelRequest("sonnet", [{ type: "text", text: promptText("brainstormPrompt", { reader: reader, paper: paperOf(row), assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), readyAsked: readyAsked }, knobs) }], 4096, { key: "brainstormPrompt", prompt: "brainstormPrompt: grounded possibilities, at most one preference question, usually one response and at most two; human readiness is independent of resource fitting" + (readyAsked ? "; also say whether the reader is ready to plan." : "."),
               context: { reader: reader, paper: paperOf(row), assessment: row.assessment ? { depth: row.assessment.depth, depth_shift: row.assessment.depth_shift, areas: row.assessment.areas.map(function (a) { return a.area + " = " + a.graded_level; }) } : null, brief: row.assets_brief || [], transcript: turns.map(function (t) { return { role: t.role, content: t.content }; }), ready_asked: readyAsked, not_included: "the assets' links and descriptions (only the brief)" } }),
             function () {
               var B = FX.BRAINSTORM;
-              reply = clone(body.again ? B.more : assistants === 0 ? B.opening : assistants === 1 ? B.focus : assistants === 2 ? B.ready : B.more);
+              reply = clone(rounds ? B.ready : B.opening);
               if (knobs.readyGate === "always" && readyAsked) reply.ready = true;
               return reply;
             }, Object.assign(modelMeta("sonnet", { input: 2600 + 120 * turns.length + Math.round(tokens(JSON.stringify(reader))), output: assistants === 0 ? 420 : assistants === 1 ? 300 : 120 }),
-              { why: readyAsked ? "the fitted list exists, so the model was asked whether the reader is ready to plan" : "the fitted list does not exist yet, so readiness was not asked and the plan cannot be offered" }))
+              { why: "human readiness is independent of resources, with a hard cap of two user responses" }))
             .then(function () {
-              var card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: readyAsked && reply.ready === true };
-              var text = [reply.say]; if (reply.card === "questions") text = text.concat(reply.questions.items.map(function (q) { return "(asked) " + q.title; }));
+              if (rounds >= 2 || reply.ready || reply.card === "none") {
+                if (reply.card !== "none" || !reply.say) reply.say = "Got it — I have enough to propose a direction.";
+                reply.card = "none"; reply.ready = true; delete reply.questions; delete reply.focus;
+              } else {
+                reply.say = "";
+                if (reply.questions) { reply.questions.items = reply.questions.items.slice(0, 1); reply.questions.items.forEach(function (q) { if (q.options) q.options = q.options.slice(0, 4); }); }
+                if (reply.focus) reply.focus.options = reply.focus.options.slice(0, 4);
+              }
+              if (!reply.interest && rounds) reply.interest = row.interest || one(turns.filter(function (t) { return t.role === "user"; }).slice(-1)[0].content, 240);
+              var card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: reply.ready === true };
+              var text = [reply.say]; if (reply.card === "questions") text = text.concat(reply.questions.items.map(function (q) { return "(asked) " + q.title + (q.options ? " Options: " + q.options.map(function (o) { return o.label; }).join(" / ") : ""); }));
               if (reply.card === "focus") text.push("(offered) " + reply.focus.options.map(function (o) { return o.label; }).join(" / "));
               return addTurn(ctx, row, "brainstorm", "", "assistant", text.filter(Boolean).join("\n"), card);
             }).then(function (t) { made = t; var values = { step: Math.max(Number(row.step) || 0, 7) }; if (reply.interest) values.interest = reply.interest; return patchRow(ctx, row, values, "step, interest"); })
@@ -690,7 +701,7 @@
       if (row.subgoals && !feedback && !body.regenerate) return Promise.resolve({ subgoals: row.subgoals });
       var made;
       return ctx.op("model", feedback ? "revise the three pieces" : "break the direction into three pieces", "sonnet · direction, chosen thing, locus/sticky" + (feedback ? ", previous + feedback" : ""),
-        modelRequest("sonnet", [{ type: "text", text: promptText("subgoalsPrompt", { reader: readerOf(row, cals), paper: paperOf(row), direction: row.direction, asset: row.asset_chosen, leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null, previous: feedback ? row.subgoals : null, feedback: feedback }, knobs) }], 4096, { key: "subgoalsPrompt", prompt: "subgoalsPrompt: break the direction into exactly three pieces (label, description, why here), the first small enough to start on" + (feedback ? "; revise the previous three according to the feedback." : "."),
+        modelRequest("sonnet", [{ type: "text", text: promptText("subgoalsPrompt", { reader: readerOf(row, cals), paper: paperOf(row), direction: row.direction, asset: row.asset_chosen, leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null, previous: feedback ? row.subgoals : null, feedback: feedback }, knobs) }], 4096, { key: "subgoalsPrompt", prompt: "subgoalsPrompt: three small human capability gains (label, description, why here): see one real thing, see one idea work, change one meaningful thing; reuse the same artifact and minimize prerequisites; active-verb labels and concise notebook-style descriptions and reasons" + (feedback ? "; revise the previous three according to the feedback." : "."),
               context: { reader: readerOf(row, cals), paper: paperOf(row), direction: row.direction, chosen_asset: row.asset_chosen, locus_and_sticky: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null, previous: feedback ? row.subgoals : undefined, feedback: feedback || undefined, not_included: "the brainstorm transcript" } }),
         function () { made = { subgoals: clone(feedback ? FX.REVISED_SUBGOALS : FX.SUBGOALS) }; return made; }, modelMeta("sonnet", { input: 3000 + tokens(feedback), output: 330 }))
         .then(function () { return feedback ? addTurn(ctx, row, "subgoals", "", "user", feedback, null) : null; })

@@ -97,7 +97,7 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
         : /You are brainstorming with them/.test(text) ? (typeof model.brainstorm === "function" ? model.brainstorm(text) : model.brainstorm)
         : /The thing they are asking about/.test(text) ? model.assetAsk
         : /Choose ONE direction|Revise the direction/.test(text) ? (typeof model.direction === "function" ? model.direction(text) : model.direction)
-        : /exactly three subgoals|Revise the three subgoals/.test(text) ? model.subgoals
+        : /\{"subgoals": \[\{"label":/.test(text) ? model.subgoals
         : /Write the TODO rows for that first piece/.test(text) ? model.todos : model.ask;
       return json({ content: [{ type: "text", text: reply === undefined ? "I could not do that." : JSON.stringify(reply) }] });
     }
@@ -709,7 +709,7 @@ test("leveled waits for the hunt, then re-cuts the assets with children and chec
   assert.equal((await OB.leveled(USER, row, cals, {}, null, db.options)).leveled_status, "done");
 });
 
-test("once the resources are fitted the model is asked whether they are ready, and its answer rides on the turn", async () => {
+test("human readiness is returned independently of resource fitting", async () => {
   const asked = [];
   const db = fake({ model: { brainstorm: (text) => { asked.push(text); return { say: "You have enough to start.", card: "none", interest: "timing", ready: true }; } } });
   const row = await ready(db, { leveled_status: "done" });
@@ -733,7 +733,7 @@ test("a brainstorm turn stores both sides, carries the card, and keeps the inter
   const cals = db.tables.engelbart_onboarding_calibrations;
   const first = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
   assert.equal(first.card, "questions");
-  assert.equal(first.say, "What drew you here?");
+  assert.equal(first.say, "", "the card asks the one question");
   assert.match(asked[0], /Pose viewer \(demo\): views poses/, "the brief is in the prompt");
   assert.equal(db.tables.engelbart_onboarding_turns.length, 1, "the opening turn is the model's alone");
   const repeat = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
@@ -748,9 +748,9 @@ test("a brainstorm turn stores both sides, carries the card, and keeps the inter
   assert.deepEqual(turns.map((t) => t.role), ["assistant", "user", "assistant"]);
   assert.deepEqual(turns[1].card, { answers: { drew: "The math" } }, "the user turn keeps the answers beside the text");
   assert.equal(turns[2].card.card, "focus");
-  // Readiness is the model's call, and only asked for once the resources are fitted.
+  // A genuinely ambiguous reply may ask once more, even while resources load.
   assert.match(asked[0], /opening turn/);
-  assert.doesNotMatch(asked[1], /"ready"/, "not asked while the resources are still being fitted");
+  assert.match(asked[1], /"ready"/, "readiness is always available");
   assert.equal(second.ready, false);
   assert.equal(turns[2].card.ready, false);
   const opened = await OB.open(USER, {}, db.options);
@@ -854,4 +854,86 @@ test("create refuses without a direction, three subgoals, and two rows", async (
   row.subgoals = SUBGOALS.subgoals; row.todos = ["a"];
   await assert.rejects(OB.create(USER, row, [], {}, db.options), /two todos/);
   assert.equal(row.status, "open");
+});
+
+test("TutorTrace opens with grounded possibilities, then captures a preference while resources load", async () => {
+  const seen = [];
+  const interest = "Interested in repeated failed-run loops as a signal of student struggle.";
+  const db = fake({ model: { brainstorm: text => {
+    seen.push(text);
+    return seen.length === 1 ? { say: "What have you built before?", ready: false, card: "focus", focus: {
+      title: "Which angle feels worth investigating?", options: [
+        { label: "Repeated failure loops", why: "Repeated runs that still fail." },
+        { label: "Silent stalls", why: "Long pauses after errors." },
+        { label: "Help-seeking spirals", why: "Repeated questions without editor progress." },
+      ] } } : { say: "That points toward failed attempts without progress.", ready: true, card: "none", interest };
+  }, direction: DIRECTION } });
+  const row = await ready(db, { leveled_status: "running", assets_brief: [{ title: "TutorTrace", type: "dataset", one_liner: "Timestamped edits, failed runs, and help requests." }] });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const opening = await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
+  assert.equal(opening.card, "focus");
+  assert.equal(opening.say, "", "no extra prose question");
+  assert.ok(opening.focus.options.length >= 2 && opening.focus.options.length <= 4);
+  assert.match(seen[0], /TutorTrace \(dataset\): Timestamped edits/);
+  assert.match(seen[0], /Start by contributing 2–4 grounded possibilities/);
+  const result = await OB.brainstorm(USER, row, cals, { text: "The repeated failure one sounds interesting." }, CREDS, db.options);
+  assert.equal(result.ready, true);
+  assert.equal(result.card, "none");
+  assert.equal(result.interest, interest);
+  assert.equal(result.leveled_status, "running");
+  assert.match(seen[1], /Repeated failure loops \/ Silent stalls \/ Help-seeking spirals/, "option references can be resolved from the transcript");
+  await OB.brainstorm(USER, row, cals, { again: true }, CREDS, db.options);
+  await OB.brainstorm(USER, row, cals, { text: "Please keep interviewing me" }, CREDS, db.options);
+  assert.equal(seen.length, 2, "ready is terminal, including again and stale submissions");
+  row.asset_chosen = { title: "TutorTrace", type: "dataset" };
+  await OB.direction(USER, row, cals, {}, CREDS, db.options);
+  const sent = JSON.parse(db.calls.filter(c => c.url.endsWith("/v1/messages")).pop().init.body);
+  assert.ok(sent.messages[0].content[0].text.includes(interest), "Direction receives concise interest");
+});
+
+test("one genuine ambiguity gets one follow-up, then the persisted two-response cap wins over ready:false", async () => {
+  const seen = [];
+  const db = fake({ model: { brainstorm: text => {
+    seen.push(text);
+    return { say: "What have you built before?", ready: false, interest: "Interested in pauses and repeated attempts", card: "questions",
+      questions: { items: [
+        { id: "ambiguity", type: "mcq", title: "Pauses after errors, or repeated failed attempts?", options: ["Pauses", "Repeated attempts"] },
+        { id: "extra", type: "free", title: "What should success look like?" },
+      ] } };
+  } } });
+  const row = await ready(db, { leveled_status: "running" });
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
+  await OB.brainstorm(USER, row, cals, { again: true }, CREDS, db.options);
+  assert.equal(seen.length, 1, "empty repeat does not count as a meaningful round or solicit another question");
+  const follow = await OB.brainstorm(USER, row, cals, { text: "Both pauses and attempts seem interesting, but for different reasons." }, CREDS, db.options);
+  assert.equal(follow.ready, false);
+  assert.equal(follow.questions.items.length, 1);
+  assert.equal(follow.say, "");
+  const finish = await OB.brainstorm(USER, row, cals, { answers: { ambiguity: "Repeated attempts" } }, CREDS, db.options);
+  assert.equal(finish.ready, true);
+  assert.equal(finish.card, "none");
+  assert.equal(finish.questions, undefined);
+  assert.doesNotMatch(finish.say, /\?/);
+  assert.match(seen[2], /Meaningful user responses so far: 2/);
+  const reopened = await OB.open(USER, {}, db.options);
+  assert.equal(reopened.turns.at(-1).card.ready, true);
+  await OB.brainstorm(USER, row, cals, { again: true }, CREDS, db.options);
+  assert.equal(seen.length, 3, "opening plus at most two response calls");
+});
+
+test("the two-response cap still settles if the final summarizing model call fails", async () => {
+  let calls = 0;
+  const db = fake({ model: { brainstorm: () => {
+    if (++calls === 3) throw new Error("model unavailable");
+    return { card: "questions", ready: false, questions: { items: [{ id: "q", type: "free", title: "Which angle?" }] } };
+  } } });
+  const row = await ready(db, {});
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  await OB.brainstorm(USER, row, cals, {}, CREDS, db.options);
+  await OB.brainstorm(USER, row, cals, { text: "Something visual" }, CREDS, db.options);
+  const result = await OB.brainstorm(USER, row, cals, { text: "Help seeking, especially repeated requests" }, CREDS, db.options);
+  assert.equal(result.ready, true);
+  assert.equal(result.card, "none");
+  assert.ok(result.interest, "best available human context survives a failed summary");
 });
