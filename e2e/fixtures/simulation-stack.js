@@ -5,7 +5,6 @@ const http = require("node:http");
 const path = require("node:path");
 
 const Onboarding = require("../../api/_lib/onboarding");
-const SetupChat = require("../../api/_lib/setup-chat");
 
 const ROOT = path.resolve(__dirname, "../..");
 const USER = { id: "11111111-1111-1111-1111-111111111111", email: "sim@example.com" };
@@ -66,10 +65,15 @@ function initialOnboarding() {
     },
     interest: "Preserve a research plan across browser, CLI, and Claude Code.",
     asset_chosen: {
-      key: "artifact",
-      title: "The cross-process protocol",
-      description: "The observable messages exchanged by the setup site and local plugin.",
-      links: [{ label: "Protocol fixture", url: "https://example.test/protocol" }],
+      key: "protocol-stand-in", type: "dataset",
+      title: "Synthetic protocol events",
+      description: "A tiny explicit stand-in for testing the cross-process mechanism.",
+      links: [], access: { state: "available", reason: "Bounded synthetic fixture" },
+      inlineCsv: "event,session_id\nedit,session-one\nrun,session-one\n",
+      fallbackOf: { title: "Private protocol traces", key: "private-traces",
+        source: [{ url: "https://example.test/private", label: "Original" }],
+        access: { state: "restricted", reason: "Private research observations" },
+        kind: "synthetic_fallback", reason: "Exercise the mechanism without private observations" },
     },
     direction: {
       title: "Prove browser and Claude share one plan",
@@ -253,7 +257,7 @@ class SimulationStack {
         this.row.status = "created";
         this.row.step = 12;
         this.row.pending_setup_id = "44444444-4444-4444-4444-444444444444";
-        this.pendingSetup = SetupChat.normalizePayload(Onboarding.toPayload(this.row, []));
+        this.pendingSetup = Onboarding.toPayload(this.row, []);
         return send(response, 200, {
           ok: true,
           pending_setup_id: this.row.pending_setup_id,

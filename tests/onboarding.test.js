@@ -846,6 +846,24 @@ test("create maps the direction and its pieces to the payload: one goal, three s
   assert.deepEqual(normalized.subgoals[0].todos, ["Draw one pose", "Label angles"]);
 });
 
+test("create persists the selected dataset and actual paper resource references", async () => {
+  const db = fake();
+  const row = await ready(db, { direction: DIRECTION, subgoals: SUBGOALS.subgoals,
+    todos: ["Inspect one pose", "Compare two angles"], project_name: "resource-handoff",
+    asset_chosen: { key: "poses", type: "dataset", title: "Public poses",
+      links: [{kind: "download", url: "https://example.org/poses.csv"}],
+      access: {state: "available", downloadUrl: "https://example.org/poses.csv"} } });
+  await OB.create(USER, row, [], {}, db.options);
+  const payload = db.rpcs.find(r => r.name === "engelbart_save_pending_setup").body.p_payload;
+  assert.equal(payload.resources.length, 2);
+  assert.equal(payload.resources[0].kind, "paper");
+  assert.equal(payload.resources[0].source.paperId, PAPER);
+  assert.ok(payload.resources[0].source.objectPath.endsWith(".pdf"));
+  assert.equal(payload.resources[1].name, "Public poses");
+  assert.equal(payload.resources[1].source.url, "https://example.org/poses.csv");
+  assert.equal(payload.resources[1].source.gated, false);
+});
+
 test("create refuses without a direction, three subgoals, and two rows", async () => {
   const db = fake();
   const row = await ready(db, { direction: null, subgoals: null, todos: ["a", "b"], project_name: "p" });
