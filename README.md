@@ -124,7 +124,12 @@ SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... RUN_ID=<onboarding id> npm run ve
 
 ## Debugger
 
-`/engelbart/setup/test` runs the real setup page (`setup.js`, `install.js`,
+`/engelbart/setup/test` defaults to **Live**: the normal setup page and backend,
+using the signed-in member's uploaded PDF, inputs, model calls, and results.
+The inspector shows recorded requests and responses. Sign-in and model credit
+work just as they do at `/engelbart/setup`; uploads and progress are real.
+
+`/engelbart/setup/test?mode=sim` runs the real setup page (`setup.js`, `install.js`,
 `setup.css`, unmodified) in a frame against a simulated control plane that
 lives entirely in the browser, and draws beside it every request the page
 makes and every operation the simulated server runs to answer it: the auth
@@ -149,9 +154,9 @@ Data flow view and the Prompts view on the right. The Prompts view groups the
 run's model calls by the prompt each sent (a tab per prompt, in the order the
 reader meets them, edited prompts marked) and shows each call's message as the
 model received it and the reply as parsed, with the rest of the call one click
-away in the request list. **Simulated**, the plain URL, is the
+away in the request list. **Simulated** (`?mode=sim`) is the
 simulator above: it shows what the server is designed to do for each press,
-not what production did. **Real** (`/engelbart/setup/test?mode=real`) puts
+not what production did. **Real** (the plain URL, or `?mode=real`) puts
 the same setup page in the same frame against the real endpoints, signed in
 as you (the frame uses your real Supabase session; nothing is intercepted),
 and draws beside it what the server actually did. Nothing in the page

@@ -128,7 +128,7 @@ function page(options = {}) {
     // Trace re-reads wait seconds between tries; those timers are held so a test can run them at once.
     setTimeout: (fn, ms) => { if (ms >= 500) { timers.held.push(fn); return -1; } return setTimeout(fn, ms); }, clearTimeout,
     localStorage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) },
-    location: { origin: ORIGIN, search: options.search || "?test=true", href: ORIGIN + "/engelbart/setup/test" },
+    location: { origin: ORIGIN, search: options.search ?? (options.mode === "real" ? "?test=true" : "?mode=sim&test=true"), href: ORIGIN + "/engelbart/setup/test" },
     document: { getElementById: () => ({ innerHTML: "" }), createElement: () => ({ style: {}, remove() {} }), body: { appendChild() {}, style: {} }, addEventListener() {} },
     addEventListener: (type, fn) => { listeners[type] = fn; }, removeEventListener: () => {},
     confirm: () => true, navigator: {},
@@ -178,7 +178,7 @@ test("the URL decides the mode; Real mode never hands the frame the product's te
   assert.equal(S.d.renderVals().isDashboard, true, "Simulated mode lands on the environments dashboard");
   S.d.createEnv("Lab"); await settle();
   const VS = S.d.renderVals();
-  assert.match(VS.frameSrc, /^\/engelbart\/setup\/test\/frame\?env=env-[a-z0-9]+&test=true$/, "Simulated mode still passes the test switch through");
+  assert.match(VS.frameSrc, /^\/engelbart\/setup\/test\/frame\?mode=sim&env=env-[a-z0-9]+&test=true$/, "Simulated mode still passes the test switch through");
   const sbar = texts(S.d.renderTopBar(VS));
   assert.ok(sbar.includes("Reset test environment") && !sbar.includes("real actions") && !sbar.includes("Real"));
   assert.equal(S.server.telemetry().length, 0, "the simulator never reads telemetry");
@@ -204,7 +204,7 @@ test("Simulated mode lands on the environments dashboard: no frame and no simula
   assert.ok(copy.includes("New environment"));
   assert.ok(copy.includes("No environments yet. Create one to open the product against a fresh simulated account."), "the empty state");
   const bar = texts(P.d.renderTopBar(V));
-  same(bar.filter(Boolean), ["Engelbart"], "the wordmark alone, as designed: no mode toggle");
+  same(bar.filter(Boolean), ["Engelbart", "Simulated · fixed sample results"], "the backend mode is visible");
   assert.ok(!bar.includes("Reset test environment") && !bar.includes("switch environment"), "no environment controls on the dashboard");
   // New environment: the popup in "new" mode; Create makes the environment and opens it.
   V.newEnv(); await flush();
@@ -219,7 +219,7 @@ test("Simulated mode lands on the environments dashboard: no frame and no simula
   assert.equal(envs.length, 1);
   assert.equal(envs[0].name, "Physics major");
   assert.equal(P.d.state.envId, envs[0].id);
-  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?env=" + envs[0].id + "&test=true", "the frame runs against this environment's simulated account");
+  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?mode=sim&env=" + envs[0].id + "&test=true", "the frame runs against this environment's simulated account");
   tree = P.d.render();
   assert.equal(find(tree, (n) => n.type === "iframe").length, 1);
   assert.equal(find(tree, (n) => n.props && n.props["data-screen-label"] === "Environments").length, 0);
@@ -305,7 +305,7 @@ test("the dashboard's cards: most recently opened first, saying when, how the pa
   P.d.renderVals().envCards[0].open(); await flush();
   V = P.d.renderVals();
   same([V.isDashboard, P.d.state.envId], [false, "env-a"]);
-  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?env=env-a&test=true");
+  assert.equal(V.frameSrc, "/engelbart/setup/test/frame?mode=sim&env=env-a&test=true");
   assert.ok(JSON.parse(P.store.get("egb.debugger.envs.v1"))[0].lastUsedAt > opened, "opening is what Last opened means");
   V.envSelect({ target: { value: "__all" } }); await flush();
   V = P.d.renderVals();
@@ -605,7 +605,7 @@ test("the run picker opens an earlier run in the same panel and comes back to th
 
 test("each mode keeps its own state and the URL says which one runs: a Real session leaves the simulator's environment alone, and a stored choice from an earlier build moves nothing", async () => {
   const P = page({ seed: { "egb.debugger.mode": "real" } });
-  assert.equal(P.d.isReal(), false, "the stored choice is ignored: the plain URL is the simulator");
+  assert.equal(P.d.isReal(), false, "the stored choice is ignored: the explicit simulator URL selects fixtures");
   assert.equal(P.d.renderVals().isDashboard, true);
   P.d.createEnv("Lab"); await settle();
   P.send({ egb: "ready", speed: 1, mode: "sim" });
@@ -645,7 +645,7 @@ test("each mode keeps its own state and the URL says which one runs: a Real sess
   assert.equal(R.stages().length, 4, "a simulator event means nothing to Real mode");
   assert.equal(R.store.get("egb.debugger.env." + envId), saved, "the environment's saved state is as the simulator left it");
 
-  // And at the plain URL again: the environment opens with its tab as it was.
+  // And at the simulator URL again: the environment opens with its tab as it was.
   const S = page({ seed: Object.fromEntries(R.store) });
   assert.equal(S.d.isReal(), false);
   S.d.openEnv(envId); await flush();
@@ -867,4 +867,14 @@ test("in Real mode the Prompts view reads each call's request and reply from its
   call.open(); await flush();
   same([P.d.state.view, P.d.state.sel.op], ["requests", MODEL_OP]);
   assert.equal(P.d.inspectorVM().name, "model.analysis");
+});
+
+test("the plain test link and unknown modes use live uploads, never fixture environments", async () => {
+  for (const search of ["", "?test=true", "?mode=unknown"]) {
+    const P = page({ search, seed: { "egb.debugger.mode": "sim" } });
+    assert.equal(P.d.isReal(), true);
+    assert.equal(P.d.renderVals().frameSrc, "/engelbart/setup/test/frame?mode=real");
+    assert.ok(texts(P.d.renderTopBar(P.d.renderVals())).includes("Live · your uploads and model results"));
+    await settle();
+  }
 });
