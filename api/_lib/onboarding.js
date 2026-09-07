@@ -1036,7 +1036,10 @@ function toPayload(row, calibrations) {
     payload.provenance = { papers: [{ paper_id: row.paper_id, title: paper.title }],
       idea: { title: label, inspired: paper.title } };
   }
-  return payload;
+  // Normalize the plan, then retain the resource manifest built from the
+  // trusted onboarding row. The generic chat payload boundary predates
+  // resources and deliberately does not accept client-supplied artifacts.
+  return { ...SetupChat.normalizePayload(payload), resources: payload.resources };
 }
 
 // The reader's profile in the workspace. Its table ships on its own schedule,
@@ -1077,7 +1080,7 @@ async function create(user, row, calibrations, body, options = {}) {
     reads: ["profile", "analysis", "calibrations", "paper", "links", "interest", "chosen", "direction", "subgoals", "todos"], writes: ["payload"],
     attributes: { "engelbart.payload.subgoals": Array.isArray(row.subgoals) ? row.subgoals.length : 0,
       "engelbart.payload.todos": Array.isArray(row.todos) ? row.todos.length : 0, "engelbart.payload.has_paper": Boolean(row.paper_id) } }, async (op) => {
-    const out = SetupChat.normalizePayload(toPayload(row, calibrations));
+    const out = toPayload(row, calibrations);
     op.snapshot("processing_output", out);
     return out;
   });

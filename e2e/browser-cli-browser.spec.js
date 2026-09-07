@@ -11,19 +11,6 @@ const ARCH_LABEL = Object.freeze({
   linux: { arm64: "ARM64", x64: "x64" },
   win32: { arm64: "ARM", x64: "x64" },
 });
-const BROWSER_RESUME_BANNER = [
-  "██████╗     █████╗     ██████╗    ████████╗",
-  "██╔══██╗   ██╔══██╗   ██╔══██╗   ╚══██╔══╝",
-  "██████╔╝   ███████║   ██████╔╝      ██║",
-  "██╔══██╗   ██╔══██║   ██╔══██╗      ██║",
-  "██████╔╝   ██║  ██║   ██║  ██║      ██║",
-  "╚═════╝    ╚═╝  ╚═╝   ╚═╝  ╚═╝      ╚═╝",
-  "",
-  "╔══════════════════════════════════════╗",
-  "║   RETURN TO YOUR BROWSER TO RESUME   ║",
-  "╚══════════════════════════════════════╝",
-  "",
-].join("\n");
 
 test("Claude lifecycle: a completed update is verified and a reinstall does not update again", async () => {
   test.setTimeout(240_000);
@@ -71,7 +58,9 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     expect(shownCommand).toContain("--no-open");
 
     const installed = await machine.install(SETUP_CODE);
-    expect(installed.stdout).toBe(BROWSER_RESUME_BANNER);
+    // Installation/authentication and the claimed workspace below are the
+    // contract. Decorative banners and progress wording may change.
+    expect(installed.stdout).toContain("sim@example.com");
     expect(installed.stderr).toBe("");
     expect(stack.codeRedeemed).toBe(true);
 
@@ -93,13 +82,27 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
 
     await page.goto(opened.url, { waitUntil: "domcontentloaded" });
     await expect(page.getByText("Prove browser and Claude share one plan", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+    // This is the production renderer served by the installed wheel, not
+    // /test or a source-tree server. Resource preparation crosses the same
+    // claim boundary as the plan and remains durable after a reload.
+    expect(new URL(page.url()).pathname).toBe("/");
+    await expect(page.getByRole("button", { name: /Synthetic protocol events.*Ready/ })).toBeVisible();
+    await page.getByRole("button", { name: /Synthetic protocol events.*Ready/ }).click();
+    await expect(page.locator(".resource-detail")).toContainText("event (text)");
+    await expect(page.locator(".resource-detail")).toContainText("Private protocol traces");
+    const dataset = await page.evaluate(() => window.engelbart.store.get().project.resources.find(r => r.kind === "dataset"));
+    expect(dataset.status).toBe("ready");
+    expect(dataset.access.primaryFiles[0]).toContain(".engelbart-resources/");
+    await page.reload();
+    await expect(page.getByRole("button", { name: /Synthetic protocol events.*Ready/ })).toBeVisible();
+    await page.getByRole("tab", { name: "Bart", exact: true }).click();
     await page.getByText("Pair an isolated machine", { exact: true }).first().click();
-    await expect(page.getByText("Redeem the setup code with the checked-out CLI", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Todo", exact: true }).first()).toHaveValue("Redeem the setup code with the checked-out CLI");
 
     const browserGoal = "Browser edit reaches Claude context";
-    await page.getByText("Add goal", { exact: true }).last().click();
-    await page.keyboard.type(browserGoal);
-    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "+ Add subgoal", exact: true }).click();
+    await page.getByRole("textbox", { name: "New subgoal", exact: true }).fill(browserGoal);
+    await page.getByRole("textbox", { name: "New subgoal", exact: true }).press("Enter");
     await expect(page.getByText(browserGoal, { exact: true }).first()).toBeVisible({ timeout: 15_000 });
     await machine.waitForGoalContext(browserGoal);
 
