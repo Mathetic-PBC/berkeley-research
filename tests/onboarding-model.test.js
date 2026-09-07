@@ -235,10 +235,10 @@ test("a brainstorm turn is prose plus at most one card; a direction needs a titl
       { id: "b", type: "select_all", title: "one option only", options: ["x"] },
       { type: "open", title: "Tell me", placeholder: "the story…" }, { title: "" }, { id: "e", type: "free", title: "fourth" }] } });
   assert.equal(q.card, "questions");
-  assert.equal(q.questions.items.length, 3);
+  assert.equal(q.questions.items.length, 1);
+  assert.equal(q.say, "", "the card is the only question");
   assert.equal(q.questions.items[0].options[1].why, "w");
-  assert.equal(q.questions.items[1].type, "free", "a choice with one option becomes a line");
-  assert.equal(q.questions.items[2].id, "q3");
+
   assert.equal(q.interest, "poses");
   const f = OM.normalizeBrainstorm({ say: "", card: "focus", focus: { title: "Which?", options: [{ label: "A" }, { label: "B" }] } });
   assert.equal(f.card, "focus");
@@ -312,9 +312,9 @@ test("planning prompts put an agent-executable GUI before human input choices", 
   const subgoals = P.subgoalsPrompt({ reader, paper,
     direction: { title: "Clip annotator", what_you_would_make: "Upload and annotate a video." },
     asset: resources[0], leveled: {}, previous: null, feedback: "" });
-  assert.match(subgoals, /smallest runnable technical vertical slice/);
-  assert.match(subgoals, /tiny bundled or synthetic fixture/);
-  assert.match(subgoals, /A representative study video is chosen/);
+  assert.match(subgoals, /next three footholds/);
+  assert.match(subgoals, /small real subset\/example/);
+  assert.match(subgoals, /agent selects a small real example/);
 
   const todos = P.todosPrompt({ reader, paper,
     direction: { title: "Clip annotator", what_you_would_make: "Upload and annotate a video." },
@@ -346,4 +346,15 @@ test("with ENGELBART_ANTHROPIC_API_KEY set, the request goes straight to Anthrop
   assert.equal(body.model, "claude-sonnet-4-5-20250929");   // a dated id Anthropic itself answers to
   assert.equal(body.max_tokens, 8192);
   assert.equal(body.messages[0].content[1].type, "document");
+});
+
+test("Brainstorm bounds choices and removes questions from a ready reply", () => {
+  const focus = OM.normalizeBrainstorm({ say: "And what have you built?", card: "focus", focus: { title: "Which angle?", options: ["A", "B", "C", "D", "E"] } });
+  assert.equal(focus.focus.options.length, 4);
+  assert.equal(focus.say, "");
+  const settled = OM.normalizeBrainstorm({ ...focus, ready: true, interest: "Interested in repeated attempts" });
+  assert.equal(settled.card, "none");
+  assert.equal(settled.focus, undefined);
+  assert.doesNotMatch(settled.say, /\?/);
+  assert.equal(OM.normalizeBrainstorm({ ready: true, card: "none", interest: "Visual explanations" }).ready, true);
 });

@@ -563,7 +563,7 @@ function userTurnText(body, lastCard) {
 
 function assistantTurnText(reply) {
   const parts = [reply.say];
-  if (reply.card === "questions") parts.push(...reply.questions.items.map((q) => `(asked) ${q.title}`));
+  if (reply.card === "questions") parts.push(...reply.questions.items.map((q) => `(asked) ${q.title}${q.options ? " Options: " + q.options.map((o) => o.label).join(" / ") : ""}`));
   if (reply.card === "focus") parts.push(`(offered) ${reply.focus.options.map((o) => o.label).join(" / ")}`);
   return parts.filter(Boolean).join("\n");
 }
@@ -573,25 +573,42 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
   if (row.analysis_status !== "done") throw fail("The paper is still being read", 409);
   const turns = await turnsOf(row, "brainstorm", "", options);
   const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");
+  // A settled conversation stays settled across polling, reloads, and again.
+  if (lastAssistant && lastAssistant.card && lastAssistant.card.ready) {
+    return { ...publicReply(lastAssistant), leveled_status: row.leveled_status, interest: row.interest || "" };
+  }
   const said = userTurnText(body, lastAssistant && lastAssistant.card);
   if (said) {
     // The answers ride along with the text, so the page can redraw the card
     // they answered with their choices marked instead of a flattened line.
     const made = await addTurn(user, row, "brainstorm", "", "user", said, userTurnCard(body), options);
     turns.push(made);
-  } else if (turns.length && !(body && body.again)) {
+  } else if (turns.length && turns.filter((t) => t.role === "user" && t.content && t.content.trim() !== "(skipped those)").length < 2) {
     // Nothing new to say and a conversation already open: the last card
     // stands, so hand it back rather than ask the model to repeat itself.
     return { ...publicReply(lastAssistant), leveled_status: row.leveled_status, interest: row.interest || "" };
   }
-  // Whether they are ready to plan is the model's call, and it is only asked
-  // once the fitted resources exist: a plan before them would be premature
-  // whatever the conversation says.
-  const readyAsked = row.leveled_status === "done";
-  const reply = await OM.brainstorm({ reader: readerOf(row, calibrations), paper: paperOf(row),
-    assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })),
-    readyAsked }, credentials, options);
-  const card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: readyAsked && reply.ready === true };
+  const responses = turns.filter((t) => t.role === "user" && String(t.content || "").trim() && t.content.trim() !== "(skipped those)");
+  const capped = responses.length >= 2;
+  // One final model call can summarize the second response, but cannot ask a
+  // third question. Older overlong transcripts settle without another call.
+  let reply;
+  try {
+    reply = capped && !said ? { card: "none", ready: true } : await OM.brainstorm({
+      reader: readerOf(row, calibrations), paper: paperOf(row), assessment: row.assessment,
+      brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })), readyAsked: true,
+    }, credentials, options);
+  } catch (error) {
+    if (!capped) throw error;
+    reply = { card: "none", ready: true };
+  }
+  const settled = capped || reply.ready === true || reply.card === "none";
+  if (settled) {
+    if (reply.card !== "none" || !reply.say) reply.say = "Got it — I have enough to propose a direction.";
+    reply.card = "none"; delete reply.questions; delete reply.focus;
+  }
+  if (!reply.interest && responses.length) reply.interest = one(responses[responses.length - 1].content, 240) || row.interest || "";
+  const card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: settled };
   const made = await addTurn(user, row, "brainstorm", "", "assistant", assistantTurnText(reply), card, options);
   const values = { step: Math.max(Number(row.step) || 0, STEP.brainstorm) };
   if (reply.interest) values.interest = reply.interest;
@@ -601,7 +618,7 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
 
 function publicReply(turn) {
   const card = turn && turn.card ? turn.card : { card: "none" };
-  return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split("\n(")[0] : "",
+  return { turn_id: turn ? turn.id : null, say: turn ? String(turn.content || "").split(/(?:^|\n)\((?:asked|offered)\)/)[0] : "",
     card: card.card || "none", questions: card.questions, focus: card.focus, ready: card.ready === true };
 }
 

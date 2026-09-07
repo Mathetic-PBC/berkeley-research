@@ -539,7 +539,7 @@ function normalizeOptions(value) {
 
 function normalizeBrainstorm(raw) {
   if (!raw || typeof raw !== "object") return null;
-  const say = long(raw.say, 1500);
+  const say = long(raw.say, 500);
   const out = { say, card: "none", interest: one(raw.interest, 240), ready: raw.ready === true };
   if (raw.card === "questions" && raw.questions && typeof raw.questions === "object") {
     const items = (Array.isArray(raw.questions.items) ? raw.questions.items : []).map((q, i) => {
@@ -549,18 +549,26 @@ function normalizeBrainstorm(raw) {
       const type = QUESTION_TYPES.includes(q.type) ? q.type : "free";
       const item = { id: one(q.id, 40) || `q${i + 1}`, type, title, subtitle: one(q.subtitle, 160) };
       if (type === "mcq" || type === "select_all") {
-        item.options = normalizeOptions(q.options);
+        item.options = normalizeOptions(q.options).slice(0, 4);
         if (item.options.length < 2) { item.type = "free"; delete item.options; }
       }
       if (item.type === "free" || item.type === "open") item.placeholder = one(q.placeholder, 120);
       return item;
-    }).filter(Boolean).slice(0, 3);
+    }).filter(Boolean).slice(0, 1);
     if (items.length) { out.card = "questions"; out.questions = { eyebrow: one(raw.questions.eyebrow, 40), items }; }
   } else if (raw.card === "focus" && raw.focus && typeof raw.focus === "object") {
-    const options = normalizeOptions(raw.focus.options);
+    const options = normalizeOptions(raw.focus.options).slice(0, 4);
     if (options.length >= 2) { out.card = "focus"; out.focus = { title: one(raw.focus.title, 200), options }; }
   }
-  if (!say && out.card === "none") return null;
+  if (out.ready) {
+    if (out.card !== "none") out.say = "Got it — I have enough to propose a direction.";
+    out.card = "none"; delete out.questions; delete out.focus;
+    if (!out.say) out.say = "Got it — I have enough to propose a direction.";
+  } else if (out.card !== "none") {
+    // The card carries the one question; prose must not add another.
+    out.say = "";
+  }
+  if (!out.say && out.card === "none") return null;
   return out;
 }
 

@@ -88,24 +88,19 @@
     ]
   };
   var BRAINSTORM = {
-    opening: { say: "", card: "questions", interest: "", ready: false,
-      questions: { eyebrow: "to start", items: [
-        { id: "pull", type: "mcq", title: "Which part of the paper pulled you in?", subtitle: "",
-          options: [{ label: "Reading goals out of a transcript", why: "the inference" }, { label: "Putting the goals back into the agent", why: "the injection" }, { label: "Measuring whether people planned better", why: "the study" }] },
-        { id: "built", type: "select_all", title: "What have you built before?", subtitle: "",
-          options: [{ label: "A command-line tool", why: "" }, { label: "A web page or UI", why: "" }, { label: "A prompt or pipeline that calls a model", why: "" }, { label: "A study with participants", why: "" }] },
-        { id: "end", type: "free", title: "What would you want to see working by the end of the semester?", subtitle: "", placeholder: "one sentence…" }
+    opening: { say: "", card: "focus", interest: "", ready: false,
+      focus: { title: "Which angle would you like to investigate?", options: [
+        { label: "Goal drift", why: "Look for turns in stored chats that stop serving the active goal." },
+        { label: "Misread intentions", why: "Explore where inferred goals differ from what someone meant." },
+        { label: "Changing plans", why: "Follow how goals shift during a conversation." }
       ] } },
-    focus: { say: "Got it. You want the goal tree to be something a person can correct, not just read, and you have shipped something before, so the build itself is not the risk.",
-      card: "focus", interest: "Making inferred goals correctable, not just visible", ready: false,
-      focus: { title: "Where should the project start?", options: [
-        { label: "Catch goals the agent drifted away from", why: "compares what the tree says to what the agent is doing" },
-        { label: "Make a wrong inferred goal easy to fix", why: "edit affordances in the workspace, measured by correction rate" },
-        { label: "Rerun the recall probe with your own sessions", why: "smallest version of the paper's own study" }
+    focus: { say: "", card: "focus", interest: "Interested in how inferred goals differ from intended goals", ready: false,
+      focus: { title: "Are you more interested in missed goals or mistaken ones?", options: [
+        { label: "Missed goals", why: "Intentions that were never recognized." },
+        { label: "Mistaken goals", why: "Intentions that were inferred incorrectly." }
       ] } },
-    ready: { say: "That is a project. The vault traces give you real chats to test against, and the workspace is where the result would show up.",
-      card: "none", interest: "Making inferred goals correctable, not just visible", ready: true },
-    more: { say: "Say what you would want the first version to do on one real chat of yours, and we can narrow it from there.", card: "none", interest: "", ready: false }
+    ready: { say: "Got it — I have enough to propose a direction.", card: "none", interest: "", ready: true },
+    more: { say: "Got it — I have enough to propose a direction.", card: "none", interest: "", ready: true }
   };
   var DIRECTION = {
     title: "Goal drift alarm",
@@ -121,19 +116,19 @@
     why_it_fits: "Offline removes the hook wiring, so the first version is a script over files you already have."
   });
   var SUBGOALS = [
-    { label: "Score one turn against the tree", description: "Given one agent turn from a vault trace and the goal tree, decide which goal, if any, it serves.", why: "Everything else counts these decisions." },
-    { label: "Run the score over a whole session", description: "Walk a stored chat turn by turn and mark where the run of unserved turns starts.", why: "Drift is a run, not a single miss." },
-    { label: "Show the flag in the workspace", description: "Add the amber row to the loopback UI and wire it to the live hook.", why: "Only once the offline version is trusted." }
+    { label: "Inspect one stored chat", description: "Inspect the turns in one real chat chosen by Bart alongside its active goal to follow what happened.", why: "Start with a real conversation before deciding what might count as drift." },
+    { label: "Flag one possible drift", description: "Apply one default alignment check to that same chat and flag three consecutive turns that do not serve its goal.", why: "See what one definition of drift picks out before trying to refine it." },
+    { label: "Adjust the drift threshold", description: "Change the threshold from three turns to five and check which flags remain in that same chat.", why: "Judge the rule by seeing the effect of one change on a familiar example." }
   ];
   var REVISED_SUBGOALS = [
-    { label: "Pick three stored chats", description: "Choose three sessions from the vault with a goal tree already inferred.", why: "The score needs real turns and a tree to score against." },
-    SUBGOALS[0],
-    SUBGOALS[1]
+    { label: "Inspect one chat offline", description: "Inspect a printed sequence of turns from one real chat chosen by Bart alongside its existing active goal.", why: "Begin with a real conversation that can be examined without a live connection." },
+    SUBGOALS[1],
+    SUBGOALS[2]
   ];
   var TODOS = { name: "Goal Drift Alarm", todos: [
-    "Open one vault trace and list its agent turns with their tool calls",
-    "Write a one-paragraph rubric for “this turn serves goal X”",
-    "Hand-score ten turns from one chat and note where you hesitated"
+    "Load one agent-selected vault trace with its existing goal tree",
+    "Display the trace's turns beside the active goal in a minimal local viewer",
+    "Run the viewer on the selected trace and verify the displayed order against the source"
   ] };
   var ASK = {
     everyday: "In plain words: {quote_short} is about whether the tool can tell what you were trying to do from what you typed. Think of a friend reading your messages to a helper and writing down your to-do list; the question is how good that list is.",
