@@ -177,7 +177,7 @@ function mount(options = {}) {
 
   // Timers that do not hold the process open: a test may end on a step whose
   // keyboard is still animating, or whose poll has not fired yet.
-  const loose = (fn, ms) => { const t = setInterval(fn, ms); if (t.unref) t.unref(); return t; };
+  const loose = (fn, ms) => { if (options.captureIntervals) { options.captureIntervals.push(fn); return { unref() {} }; } const t = setInterval(fn, ms); if (t.unref) t.unref(); return t; };
   const doc = makeEl("document");
   doc.getElementById = (id) => (id === "app" ? app : (find(app, (n) => n.id === id || n.attrs.id === id)[0] || null));
   doc.createElement = makeEl;
@@ -821,4 +821,31 @@ test("reloading an old two-response Brainstorm hides another question even if it
   assert.doesNotMatch(textOf(page.app), /\(asked\)/, "stored transcript annotations are not shown as prose");
   assert.equal(find(page.app, n => n.tagName === "textarea").length, 0, "no unanswered question composer after the cap");
   assert.equal(page.actions.filter(a => a === "brainstorm").length, 0, "reload does not restart the interview");
+});
+
+test('Assets renders persisted access progress and restrictions without a new step',async()=>{
+  const pending={assets:[{title:'Real events',type:'dataset',links:[],access:{state:'checking'}}]};
+  const timers=[];
+  const page=mount({row:fullRow({step:8,leveled_status:'done',leveled:pending}),captureIntervals:timers,
+    replies:{leveled:()=>Promise.resolve({ok:true,json:async()=>({leveled_status:'done',leveled:{assets:[{...pending.assets[0],access:{state:'available',format:'csv',size:1200}}]}})})}});
+  await settle();
+  assert.match(textOf(page.app),/Checking access…/);
+  assert.equal(byClass(page.app,'ob-as-row').length,1);
+  timers.forEach(fn=>fn()); await settle();
+  assert.match(textOf(page.app),/✓ Available/);
+  assert.doesNotMatch(textOf(page.app),/Checking access/);
+  const restricted=mount({row:fullRow({step:8,leveled_status:'done',leveled:{assets:[{...pending.assets[0],access:{state:'restricted',reason:'Requires author approval'}}]}})});
+  await settle();
+  byClass(restricted.app,'ob-as-row')[0].click(); await settle();
+  assert.match(textOf(restricted.app),/! Restricted/);
+  assert.match(textOf(restricted.app),/Requires author approval/);
+});
+
+test('a blocked resource direction shows the existing error and does not automatically retry forever',async()=>{
+  const page=mount({row:fullRow({step:9,direction:null,asset_chosen:{title:'Restricted records',type:'dataset'}}),
+    refuse:{direction:{status:409,error:'This dataset needs a verified alternative'}}});
+  await settle(); await settle();
+  assert.equal(page.actions.filter(a=>a==='direction').length,1);
+  assert.match(textOf(page.app),/Back to Assets/);
+  assert.match(textOf(page.app),/verified alternative/);
 });

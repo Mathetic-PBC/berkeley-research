@@ -9,6 +9,7 @@ const crypto = require("node:crypto");
 const OM = require("./onboarding-model");
 const P = require("./onboarding-prompts");
 const Storage = require("./storage");
+const Resources = require("./project-resources");
 const PageFetch = require("./page-fetch");
 const Curated = require("./curated");
 const SetupChat = require("./setup-chat");
@@ -397,6 +398,7 @@ async function verifyLinks(assets, options, of = "assets") {
     let budget = MAX_LINK_CHECKS;
     async function check(asset) {
       const had = asset.links.length;
+      if (asset.type === "dataset") asset.sourceLinks = asset.links.map(l => ({ ...l }));
       const verdicts = await Promise.all(asset.links.map((l) => {
         if (budget <= 0) return Promise.resolve(true);
         budget -= 1;
@@ -422,6 +424,7 @@ async function runAssets(user, row, credentials, options) {
     if (pdf.length > MAX_PDF_BYTES) throw fail("That PDF is larger than 20 MB", 413);
     const found = await OM.assets({ pdfBase64: pdf.toString("base64") }, credentials, options);
     const assets = await verifyLinks(found.assets, options);
+    await Resources.probeAssets(assets, options);
     if (await supersededBy(row, mine, options, "assets.check-superseded")) return { assets_status: outcome("superseded") };
     const value = { assets, searched: found.searched };
     // The brief is cut from the verified list here, so the persist reads the assets it writes the brief from.
@@ -508,7 +511,11 @@ async function runLeveled(user, row, calibrations, credentials, options) {
       assets: row.assets.assets, interest: row.interest || "" }, credentials, options);
     await verifyLinks(leveled.assets, options, "leveled");
     if (await supersededBy(row, mine, options, "leveled.check-superseded")) return { leveled_status: outcome("superseded") };
+    Resources.markChecking(leveled.assets);
     await patch(row, { leveled, leveled_status: "done" }, traced(options, "leveled.persist"));
+    await Resources.probeAssets(leveled.assets, options);
+    if (await supersededBy(row, mine, options, "leveled.check-access-superseded")) return { leveled_status: outcome("superseded") };
+    await patch(row, { leveled }, traced(options, "leveled.access-persist"));
     return { leveled_status: outcome("done"), leveled };
   } catch (error) {
     if (await supersededBy(row, mine, options, "leveled.check-superseded")) return { leveled_status: outcome("superseded") };
@@ -521,6 +528,17 @@ async function runLeveled(user, row, calibrations, credentials, options) {
 }
 
 async function leveledAction(user, row, calibrations, body, credentials, options = {}) {
+  if (row.leveled_status === "done" && row.leveled) {
+    const missing = Resources.pendingAssets(row.leveled.assets).filter(a => !a.access);
+    if (missing.length) {
+      Resources.markChecking(missing);
+      await patch(row, { leveled: row.leveled }, options);
+      await Resources.probeAssets(missing, options);
+      await patch(row, { leveled: row.leveled }, options);
+    } else if (Resources.expireChecks(row.leveled.assets)) {
+      await patch(row, { leveled: row.leveled }, options);
+    }
+  }
   if (body && (body.run || body.retry)) {
     if (!row.assessment) throw fail("Answer the topic questions first", 409);
     if (row.assets_status !== "done" || !row.assets) {
@@ -677,9 +695,10 @@ async function chooseAsset(user, row, body, options = {}) {
   const found = findAsset(row, key);
   if (!found) throw fail("Pick one of the things on the list", 400);
   const { children, ...rest } = found.asset;
-  const chosen = { key, ...rest, parent: found.parent ? found.parent.title : "" };
+  let chosen = { key, ...rest, parent: found.parent ? found.parent.title : "" };
+  chosen = await Resources.resolveChosen(chosen, row.leveled?.assets || row.assets?.assets || [], options);
   // The choice is cut from the list it was picked off, so the write reads that list.
-  await patch(row, { asset_chosen: chosen, direction: null, subgoals: null, todos: null,
+  await patch(row, { asset_chosen: chosen, ...(row.leveled ? { leveled: row.leveled } : {}), direction: null, subgoals: null, todos: null,
     step: Math.max(Number(row.step) || 0, STEP.direction) }, traced(options, null, { reads: [found.from] }));
   return { asset_chosen: chosen };
 }
@@ -690,21 +709,31 @@ async function directionAction(user, row, calibrations, body, credentials, optio
   requireOpen(row);
   if (!row.asset_chosen) throw fail("Pick what to build on first", 409);
   const feedback = long(body && body.revise, 1000);
-  if (row.direction && !feedback && !(body && body.regenerate)) return { direction: row.direction };
+  const resolved = await Resources.resolveChosen(row.asset_chosen, row.leveled?.assets || row.assets?.assets || [], options);
+  if (JSON.stringify(resolved) !== JSON.stringify(row.asset_chosen)) {
+    await patch(row, { asset_chosen: resolved, ...(row.leveled ? { leveled: row.leveled } : {}),
+      ...(resolved.fallbackOf ? { direction: null, subgoals: null, todos: null } : {}) }, options);
+  }
+  if (row.direction && !feedback && !(body && body.regenerate)) {
+    Resources.assertUsable(row.direction, row.asset_chosen, row.leveled?.assets || row.assets?.assets || []);
+    return { direction: row.direction, asset_chosen: row.asset_chosen };
+  }
   const turns = await turnsOf(row, "brainstorm", "", options);
   const made = await OM.direction({ reader: readerOf(row, calibrations), paper: paperOf(row), interest: row.interest || "",
     assessment: row.assessment, turns: turns.map((t) => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
     leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
     previous: feedback ? row.direction : null, feedback }, credentials, options);
+  Resources.assertUsable(made, row.asset_chosen, row.leveled?.assets || row.assets?.assets || []);
   if (feedback) await addTurn(user, row, "direction", "", "user", feedback, null, options);
   await addTurn(user, row, "direction", "", "assistant", `${made.title} -- ${made.what_you_would_make}`, made, options);
   await patch(row, { direction: made, subgoals: null, todos: null, step: Math.max(Number(row.step) || 0, STEP.direction) }, options);
-  return { direction: made };
+  return { direction: made, asset_chosen: row.asset_chosen };
 }
 
 async function subgoalsAction(user, row, calibrations, body, credentials, options = {}) {
   requireOpen(row);
   if (!row.direction) throw fail("Settle the direction first", 409);
+  Resources.assertUsable(row.direction, row.asset_chosen, row.leveled?.assets || row.assets?.assets || []);
   const feedback = long(body && body.revise, 1000);
   if (row.subgoals && !feedback && !(body && body.regenerate)) return { subgoals: row.subgoals };
   const made = await OM.subgoals({ reader: readerOf(row, calibrations), paper: paperOf(row), direction: row.direction,
@@ -929,7 +958,7 @@ async function todos(user, row, calibrations, body, credentials, options = {}) {
   if (Array.isArray(row.todos) && row.todos.length && !(body && body.regenerate)) return { todos: row.todos, name: row.project_name };
   const reader = readerOf(row, calibrations);
   const made = await OM.todos({ reader, paper: paperOf(row), direction: row.direction, subgoal: row.subgoals[0],
-    resources: row.leveled ? row.leveled.assets : [] }, credentials, options);
+    resources: row.asset_chosen ? [row.asset_chosen] : [] }, credentials, options);
   await patch(row, { todos: made.todos, goal_chosen: row.direction.title, project_name: row.project_name || made.name,
     step: Math.max(Number(row.step) || 0, STEP.todos) }, options);
   return { todos: made.todos, name: row.project_name };
@@ -968,6 +997,7 @@ async function rewrite(user, row, calibrations, body, credentials, options = {})
 // --- create -------------------------------------------------------------------
 
 function toPayload(row, calibrations) {
+  Resources.assertUsable(row.direction, row.asset_chosen, row.leveled?.assets || row.assets?.assets || []);
   const paper = paperOf(row);
   const reader = readerOf(row, calibrations);
   const depth = P.depthOf(reader.depth) || P.DEPTHS[0];
@@ -983,6 +1013,7 @@ function toPayload(row, calibrations) {
     row.asset_chosen ? `Starting from ${row.asset_chosen.title}${row.asset_chosen.links && row.asset_chosen.links[0] ? ` <${row.asset_chosen.links[0].url}>` : ""}.` : "",
     row.interest ? `What drew them: ${row.interest}` : ""].filter(Boolean).join("\n\n");
   const payload = {
+    resources: require("./project-resources").fromOnboarding(row),
     name: row.project_name,
     plan: { description, unsure: [] },
     goals: label ? [{ label, why: one(d.why_it_fits, 300) }] : [],

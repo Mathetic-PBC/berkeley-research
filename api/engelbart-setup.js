@@ -186,7 +186,7 @@ async function handler(req, res) {
       const result = await rpc("engelbart_claim_pending_setup", { p_user_id: user.id });
       const value = Array.isArray(result) ? result[0] : result;
       return sendJson(res, 200, {
-        payload: value && value.found ? value.payload : null,
+        payload: await require("./_lib/project-resources").forClaim(value && value.found ? value.payload : null),
       });
     }
 
