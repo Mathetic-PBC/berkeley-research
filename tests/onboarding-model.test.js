@@ -358,3 +358,14 @@ test("Brainstorm bounds choices and removes questions from a ready reply", () =>
   assert.doesNotMatch(settled.say, /\?/);
   assert.equal(OM.normalizeBrainstorm({ ready: true, card: "none", interest: "Visual explanations" }).ready, true);
 });
+
+
+test('access fallback search reuses the model boundary with bounded candidates and compatibility',async()=>{
+  const capture=[];
+  const reply={candidates:Array.from({length:10},(_,i)=>({title:'Subset '+i,type:'dataset',links:[{kind:'download',url:'https://lab.example/subset.csv'}],compatible:true,compatibilityReason:'Same sensor measurements',fallbackKind:'official_sample'})),synthetic:null};
+  const out=await OM.resourceFallback({original:{title:'Sensor records',description:'Time series'},paper:{title:'Sensors'}},CREDS,{fetchImpl:modelSaying(reply,capture)});
+  assert.equal(out.candidates.length,4);assert.equal(out.candidates[0].compatible,true);
+  assert.equal(capture[0].body.tools[0].max_uses,4);assert.equal(capture[0].body.max_tokens,2400);
+  assert.match(capture[0].body.messages[0].content[0].text,/arbitrary downloadable CSV is not a substitute/);
+  assert.equal(out.synthetic,null);
+});

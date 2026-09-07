@@ -73,3 +73,81 @@ test('explicit data dependencies are gated even when the selected asset is a dem
   assert.throws(()=>R.assertUsable({uses:['Events']},demo,[data]),{statusCode:409});
   assert.doesNotThrow(()=>R.assertUsable({uses:['Calculator']},demo,[data]));
 });
+
+const blocked = (extra={}) => ({...direct('https://lab.example/records'),title:'ICU records',description:'Available upon request',...extra});
+const alternative = (url, title='Released ICU subset', kind='authors_example') => ({...direct(url),title,fallbackKind:kind,compatible:true,compatibilityReason:'Preserves patient trajectories and timestamped measurements'});
+const synthetic = {reason:'No released records could be verified',compatibilityReason:'Test grouping measurements by session using invented values',columns:['session_id','timestamp','measurement'],rows:[['demo-1',1,4],['demo-1',2,7]]};
+test('available original remains selected without fallback search',async()=>{
+  const opts=transport({'https://data.example/events.csv':csv});
+  opts.discoverFallback=()=>{throw Error('must not search');};
+  const got=await R.resolveChosen(direct(),[],opts);
+  assert.equal(got.title,'Events'); assert.equal(got.fallbackOf,undefined);
+});
+test('restricted official page can expose a separate public sample, preserving original truth',async()=>{
+  const original=blocked();
+  const opts=transport({
+    'https://lab.example/records':()=>new Response('<html>Available upon request <a href="/sample.csv">Official sample</a></html>',{headers:{'Content-Type':'text/html'}}),
+    'https://lab.example/sample.csv':csv,
+  });
+  opts.discoverFallback=()=>{throw Error('official sample should win');};
+  const got=await R.resolveChosen(original,[original],opts);
+  assert.equal(original.access.state,'restricted');
+  assert.equal(got.access.state,'available');
+  assert.equal(got.fallbackOf.kind,'official_sample');
+  assert.equal(got.fallbackOf.source[0].url,'https://lab.example/records');
+  assert.equal(got.fallbackOf.fallbackSource[0].url,'https://lab.example/sample.csv');
+});
+test('no children: bounded discovery finds authors subset or compatible public replacement',async()=>{
+  for (const kind of ['authors_example','compatible_substitute']) {
+    const original=blocked(); let discoveries=0;
+    const opts=transport({'https://public.example/subset.csv':csv});
+    opts.discoverFallback=async input=>{discoveries++;assert.equal(input.children.length,0);assert.equal(input.original.access.state,'restricted');return {candidates:[alternative('https://public.example/subset.csv','Public ICU subset',kind)]};};
+    const got=await R.resolveChosen(original,[original],opts);
+    assert.equal(discoveries,1); assert.equal(got.access.state,'available'); assert.equal(got.fallbackOf.kind,kind);
+    assert.equal(original.children[0].title,got.title,'fallback persists in existing asset list');
+  }
+});
+test('failed candidate is skipped and a verified real alternative beats synthetic',async()=>{
+  const opts=transport({'https://public.example/bad.csv':()=>new Response('dead',{status:404}),'https://public.example/good.csv':csv});
+  opts.discoverFallback=async()=>({candidates:[alternative('https://public.example/bad.csv'),alternative('https://public.example/good.csv','Compatible records','compatible_substitute')],synthetic});
+  const got=await R.resolveChosen(blocked(),[],opts);
+  assert.equal(got.title,'Compatible records');assert.equal(got.inlineCsv,undefined);
+});
+test('pedagogical child alone is not proof of compatibility; synthetic is last and explicit',async()=>{
+  const original=blocked({children:[{...direct(),title:'Easy unrelated spreadsheet',access:{state:'available'}}]});
+  let searched=false;
+  const opts=transport({'https://public.example/bad.csv':()=>new Response('dead',{status:404})});
+  opts.discoverFallback=async()=>{searched=true;return {candidates:[alternative('https://public.example/bad.csv')],synthetic};};
+  const got=await R.resolveChosen(original,[original],opts);
+  assert.equal(searched,true);assert.equal(got.fallbackOf.kind,'synthetic_fallback');
+  assert.match(got.title,/Synthetic stand-in/);assert.equal(got.access.state,'available');
+  assert.match(got.inlineCsv,/session_id/);assert.equal(got.fallbackOf.generatedStructure.rowCount,2);
+  assert.throws(()=>R.assertUsable({uses:[got.title],title:'Analyze patient outcomes'},got),{statusCode:409});
+  assert.doesNotThrow(()=>R.assertUsable({uses:[got.title],title:'Test grouping on a synthetic stand-in'},got));
+  const manifest=R.fromOnboarding({asset_chosen:got})[0];
+  assert.equal(manifest.source.inlineCsv,got.inlineCsv);
+  assert.equal(manifest.provenance.fallbackOf.kind,'synthetic_fallback');
+  assert.equal(manifest.metadata.fallbackOf.access.state,'restricted');
+});
+test('invalid or incompatible fallbacks cannot bypass the planning gate',async()=>{
+  const opts=transport({'https://public.example/anything.csv':csv});
+  opts.discoverFallback=async()=>({candidates:[{...alternative('https://public.example/anything.csv'),compatible:false}],synthetic:{...synthetic,columns:['run shell code()']}});
+  const got=await R.resolveChosen(blocked(),[],opts);
+  assert.equal(got.access.state,'restricted');
+  assert.throws(()=>R.assertUsable({uses:['ICU records']},got),{statusCode:409});
+  assert.doesNotThrow(()=>R.assertUsable({uses:['Independent simulator'],title:'Change the simulator'},got));
+});
+
+
+test('a sample-only landing page resolves with explicit subset provenance, including release downloads',async()=>{
+  const original=direct('https://lab.example/data');
+  const opts=transport({
+    'https://lab.example/data':()=>new Response('<html><a href="https://github.com/lab/study/releases/download/v1/sample.csv">Official subset</a></html>',{headers:{'Content-Type':'text/html'}}),
+    'https://github.com/lab/study/releases/download/v1/sample.csv':csv,
+  });
+  const got=await R.resolveChosen(original,[original],opts);
+  assert.equal(original.access.state,'unavailable');
+  assert.equal(got.access.state,'available');
+  assert.equal(got.fallbackOf.kind,'official_sample');
+  assert.match(got.access.downloadUrl,/releases\/download/);
+});

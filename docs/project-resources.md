@@ -44,13 +44,38 @@ Access is verified rather than inferred from provider hostname. Auth responses,
 login redirects, interactive licensing, and author-request-only access are explicit
 restrictions. Network failures stay within the resource record.
 
-The selected resource is resolved before Direction, using already proposed simpler
-dataset children as fallback candidates. The original retains its restricted or
-unavailable access state. A verified fallback carries `fallbackOf` and is supplied
-to Direction, shown by name in the existing UI, and transferred to the workspace.
-There is no new fallback agent or general web-search pipeline. If no verified
-alternative is found, the dependent plan is refused with a resource dependency;
-there are no student download/unzip/schema-inspection TODOs.
+Access recovery extends `resolveChosen()` rather than treating pedagogical children
+as inherently compatible fallbacks. The selected Available dataset stays selected.
+For a blocked dataset, it checks clearly identified official samples among existing
+children, then up to five source-adjacent pages and four sample/example links using
+the same 32 KiB bounded response reader. A sample-only landing page is not silently
+reported as the full dataset. Direct GitHub release files use the same data probe.
+
+If those checks fail, Direction calls `onboarding-model.resourceFallback()` through
+Asset Hunt's existing `searched()`/model gateway boundary: at most four web searches,
+four candidate records, and 2,400 output tokens. It uses the original asset's task,
+description, source links, paper summary, and existing children to judge compatibility.
+The existing gateway fallback can retry once without search (30 seconds per call).
+Real candidates are ordered official sample, authors' processed/example data, same-data
+public mirror, compatible substitute, and independently checked with `probeAsset()`.
+The source phase and post-search phase each have an 18-second verification budget.
+A failed candidate is skipped; search failure leaves a truthful blocked resource.
+
+Only after real candidates fail does the resolver validate an optional synthetic
+stand-in specification from that call: at most 12 named columns, eight scalar rows,
+and 8 KiB of CSV. It does not execute generated code. Synthetic is not appropriate
+for every modality; absent or invalid structure leaves the dependency blocked.
+The manifest carries `source.inlineCsv` to the existing local preparation/inspection
+path, which writes and reads it before Ready. Available still does not mean Ready.
+
+Every selected fallback persists in the existing asset list with `fallbackOf`:
+original title/key/source/access state/reason, fallback kind/reason/source, and (for
+synthetic) generated structure. The original remains Restricted/Unavailable/etc.
+Assets labels these children as fallback/synthetic rather than pedagogical "simpler".
+Direction receives the replacement, and synthetic directions must explicitly say
+synthetic or stand-in before they can persist. Model instructions also restrict the
+subgoals/todos to testing the mechanism, never claiming results about real observations.
+No student download/unzip/schema-inspection TODOs are introduced.
 
 The gate runs before persisting Direction, before returning a cached Direction,
 before generating Subgoals, and at final payload creation. It checks the existing
@@ -63,7 +88,7 @@ A rejected Direction does not trigger an automatic request loop in the UI.
 Available is an access preflight, never a claim that local files already exist.
 Local claim preparation verifies actual PDF text and actual tabular files before
 Ready. Artifacts live in the project's narrowly ignored `.engelbart-resources/`
-directory. The `/test` renderer alone gains Paper and lightweight Resources UI.
+directory. Production `/` and `/test` share the Paper and lightweight Resources components.
 Agents receive bounded references/schema through their existing project context.
 
 Supported automatic local formats: CSV, TSV, Parquet, bounded JSON arrays, JSONL,
@@ -71,10 +96,24 @@ NDJSON, ZIP with safe paths and bounded extraction. No scripts execute. Unsuppor
 cases remain explicit: OCR/encrypted papers, other archive formats, provider SDKs,
 interactive auth/license workflows, remote database configuration, very large
 resources, and ambiguous download alternatives. GitHub trees beyond the bounded
-listing budget are not declared Available. Fallback discovery uses existing leveled
-alternatives; it does not yet search arbitrary providers for compatible substitutes.
+listing budget are not declared Available. Fallback discovery is bounded and depends on source evidence/model compatibility judgment;
+it cannot guarantee finding an alternative for every research modality or provider.
 
 Cloud and local automatic limits should be configured consistently; the local
 machine may impose a stricter policy. Access can also change between probe and
 claim, so preparation still validates and persists a failure rather than trusting
 an earlier Available result.
+
+## Explicit local retry
+
+Resource IDs update in place. A ready record is reused only while its PDF/text or
+listed inspected data files are present, safe, and cheaply plausible. New preparations
+record size plus first/last 4 KiB fingerprints; startup does not fully parse or hash
+large datasets. Legacy ready records use header/size checks until reprepared.
+Failed, needs-user, interrupted, missing, and detectably corrupt records are retried
+only when supplied again. New source information replaces stale blockers, and
+transient signed URLs are stripped from persisted source/evidence/provenance.
+
+Re-importing the same onboarding ID can retry resource preparation without rewriting
+its project/goals; unrelated name collisions remain errors. No background retry loop
+or new retry UI is added. The local worktree's README documents the production components.

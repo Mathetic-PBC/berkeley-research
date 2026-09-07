@@ -16,9 +16,9 @@ function fromOnboarding(row) {
     out.push({ id: 'dataset-' + createHash('sha256').update(a.key || url || a.title).digest('hex').slice(0, 20),
       kind: 'dataset', name: a.title, status: a.access?.state === 'unavailable' ? 'failed' : ['restricted','too_large','remote_only'].includes(a.access?.state) ? 'needs_user' : 'selected',
       error: a.access?.state && a.access.state !== 'available' ? a.access.reason || 'Access is unresolved' : '',
-      source: { url, originalUrl: originals[0]?.url || '', ambiguous: !a.access?.downloadUrl && links.length > 1, gated: a.access ? a.access.state !== 'available' : a.availability !== 'usable',
+      source: { url, ...(a.inlineCsv ? {inlineCsv:a.inlineCsv} : {}), originalUrl: originals[0]?.url || '', ambiguous: !a.access?.downloadUrl && links.length > 1, gated: a.access ? a.access.state !== 'available' : a.availability !== 'usable',
         licenseRequired: Boolean(a.licenseRequired) || /accept.{0,30}licen[cs]e|sign.?in|log.?in|request access/i.test(a.description || '') },
-      metadata: { description: a.description || '', accessCheck: a.access || {}, fallbackOf: a.fallbackOf || null }, provenance: { onboardingId: row.id || '', assetKey: a.key || '', selectedBy: 'direction', fallbackOf: a.fallbackOf || null } });
+      metadata: { description: a.description || '', generatedStructure:a.generatedStructure || null, accessCheck: a.access || {}, fallbackOf: a.fallbackOf || null }, provenance: { onboardingId: row.id || '', assetKey: a.key || '', selectedBy: 'direction', fallbackOf: a.fallbackOf || null } });
   }
   return out;
 }
@@ -97,7 +97,7 @@ async function probeUrl(url, options = {}, depth = 0) {
   try {
     const parsed = new URL(url);
     // Resolve the actual repository tree, never classify a repository's existence as data.
-    if (parsed.hostname === 'github.com') {
+    if (parsed.hostname === 'github.com' && !parsed.pathname.includes('/releases/download/')) {
       const [owner, repo, mode, ref, ...rest] = parsed.pathname.split('/').filter(Boolean);
       if (!owner || !repo) return access('unavailable', 'No repository identified');
       if (mode === 'blob' && rest.length) return probeUrl(`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${rest.join('/')}`, options, depth + 1);
@@ -128,7 +128,11 @@ async function probeUrl(url, options = {}, depth = 0) {
     if (html) {
       if (RESTRICTED.test(text)) return access('restricted', 'The provider requires sign-in, license acceptance, or access approval');
       // Official samples linked directly from the provider page can resolve the source.
-      const links = [...text.matchAll(/href=["']([^"']+)["']/gi)].map(m => new URL(m[1], got.url).href).filter(u => DATA_FILE.test(u)).slice(0,4);
+      const links = [...text.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
+        .filter(m => !SAMPLE.test(new URL(m[1], got.url).pathname + ' ' + PageFetch.pageText(m[2])))
+        .map(m => new URL(m[1], got.url).href).filter(u => DATA_FILE.test(u)).slice(0,4);
+      // Sample-only pages go through fallback resolution so a subset is not
+      // silently represented as the original full research dataset.
       for (const target of links) {
         const found = await probeUrl(target, options, depth + 1);
         if (found.state === 'available') return { ...found, resolvedFrom: url };
@@ -173,31 +177,136 @@ async function probeAssets(assets, options = {}) {
   for (const a of walkAssets(assets)) if (a.access?.state === 'checking') a.access = access('unavailable','Access check budget exceeded');
   return assets;
 }
+const FALLBACK_KINDS = ['official_sample', 'authors_example', 'public_mirror', 'compatible_substitute'];
+const SAMPLE = /sample|subset|demo|example|processed|supplement/i;
+function fallbackRecord(original, candidate, kind, reason) {
+  const { children, ...record } = candidate;
+  record.title = String(record.title).replace(/ :: /g, ' — ').slice(0,120);
+  return { ...record, key: `${original.title} :: ${record.title}`, parent: original.title,
+    fallbackOf: { title: original.title, key: original.key || original.title,
+      source: original.sourceLinks || original.links || [], access: original.access,
+      kind, reason, fallbackSource: record.links || [], generatedStructure: record.generatedStructure || null } };
+}
+
+// Inspect a handful of source-adjacent links before asking Asset Hunt to search.
+// Restriction text on the original must not hide its separately public sample.
+async function sourceAlternatives(original, options) {
+  const candidates = [], seen = new Set();
+  const queue = [...(original.sourceLinks || original.links || [])].slice(0, 3).map(l => ({url:l.url, depth:0}));
+  for (let i = 0; i < queue.length && i < 5; i++) {
+    const {url, depth} = queue[i];
+    if (seen.has(url)) continue;
+    seen.add(url);
+    let pathname;
+    try { pathname = new URL(url).pathname; } catch { continue; }
+    if (SAMPLE.test(pathname) && DATA_FILE.test(url)) {
+      candidates.push({title: `${original.title} public sample`, type:'dataset', links:[{kind:'download',url}],
+        fallbackKind:'official_sample', compatibilityReason:'Sample explicitly linked by the original source'});
+      continue;
+    }
+    try {
+      const got = await boundedResponse(url, options);
+      if (!got.response?.ok || !got.body) continue;
+      const html = got.body.toString('utf8');
+      for (const match of html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+        const target = new URL(match[1].replace(/&amp;/g, '&'), got.url).href;
+        const label = PageFetch.pageText(match[2]).slice(0,120);
+        if (!SAMPLE.test(label + ' ' + new URL(target).pathname)) continue;
+        if (DATA_FILE.test(target) || /github\.com\//.test(target)) {
+          candidates.push({title: `${original.title} — ${label || 'public sample'}`, type:'dataset', links:[{kind:'download',url:target}],
+            fallbackKind:/processed|example/i.test(label) ? 'authors_example' : 'official_sample',
+            compatibilityReason:'Released sample/example explicitly linked by the original source'});
+        } else if (!depth && queue.length < 5) queue.push({url:target,depth:1});
+        if (candidates.length >= 4) return candidates;
+      }
+    } catch { /* A source page failing is not a failure of onboarding. */ }
+  }
+  return candidates.slice(0,4);
+}
+function syntheticCandidate(original, value) {
+  if (!value || typeof value.reason !== 'string' || !value.reason || typeof value.compatibilityReason !== 'string' || !value.compatibilityReason || !Array.isArray(value.columns) || !Array.isArray(value.rows)) return null;
+  const columns = value.columns;
+  if (!columns.length || columns.length > 12 || columns.some(c => typeof c !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_]{0,59}$/.test(c)) || new Set(columns).size !== columns.length) return null;
+  if (!value.rows.length || value.rows.length > 8 || value.rows.some(row => !Array.isArray(row) || row.length !== columns.length || row.some(v => !['string','number','boolean'].includes(typeof v) || String(v).length > 160))) return null;
+  const quote = v => '"' + String(v).replace(/"/g,'""') + '"';
+  const inlineCsv = [columns, ...value.rows].map(row => row.map(quote).join(',')).join('\n') + '\n';
+  if (Buffer.byteLength(inlineCsv) > 8192) return null;
+  return { title:`Synthetic stand-in for ${original.title}`, type:'dataset', links:[], inlineCsv,
+    description:'Generated examples for testing the mechanism only; not observations from the original dataset. ' + value.compatibilityReason.slice(0,300),
+    generatedStructure:{columns, rowCount:value.rows.length, purpose:value.compatibilityReason.slice(0,300)},
+    access:access('available','Bounded synthetic table validated; local preparation will write and inspect it', {format:'csv',size:Buffer.byteLength(inlineCsv)}),
+    fallbackKind:'synthetic_fallback', compatibilityReason:value.reason.slice(0,300) };
+}
 async function resolveChosen(chosen, assets, options = {}) {
   if (chosen?.type !== 'dataset') return chosen;
   const original = { ...chosen, access: chosen.access?.state && chosen.access.state !== 'checking' && !chosen.access.retryable ? chosen.access : await probeAsset(chosen, options) };
   if (original.access.state === 'available') return original;
   const parent = walkAssets(assets).find(a => a.title === chosen.title);
   if (parent) parent.access = original.access;
-  const candidates = parent?.children || [];
-  for (const candidate of candidates) {
-    if (candidate.type !== 'dataset') continue;
-    const checked = candidate.access?.state && candidate.access.state !== 'checking' ? candidate.access : await probeAsset(candidate, options);
-    candidate.access = checked;
-    if (checked.state === 'available') return { ...candidate, access: checked, key: `${parent.title} :: ${candidate.title}`, parent: parent.title,
-      fallbackOf: { title: chosen.title, key: chosen.key, access: original.access } };
+  const probeOptions = {...options, deadline:Date.now() + 18000};
+  const tested = new Set();
+  async function tryCandidates(candidates) {
+    for (const candidate of candidates.slice(0,8)) {
+      if (candidate.type !== 'dataset') continue;
+      const identity = candidate.links?.[0]?.url || candidate.title;
+      if (tested.has(identity)) continue;
+      tested.add(identity);
+      const checked = await probeAsset(candidate, probeOptions);
+      candidate.access = checked;
+      if (checked.state !== 'available') continue;
+      const kind = candidate.fallbackKind || 'official_sample';
+      const result = fallbackRecord(original, candidate, kind, candidate.compatibilityReason || candidate.why || 'Released sample of the selected resource');
+      if (parent) {
+        parent.children ||= [];
+        const index = parent.children.findIndex(a => a.title === result.title);
+        if (index < 0) parent.children.push(result); else parent.children[index] = result;
+      }
+      return result;
+    }
   }
-  return original;
+  // Only clearly identified samples/examples can bypass compatibility judgment.
+  // Pedagogical children are candidates for Asset Hunt's judgment, not automatically substitutes.
+  const children = parent?.children || [];
+  const official = children.filter(c => /official|authors?|same dataset/i.test(c.title + ' ' + (c.why || '')) && SAMPLE.test(c.title + ' ' + (c.description || '')));
+  let found = await tryCandidates(official);
+  if (!found) found = await tryCandidates(await sourceAlternatives(original, probeOptions));
+  if (found) return found;
+  if (!options.discoverFallback) return original;
+  let discovered;
+  try { discovered = await options.discoverFallback({original, children, paper:options.paper || {}, tested:[...tested]}); }
+  catch { return original; }
+  const candidates = (discovered?.candidates || []).filter(c => FALLBACK_KINDS.includes(c.fallbackKind) && c.compatible === true && c.compatibilityReason)
+    .sort((a,b) => FALLBACK_KINDS.indexOf(a.fallbackKind) - FALLBACK_KINDS.indexOf(b.fallbackKind)).slice(0,4);
+  // A fresh, bounded verification budget after the bounded search call.
+  probeOptions.deadline = Date.now() + 18000;
+  found = await tryCandidates(candidates);
+  if (found) return found;
+  const synthetic = syntheticCandidate(original, discovered?.synthetic);
+  if (!synthetic) return original;
+  const result = fallbackRecord(original, synthetic, 'synthetic_fallback', synthetic.compatibilityReason);
+  if (parent) {
+    parent.children ||= [];
+    const index = parent.children.findIndex(a => a.title === result.title);
+    if (index < 0) parent.children.push(result); else parent.children[index] = result;
+  }
+  return result;
 }
 function assertUsable(direction, selected, assets = []) {
   const uses = (direction?.uses || []).map(u => u.toLowerCase());
+  const selectedUsed = !uses.length || uses.some(u => u.includes(selected?.title?.toLowerCase())) ||
+    (selected?.title && [direction?.title, direction?.what_you_would_make].join(' ').toLowerCase().includes(selected.title.toLowerCase()));
+  if (selectedUsed && selected?.fallbackOf?.kind === 'synthetic_fallback' && !/synthetic|stand-in/i.test([direction?.title, direction?.what_you_would_make].join(' '))) {
+    const error = new Error('A direction using synthetic examples must explicitly describe testing a stand-in, not results about the original dataset.');
+    error.statusCode = 409; throw error;
+  }
   const candidates = [...walkAssets(assets), ...(selected ? [selected] : [])];
   // The selected/fallback record is fresher than the discovery list.
   const unique = new Map(candidates.map(a => [a.title, a]));
+  const availableTitles = new Set([...unique.values()].filter(a => a.access?.state === 'available').map(a => a.title.toLowerCase()));
   for (const asset of unique.values()) {
     if (asset.type !== 'dataset' || asset.access?.state === 'available') continue;
     const title = asset.title.toLowerCase();
-    const explicit = uses.some(u => u === title || u.includes(title));
+    const explicit = uses.some(u => u === title || u.includes(title) && !availableTitles.has(u));
     const selectedDependency = asset.title === selected?.title && (!uses.length ||
       [direction?.title, direction?.what_you_would_make].join(' ').toLowerCase().includes(title));
     if (!explicit && !selectedDependency) continue;

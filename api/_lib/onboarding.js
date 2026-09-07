@@ -700,7 +700,7 @@ async function chooseAsset(user, row, body, options = {}) {
   // The choice is cut from the list it was picked off, so the write reads that list.
   await patch(row, { asset_chosen: chosen, ...(row.leveled ? { leveled: row.leveled } : {}), direction: null, subgoals: null, todos: null,
     step: Math.max(Number(row.step) || 0, STEP.direction) }, traced(options, null, { reads: [found.from] }));
-  return { asset_chosen: chosen };
+  return { asset_chosen: chosen, leveled: row.leveled };
 }
 
 // --- direction, subgoals -------------------------------------------------------
@@ -709,14 +709,23 @@ async function directionAction(user, row, calibrations, body, credentials, optio
   requireOpen(row);
   if (!row.asset_chosen) throw fail("Pick what to build on first", 409);
   const feedback = long(body && body.revise, 1000);
-  const resolved = await Resources.resolveChosen(row.asset_chosen, row.leveled?.assets || row.assets?.assets || [], options);
+  if (row.direction && !feedback && !(body && body.regenerate)) {
+    try {
+      Resources.assertUsable(row.direction, row.asset_chosen, row.leveled?.assets || row.assets?.assets || []);
+      return { direction: row.direction, asset_chosen: row.asset_chosen, leveled: row.leveled };
+    } catch (error) { if (error.statusCode !== 409) throw error; }
+  }
+  const resolved = await Resources.resolveChosen(row.asset_chosen, row.leveled?.assets || row.assets?.assets || [], {
+    ...options, paper: paperOf(row),
+    discoverFallback: input => OM.resourceFallback(input, credentials, options),
+  });
   if (JSON.stringify(resolved) !== JSON.stringify(row.asset_chosen)) {
     await patch(row, { asset_chosen: resolved, ...(row.leveled ? { leveled: row.leveled } : {}),
       ...(resolved.fallbackOf ? { direction: null, subgoals: null, todos: null } : {}) }, options);
   }
   if (row.direction && !feedback && !(body && body.regenerate)) {
     Resources.assertUsable(row.direction, row.asset_chosen, row.leveled?.assets || row.assets?.assets || []);
-    return { direction: row.direction, asset_chosen: row.asset_chosen };
+    return { direction: row.direction, asset_chosen: row.asset_chosen, leveled: row.leveled };
   }
   const turns = await turnsOf(row, "brainstorm", "", options);
   const made = await OM.direction({ reader: readerOf(row, calibrations), paper: paperOf(row), interest: row.interest || "",
@@ -727,7 +736,7 @@ async function directionAction(user, row, calibrations, body, credentials, optio
   if (feedback) await addTurn(user, row, "direction", "", "user", feedback, null, options);
   await addTurn(user, row, "direction", "", "assistant", `${made.title} -- ${made.what_you_would_make}`, made, options);
   await patch(row, { direction: made, subgoals: null, todos: null, step: Math.max(Number(row.step) || 0, STEP.direction) }, options);
-  return { direction: made, asset_chosen: row.asset_chosen };
+  return { direction: made, asset_chosen: row.asset_chosen, leveled: row.leveled };
 }
 
 async function subgoalsAction(user, row, calibrations, body, credentials, options = {}) {
