@@ -1,11 +1,11 @@
 /* The real setup page (setup.js, install.js, setup.css, unmodified) inside the
  * debugger, in one of two modes named on the URL.
  *
- * Simulated (the default): fetch() to /api and to the fake Supabase host is
+ * Simulated (?mode=sim): fetch() to /api and to the fake Supabase host is
  * answered in-page by sim-backend.js, supabase-js is replaced by a session that
  * is always signed in, and every simulated operation is posted to the parent.
  *
- * Real (?mode=real): nothing is replaced and, with one addition, nothing is
+ * Real (the default, or ?mode=real): nothing is replaced and, with one addition, nothing is
  * intercepted: the page's own fetch is watched, and the edited prompts the
  * debugger chose for this run ride along on the model actions
  * (`prompt_overrides`), for the member's own onboarding. The page boots on the
@@ -24,7 +24,7 @@
   var ORIGIN = window.location.origin;
   function post(message) { window.parent.postMessage(message, ORIGIN); }
   var params = new URLSearchParams(window.location.search);
-  var MODE = params.get("mode") === "real" ? "real" : "sim";
+  var MODE = params.get("mode") === "sim" ? "sim" : "real";
   // Real mode: the edited prompts the debugger chose for this run, or null for the server's own.
   var promptOverrides = null;
   var speed = Number(params.get("speed") || 1);

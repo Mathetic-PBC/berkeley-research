@@ -43,7 +43,7 @@ test("the debugger runs the real setup page against the simulated backend under 
       await route.fulfill({ response, headers });
     });
 
-    await page.goto(`${stack.url}/engelbart/setup/test`);
+    await page.goto(`${stack.url}/engelbart/setup/test?mode=sim`);
     await expect(page.getByText("Engelbart", { exact: true })).toBeVisible();
 
     // The debugger lands on the environments dashboard; nothing runs until an environment is opened.
@@ -172,7 +172,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
       await route.fulfill({ response, headers });
     });
 
-    await page.goto(`${stack.url}/engelbart/setup/test`);
+    await page.goto(`${stack.url}/engelbart/setup/test?mode=sim`);
     // Simulated mode lands on the environments dashboard; open one so there is a simulator to come back to.
     await page.getByRole("button", { name: "New environment" }).click();
     await page.getByRole("button", { name: "Create environment" }).click();
@@ -183,7 +183,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     // Real mode is the URL's, not a switch in the page. It keeps the composition: the product stays on the left,
     // in the real frame; the simulator's controls go, and nothing in the bar offers a mode.
     await expect(page.getByRole("button", { name: "Real", exact: true })).toHaveCount(0);
-    await page.goto(`${stack.url}/engelbart/setup/test?mode=real`);
+    await page.goto(`${stack.url}/engelbart/setup/test`);
     const realFrame = page.frameLocator('iframe[title="Engelbart setup, running against the real backend"]');
     await expect(page.locator('iframe[title="Engelbart setup, running against the real backend"]')).toHaveAttribute("src", /\/engelbart\/setup\/test\/frame\?mode=real$/);
     await expect(page.locator("iframe")).toHaveCount(1);
@@ -317,9 +317,9 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect.poll(() => onboardingCalls.length).toBeGreaterThan(calls);
     await expect(page.locator("[id^=stage-]", { hasText: "onboarding · open" }).last()).toContainText("4 ops");
 
-    // And back at the plain URL: nothing is open, so the dashboard shows the environment, and opening it boots
+    // And back at the simulator URL: nothing is open, so the dashboard shows the environment, and opening it boots
     // the product exactly as before.
-    await page.goto(`${stack.url}/engelbart/setup/test`);
+    await page.goto(`${stack.url}/engelbart/setup/test?mode=sim`);
     await expect(page.getByText("Test environments")).toBeVisible();
     await expect(page.getByRole("button", { name: "Reset test environment" })).toHaveCount(0);
     await page.getByText("Environment 1", { exact: true }).click();

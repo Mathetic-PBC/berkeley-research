@@ -363,12 +363,9 @@ class Debugger extends React.Component {
   }
   cmd(cmd, value) { const f = this.frameRef.current; if (f && f.contentWindow) f.contentWindow.postMessage({ egb: "cmd", cmd: cmd, value: value }, window.location.origin); }
   // --- Real mode: the same product against the real backend, each request's persisted trace beneath it -------
-  // The mode is remembered in this browser. Switching to Real saves the simulator's tabs first; switching
-  // back restores them from the environment's storage. The product on the left does, in Real mode, exactly
-  // what it does at /engelbart/setup; this side only reads what the server recorded about it.
-  // The mode is the URL's, as the frame's is: ?mode=real runs the setup page as the signed-in member; anything
-  // else is the simulator, which is where the page lands and stays. There is no switch in the page.
-  loadMode() { try { return new URLSearchParams(window.location.search).get("mode") === "real" ? "real" : "sim"; } catch (e) { return "sim"; } }
+  // The plain URL runs the normal setup against real uploads and model calls.
+  // Fixture responses require the explicit ?mode=sim URL; stored choices cannot select them.
+  loadMode() { try { return new URLSearchParams(window.location.search).get("mode") === "sim" ? "sim" : "real"; } catch (e) { return "real"; } }
   isReal() { return this.state.mode === "real"; }
   setReal(patch, after) { this.setState(s => ({ real: Object.assign({}, s.real, patch) }), after); }
   // session: the member's session as this page reads it; frameSession: as the frame reported it; runs: the
@@ -979,7 +976,7 @@ class Debugger extends React.Component {
       lastRan: live.stages.length ? "Last run: " + this.clock(live.stages[live.stages.length - 1].at) : "Last run: —",
       // Real mode names only its mode: no environment, no prefilled participant, and never the product's test
       // switch, whose reset buttons would clear the member's real record. The dashboard mounts no frame at all.
-      frameSrc: real ? "/engelbart/setup/test/frame?mode=real" : S.envId ? "/engelbart/setup/test/frame?env=" + S.envId + (testMode ? "&test=true" : "") + this.participantParam((S.envs.find(e => e.id === S.envId) || {}).config) : "",
+      frameSrc: real ? "/engelbart/setup/test/frame?mode=real" : S.envId ? "/engelbart/setup/test/frame?mode=sim&env=" + S.envId + (testMode ? "&test=true" : "") + this.participantParam((S.envs.find(e => e.id === S.envId) || {}).config) : "",
       onListScroll: (e) => { const el = e.target; const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 48; if (stick !== S.stick) this.setState({ stick: stick }); },
       isLive: S.tab === "live", isCases: S.tab === "cases", isCompare: S.tab === "compare",
       liveEmpty: !visible.length, stages: visible.map((s, i) => this.stageVM(s, live.stages.indexOf(s), "live", live)),
@@ -1039,6 +1036,8 @@ class Debugger extends React.Component {
     const R = V.real;
     return h("div", { "data-screen-label": "Top bar", style: css("flex:none;min-height:46px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 14px 6px 16px;border-bottom:1px solid #eaeaea;white-space:nowrap") },
       h("span", { style: css("font:500 17px/1 " + SANSF + ";letter-spacing:-0.2px") }, "Engelbart"),
+      h("span", { "data-backend-mode": V.isReal ? "real" : "sim", style: css("font:11px/1.4 " + SANS + ";color:#666") },
+        V.isReal ? "Live · your uploads and model results" : "Simulated · fixed sample results"),
       V.isReal
         ? h("select", { value: R.pickerValue, onChange: R.pick, "data-run-picker": "1", title: "what the panel shows: this session, or one of your earlier runs", style: css("max-width:320px;padding:6px 28px 6px 12px;border:1px solid #eaeaea;border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:#171717;outline:none;cursor:pointer") },
           R.pickerOptions.map(o => h("option", { key: o.value, value: o.value }, o.label)))

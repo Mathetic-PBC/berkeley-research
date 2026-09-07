@@ -28,7 +28,7 @@ function frame(opts) {
   const sandbox = {
     console, setTimeout, clearTimeout, URLSearchParams,
     reloaded: 0,
-    location: { origin: ORIGIN, search: opts.search || (opts.mode === "real" ? "?mode=real" : "?env=default"), reload() { sandbox.reloaded += 1; } },
+    location: { origin: ORIGIN, search: opts.search ?? (opts.mode === "real" ? "?mode=real" : "?mode=sim&env=default"), reload() { sandbox.reloaded += 1; } },
     parent: { postMessage(m, origin) { posted.push({ m: plain(m), origin }); } },
     addEventListener(type, fn) { listeners.window[type] = fn; },
     document: { addEventListener(type, fn) { listeners.document[type] = fn; }, getElementById() { return null; }, querySelector() { return null; }, body: { style: {} } },
@@ -231,7 +231,7 @@ test("simulated mode is unchanged: /api goes to the in-page simulator, the sessi
   const sim = { create(opts) { created.push(opts); return { USER: { id: "sim-user", email: "reader@sim.local" }, isSim: (u) => /^\/api\//.test(String(u)), handle: (u, init) => { handled.push([u, init && init.method]); return Promise.resolve("simulated"); },
     local: () => Promise.resolve(), setSpeed: (v) => speeds.push(v), setPrompts() {}, state: () => ({ onboardings: 1 }), reset() { created.push("reset"); } }; } };
   const passed = [];
-  const F = frame({ mode: "sim", search: "?env=lab-1&speed=4", fetch: async (u) => { passed.push(u); return "real"; }, sim });
+  const F = frame({ mode: "sim", search: "?mode=sim&env=lab-1&speed=4", fetch: async (u) => { passed.push(u); return "real"; }, sim });
   assert.equal(created.length, 1);
   assert.equal(created[0].persist, "egb.sim.db.lab-1", "the simulated account lives under the environment's key");
   assert.equal(created[0].speed, 4);
@@ -253,6 +253,19 @@ test("simulated mode is unchanged: /api goes to the in-page simulator, the sessi
   assert.equal(created[created.length - 1], "reset");
   assert.equal(F.w.reloaded, 1, "a simulator reset reloads the page on the fresh account");
   created.length = 0;
-  frame({ mode: "sim", search: "?env=../etc", fetch: async () => "real", sim });
+  frame({ mode: "sim", search: "?mode=sim&env=../etc", fetch: async () => "real", sim });
   assert.equal(created[0].persist, "egb.sim.db.etc", "the environment key is sanitized");
+});
+
+test("the default frame forwards the actual uploaded bytes and analysis requests", async () => {
+  const sent = [];
+  const F = frame({ search: "", fetch: async (url, init) => { sent.push({ url, init }); return reply(200, { ok: true }); }, supabase: supabaseWith(null).lib,
+    sim: { create() { throw new Error("Fixtures must never run by default"); } } });
+  const upload = new TextEncoder().encode("%PDF-1.4\nDistinct uploaded research content\n%%EOF");
+  await F.w.fetch("https://storage.example/storage/v1/object/upload/paper", { method: "PUT", body: upload });
+  const body = JSON.stringify({ action: "analysis", run: true });
+  await F.w.fetch("/api/engelbart-onboarding", { method: "POST", body });
+  assert.equal(sent[0].init.body, upload);
+  assert.equal(sent[1].init.body, body);
+  assert.equal(F.messages("ready")[0].mode, "real");
 });
