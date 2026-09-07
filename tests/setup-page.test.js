@@ -26,7 +26,7 @@ test("the page talks to the onboarding endpoint and the paper upload", () => {
 });
 
 test("the rail names the twelve steps in order", () => {
-  const labels = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"];
+  const labels = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Topics", "Brainstorm", "Assets", "Direction", "Subgoals", "Todos"];
   const found = /var LABELS = \[([^\]]*)\]/.exec(js);
   assert.ok(found, "LABELS array");
   assert.deepEqual(JSON.parse("[" + found[1] + "]"), labels);
