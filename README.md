@@ -128,6 +128,10 @@ SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... RUN_ID=<onboarding id> npm run ve
 using the signed-in member's uploaded PDF, inputs, model calls, and results.
 The inspector shows recorded requests and responses. Sign-in and model credit
 work just as they do at `/engelbart/setup`; uploads and progress are real.
+The debugger's **Reset test environment** button confirms before clearing your
+current open setup and reloading. Completed projects, your saved profile,
+account, and credit stay. The button is disabled when viewing an earlier run
+or signed out. This control appears only on `/engelbart/setup/test`.
 
 `/engelbart/setup/test?mode=sim` runs the real setup page (`setup.js`, `install.js`,
 `setup.css`, unmodified) in a frame against a simulated control plane that

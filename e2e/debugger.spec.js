@@ -150,9 +150,14 @@ test("Real mode runs the setup page against the backend as the member and puts e
     // The onboarding endpoint, as the product's real one: a row, and the trace each action produced named in the reply.
     await page.route((url) => url.origin === stack.url && url.pathname === "/api/engelbart-onboarding", async (route) => {
       const request = route.request(), body = request.postDataJSON() || {};
-      onboardingCalls.push({ action: body.action, auth: request.headers().authorization || "" });
+      onboardingCalls.push({ action: body.action, scope: body.scope, auth: request.headers().authorization || "" });
       if (request.method() !== "POST" || request.headers().authorization !== "Bearer " + MEMBER_TOKEN) return json(route, 401, { error: "sign in first" });
       if (body.action === "open") return json(route, 200, { onboarding: row, calibrations: [], turns: [], profile_reused: false, credit: { status: "active", budgetUsd: 25, spendUsd: 0 }, own_key: { set: false } }, { "x-engelbart-trace-id": TRACE.open });
+      if (body.action === "reset") {
+        if (body.scope !== "project") return json(route, 400, { error: "Only the open project may be reset" });
+        Object.assign(row, { step: 0, name: "", year: "", major: "", depth: "" });
+        return json(route, 200, { onboarding: row, calibrations: [], turns: [], profile_reused: false });
+      }
       if (body.action === "step") { Object.assign(row, body.fields || {}); row.step = Math.max(Number(row.step) || 0, Number(body.step) || 0); row.updated_at = new Date().toISOString(); return json(route, 200, { onboarding: row }, { "x-engelbart-trace-id": TRACE.step }); }
       return json(route, 400, { error: "the test backend does not answer " + body.action });
     });
@@ -187,7 +192,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     const realFrame = page.frameLocator('iframe[title="Engelbart setup, running against the real backend"]');
     await expect(page.locator('iframe[title="Engelbart setup, running against the real backend"]')).toHaveAttribute("src", /\/engelbart\/setup\/test\/frame\?mode=real$/);
     await expect(page.locator("iframe")).toHaveCount(1);
-    await expect(page.getByRole("button", { name: "Reset test environment" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reset test environment" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Simulated" })).toHaveCount(0);
     await expect(page.getByText("real actions")).toHaveCount(0);
     await expect(page.getByText(/Model calls spend real credit/)).toHaveCount(0);
@@ -312,10 +317,26 @@ test("Real mode runs the setup page against the backend as the member and puts e
     const calls = onboardingCalls.length;
     await page.reload();
     await expect(page.locator('iframe[title="Engelbart setup, running against the real backend"]')).toBeVisible();
-    await expect(page.getByRole("button", { name: "Reset test environment" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reset test environment" })).toBeVisible();
     await expect(realFrame.locator(".ob-title", { hasText: "What year are you?" })).toBeVisible();
     await expect.poll(() => onboardingCalls.length).toBeGreaterThan(calls);
     await expect(page.locator("[id^=stage-]", { hasText: "onboarding · open" }).last()).toContainText("4 ops");
+
+    // Reset is available only in the debugger. Cancelling preserves the current
+    // setup; accepting sends the authenticated project reset and reloads it.
+    const resetCalls = () => onboardingCalls.filter(c => c.action === "reset");
+    page.once("dialog", dialog => dialog.dismiss());
+    await page.getByRole("button", { name: "Reset test environment" }).click();
+    expect(resetCalls()).toHaveLength(0);
+    await expect(realFrame.locator(".ob-title", { hasText: "What year are you?" })).toBeVisible();
+    page.once("dialog", async dialog => {
+      expect(dialog.message()).toContain("Completed projects, your saved profile, account, and credit stay");
+      await dialog.accept();
+    });
+    await page.getByRole("button", { name: "Reset test environment" }).click();
+    await expect(realFrame.locator(".ob-title", { hasText: "What is your name?" })).toBeVisible();
+    expect(resetCalls()).toEqual([{ action: "reset", scope: "project", auth: "Bearer " + MEMBER_TOKEN }]);
+    expect(new URL(page.url()).pathname).toBe("/engelbart/setup/test");
 
     // And back at the simulator URL: nothing is open, so the dashboard shows the environment, and opening it boots
     // the product exactly as before.
@@ -326,8 +347,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(page.getByRole("button", { name: "Reset test environment" })).toBeVisible();
     await expect(simFrame.locator(".ob-title", { hasText: "What is your name?" })).toBeVisible();
 
-    // Everything the debugger itself asked for was a read of the telemetry endpoint as the member; the only
-    // writes were the product's own, and it never asked for a reset.
+    // Telemetry remains read-only. The debugger makes exactly one write: the confirmed reset.
     const telemetry = apiRequests.filter((r) => r.path.startsWith("/api/engelbart-telemetry"));
     expect(telemetry.length).toBeGreaterThanOrEqual(4);
     for (const r of telemetry) { expect(r.method).toBe("GET"); expect(r.auth).toBe("Bearer " + MEMBER_TOKEN); expect(r.frame).toBe("page"); }
@@ -335,8 +355,12 @@ test("Real mode runs the setup page against the backend as the member and puts e
     expect(telemetry.some((r) => r.path === "/api/engelbart-telemetry?trace=" + TRACE.step)).toBe(true);
     expect(telemetry.some((r) => r.path === "/api/engelbart-telemetry?run=" + OLDER)).toBe(true);
     const writes = apiRequests.filter((r) => r.method !== "GET");
-    expect(writes.every((r) => r.path === "/api/engelbart-onboarding" && r.frame === "frame")).toBe(true);
-    expect(new Set(onboardingCalls.map((c) => c.action))).toEqual(new Set(["open", "step"]));
+    expect(writes.every((r) => r.path === "/api/engelbart-onboarding" && r.auth === "Bearer " + MEMBER_TOKEN)).toBe(true);
+    expect(writes.filter(r => r.frame === "page")).toHaveLength(1);
+    expect(new Set(onboardingCalls.map((c) => c.action))).toEqual(new Set(["open", "step", "reset"]));
+    await page.goto(`${stack.url}/engelbart/setup`);
+    await expect(page.locator(".ob-title", { hasText: "What is your name?" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reset test environment" })).toHaveCount(0);
     expect(cspViolations).toEqual([]);
     expect(pageErrors).toEqual([]);
   } finally {
