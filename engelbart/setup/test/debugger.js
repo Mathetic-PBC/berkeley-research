@@ -413,6 +413,35 @@ class Debugger extends React.Component {
       return this.realClient.list(token).then(body => this.setReal({ loading: false, runs: Array.isArray(body && body.runs) ? body.runs : [] }));
     }).catch(e => this.realFailed(e, "Could not load your runs."));
   }
+  // This control belongs to the debugger route only. Use the normal member-scoped
+  // project reset; completed setups, the saved profile, and credit are preserved.
+  async resetReal() {
+    if (!this.isReal() || this.resettingReal || this.state.real.picked) return;
+    if (!window.confirm("Reset the current test setup? This deletes your open setup and its answers, then starts a new one. Completed projects, your saved profile, account, and credit stay.")) return;
+    this.resettingReal = true;
+    this.setReal({ resetting: true, error: "" });
+    try {
+      const token = await this.realToken();
+      if (!token) throw new Error("Sign in to Engelbart before resetting your setup.");
+      const response = await window.fetch("/api/engelbart-onboarding", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ action: "reset", scope: "project" })
+      });
+      const body = await response.json();
+      if (!response.ok || !body.onboarding || !body.onboarding.id) {
+        const error = new Error(body.error || "Could not reset your setup.");
+        error.status = response.status; throw error;
+      }
+      // Reload the debugger as well as the product so old traces cannot remain
+      // attached to the new setup. Keep the URL and chosen prompt configuration.
+      window.location.reload();
+    } catch (error) {
+      this.realFailed(error, "Could not reset your setup.");
+    } finally {
+      this.resettingReal = false;
+      this.setReal({ resetting: false });
+    }
+  }
   // The frame's word on the member's session. Without one the product leaves for /engelbart/signin, which
   // refuses to be framed, so the pane says what happened and how to come back.
   frameSession(m) { this.setReal({ frameSession: { signedIn: !!m.signedIn, email: m.email || "", error: m.error || "" } }); }
@@ -1046,9 +1075,11 @@ class Debugger extends React.Component {
       V.isReal ? h("select", { value: R.promptValue, onChange: R.pickPrompts, "data-prompt-picker": "1", title: R.promptsTitle, style: css("max-width:260px;padding:6px 28px 6px 12px;border:1px solid " + (R.promptsApplied ? "#0070f3" : "#eaeaea") + ";border-radius:999px;background:#fff;font:500 12.5px/1.3 " + SANS + ";color:" + (R.promptsApplied ? "#0070f3" : "#171717") + ";outline:none;cursor:pointer") },
           R.promptOptions.map(o => h("option", { key: o.value, value: o.value }, o.label))) : null,
       h("span", { style: css("font:12px/1.4 " + SANS + ";color:#e70022;flex:1 1 40px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap") }, V.notice || (V.isReal ? R.error : "")),
-      V.isReal ? (R.email ? h("span", { title: "the member the product runs as", style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, R.email) : null)
-        : V.isDashboard ? null : h("button", { onClick: V.resetProduct, title: "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
-          style: css("padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px;white-space:nowrap") }, "Reset test environment"));
+      V.isReal ? (R.email ? h("span", { title: "the member the product runs as", style: css("font:11px/1 " + MONO + ";color:#8f8f8f") }, R.email) : null) : null,
+      V.isDashboard ? null : h("button", { onClick: V.isReal ? () => this.resetReal() : V.resetProduct,
+          disabled: V.isReal && (!!this.state.real.resetting || R.signedOut || !R.email || R.viewingPicked),
+          title: V.isReal ? "Reset your current open setup; completed projects and your saved profile stay" : "Drop the simulated account's setup, reload the product at step one, and clear every tab", className: "hv-ink-line",
+          style: css("padding:8px 14px;font:500 10px/1 " + SANS + ";letter-spacing:1.4px;text-transform:uppercase;color:#4d4d4d;background:transparent;border:1px solid #eaeaea;border-radius:999px;white-space:nowrap") }, this.state.real.resetting ? "Resetting…" : "Reset test environment"));
   }
   // The environments dashboard, Simulated mode's landing screen. Every environment is a card: the whole card
   // opens it, its × deletes it, Configure edits it and Reset clears it, both without opening it. Hover changes

@@ -161,7 +161,7 @@ test("the URL decides the mode; Real mode never hands the frame the product's te
   const bar = texts(P.d.renderTopBar(V));
   assert.ok(!bar.includes("Simulated") && !bar.includes("Real"), "no mode toggle: the mode is the URL's");
   assert.ok(!bar.includes("real actions"), "no warning badge");
-  assert.ok(!bar.includes("Reset test environment"), "no reset button in Real mode");
+  assert.ok(bar.includes("Reset test environment"), "the test debugger offers a real setup reset");
   assert.ok(!bar.some((t) => /Configure this environment/.test(t)), "no environment menu in Real mode");
   assert.equal(find(P.d.render(), (n) => n.props && n.props["data-screen-label"] === "Real mode notice").length, 0, "no strip under the bar");
   assert.equal(P.d.setMode, undefined, "and no way to switch");
@@ -877,4 +877,45 @@ test("the plain test link and unknown modes use live uploads, never fixture envi
     assert.ok(texts(P.d.renderTopBar(P.d.renderVals())).includes("Live · your uploads and model results"));
     await settle();
   }
+});
+
+test("live reset requires confirmation, sends the member-scoped project reset once, and reloads on success", async () => {
+  const P = page({ search: "" }); await settle();
+  const calls = []; let reloads = 0, resolve;
+  P.w.location.reload = () => { reloads++; };
+  P.w.fetch = (url, init) => { calls.push({ url, init }); return new Promise(r => { resolve = r; }); };
+  const button = () => find(P.d.renderTopBar(P.d.renderVals()), n => n.type === "button" && texts(n).includes("Reset test environment"))[0];
+  assert.equal(button().props.disabled, false);
+  P.w.confirm = () => false;
+  await button().props.onClick();
+  assert.equal(calls.length, 0);
+  P.w.confirm = () => true;
+  const pending = button().props.onClick(); await settle();
+  await P.d.resetReal();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/engelbart-onboarding");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer " + TOKEN);
+  same(JSON.parse(calls[0].init.body), { action: "reset", scope: "project" });
+  assert.equal(reloads, 0);
+  resolve({ ok: true, json: async () => ({ onboarding: { id: "fresh-setup" }, calibrations: [], profile_reused: false }) }); await pending; await flush();
+  assert.equal(reloads, 1);
+  assert.equal(P.d.state.real.resetting, false);
+});
+
+test("live reset preserves the screen on failure and cannot reset a historical run or signed-out session", async () => {
+  const P = page({ search: "" }); await settle();
+  let reloads = 0;
+  P.w.location.reload = () => { reloads++; };
+  P.w.fetch = async () => ({ ok: false, status: 500, json: async () => ({ error: "Reset unavailable" }) });
+  await P.d.resetReal(); await flush();
+  assert.equal(P.d.state.real.error, "Reset unavailable");
+  assert.equal(P.d.state.real.resetting, false);
+  assert.equal(reloads, 0);
+  P.d.state.real.picked = { onboarding_id: "older" };
+  P.w.fetch = () => { throw new Error("Must not send a reset"); };
+  await P.d.resetReal();
+  const Q = page({ search: "", signedIn: false }); await settle();
+  Q.w.fetch = () => { throw new Error("Must not send a reset"); };
+  await Q.d.resetReal(); await flush();
+  assert.match(Q.d.state.real.error, /Sign in/);
 });
