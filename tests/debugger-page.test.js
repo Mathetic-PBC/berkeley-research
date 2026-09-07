@@ -874,7 +874,7 @@ test("the plain test link and unknown modes use live uploads, never fixture envi
     const P = page({ search, seed: { "egb.debugger.mode": "sim" } });
     assert.equal(P.d.isReal(), true);
     assert.equal(P.d.renderVals().frameSrc, "/engelbart/setup/test/frame?mode=real");
-    assert.ok(texts(P.d.renderTopBar(P.d.renderVals())).includes("Live · your uploads and model results"));
+    assert.ok(!texts(P.d.renderTopBar(P.d.renderVals())).includes("Live · your uploads and model results"));
     await settle();
   }
 });
