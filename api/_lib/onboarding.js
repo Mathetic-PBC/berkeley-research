@@ -601,14 +601,14 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
     // they answered with their choices marked instead of a flattened line.
     const made = await addTurn(user, row, "brainstorm", "", "user", said, userTurnCard(body), options);
     turns.push(made);
-  } else if (turns.length && turns.filter((t) => t.role === "user" && t.content && t.content.trim() !== "(skipped those)").length < 2) {
+  } else if (turns.length && turns.filter((t) => t.role === "user" && t.content && t.content.trim() !== "(skipped those)").length < 3) {
     // Nothing new to say and a conversation already open: the last card
     // stands, so hand it back rather than ask the model to repeat itself.
     return { ...publicReply(lastAssistant), leveled_status: row.leveled_status, interest: row.interest || "" };
   }
   const responses = turns.filter((t) => t.role === "user" && String(t.content || "").trim() && t.content.trim() !== "(skipped those)");
-  const capped = responses.length >= 2;
-  // One final model call can summarize the second response, but cannot ask a
+  const capped = responses.length >= 3;
+  // One final model call can summarize the third response, but cannot ask a
   // third question. Older overlong transcripts settle without another call.
   let reply;
   try {
