@@ -807,12 +807,14 @@ test("a member who arrives with a key sees it named in the rail", async () => {
   assert.ok(keyLink(page, "Change or remove the key"));
 });
 
-test("reloading an old two-response Brainstorm hides another question even if its stored ready is false", async () => {
+test("reloading an old three-response Brainstorm hides another question even if its stored ready is false", async () => {
   const question = { card: "questions", ready: false, questions: { items: [{ id: "q", type: "free", title: "Another intake question?" }] } };
   const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }), turns: [
     { role: "assistant", content: "(asked) Another intake question?", card: question },
     { role: "user", content: "Something visual", card: { text: "Something visual" } },
     { role: "assistant", content: "(asked) Another intake question?", card: question },
+    { role: "user", content: "Compare before and after help", card: { text: "Compare before and after help" } },
+    { role: "assistant", content: "", card: question },
     { role: "user", content: "Repeated attempts", card: { text: "Repeated attempts" } },
     { role: "assistant", content: "(asked) Another intake question?", card: question },
   ] });
