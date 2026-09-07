@@ -138,7 +138,7 @@ function mount(options = {}) {
       if (body.action === "analysis") return answer({ analysis_status: "done", analysis: ANALYSIS });
       if (body.action === "assets") return answer({ assets_status: "done", assets: { assets: LEVELED.assets }, assets_brief: row.assets_brief || [] });
       if (body.action === "answer") return answer({ graded_level: 50, grade_confidence: 0.8, grade_rationale: "fine" });
-      if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 7 }; return answer({ assessment: ASSESSMENT }); }
+      if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 8 }; return answer({ assessment: ASSESSMENT }); }
       if (body.action === "leveled") return answer({ leveled_status: "done", leveled: LEVELED, assets_status: "done" });
       if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick || body.again
         ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status, ready: true }
@@ -202,7 +202,7 @@ function mount(options = {}) {
 test("every step draws from the record, and none of them throws", async () => {
   const titles = ["What is your name?", "What year are you?", "What is your major?",
     "How technical should explanations be?", "Which paper are you building on?", "Which computer are you on?",
-    "How familiar are you with the paper's concepts?", "What do you want to build?",
+    "What do you want to build?", "How familiar are you with the paper's concepts?",
     "What do you want to build on?", "Pose to angles", "Pose to angles", "One pose drawn"];
   for (let step = 0; step < titles.length; step += 1) {
     const page = mount({ row: fullRow({ step }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] });
@@ -267,7 +267,7 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
   await settle();
   assert.equal(page.row().step, 6);
   assert.doesNotMatch(textOf(page.app), /Two things you can do on every screen/);
-  assert.equal(page.title(), "How familiar are you with the paper's concepts?");
+  assert.equal(page.title(), "What do you want to build?");
 });
 
 // ⏎ is Continue. A reader who has just clicked an option should not have to
@@ -301,7 +301,7 @@ test("the register control rewrites what is on the screen and moves the profile'
   const early = mount({ row: fullRow({ step: 1 }) });
   await settle();
   assert.equal(one(early.app, "ob-reg"), undefined, "not before the paper");
-  const page = mount({ row: fullRow({ step: 6, depth: "some" }) });
+  const page = mount({ row: fullRow({ step: 7, depth: "some" }) });
   await settle();
   let reg = one(page.app, "ob-reg");
   assert.ok(reg, "the control is on the topics step");
@@ -440,7 +440,7 @@ test("typing a major narrows the seeds without replacing the field", async () =>
 test("topics are answered one area at a time, a disagreeing grade asks once more, and samples never show", async () => {
   let calls = 0;
   const page = mount({
-    row: fullRow({ step: 6, assessment: null, leveled_status: "none", leveled: null, todos: null, goal_chosen: "" }),
+    row: fullRow({ step: 7, assessment: null, leveled_status: "none", leveled: null, todos: null, goal_chosen: "" }),
     replies: { answer: () => { calls += 1; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
       calls === 1 ? { graded_level: 25, grade_rationale: "recognises only", follow_up: { question_level: 25, question: "You said weights: weights of what?", generated: true },
                      calibrations: [{ id: "c1", area_index: 0, question_level: 0, answered_at: "2026-09-03T00:00:00Z", graded_level: 25 },
@@ -468,14 +468,14 @@ test("topics are answered one area at a time, a disagreeing grade asks once more
   answerBox().value = "tensors"; answerBox().fire("input");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "What do you want to build?", "the last area compiles the assessment and opens the brainstorm");
-  assert.deepEqual(page.actions.slice(-4), ["answer", "topics_done", "leveled", "brainstorm"]);
+  assert.equal(page.title(), "What do you want to build on?", "the last area compiles the assessment and opens resources");
+  assert.deepEqual(page.actions.slice(-3), ["answer", "topics_done", "leveled"]);
   assert.equal(page.bodies.find((b) => b.action === "leveled").run, true);
 });
 
 test("a follow-up is a stored row: it survives a reload, the slider cannot move it, and the next area is untouched", async () => {
   const page = mount({
-    row: fullRow({ step: 6, assessment: null }),
+    row: fullRow({ step: 7, assessment: null }),
     calibrations: [{ id: "c1", area_index: 0, question_level: 50, answered_at: "2026-09-03T00:00:00Z", graded_level: 25, self_level: 50 },
       { id: "c2", area_index: 0, question_level: 25, question: "From what you said: which part is learned?", answered_at: null, self_level: 50 }],
     replies: { answer: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
@@ -506,7 +506,7 @@ test("a follow-up is a stored row: it survives a reload, the slider cannot move 
 });
 
 test("the brainstorm opens on the card, keeps answered cards as cards, and offers the plan only when the model says ready", async () => {
-  const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
+  const page = mount({ row: fullRow({ step: 6, leveled_status: "running", leveled: null }) });
   await settle();
   assert.equal(page.title(), "What do you want to build?");
   assert.equal(page.actions.filter((a) => a === "brainstorm").length, 1, "the opening turn is asked for once");
@@ -538,7 +538,7 @@ test("the brainstorm opens on the card, keeps answered cards as cards, and offer
 });
 
 test("the main column keeps its scroll across redraws, a sent turn scrolls to the thinking row, and Skip goes to the resources once they are ready", async () => {
-  const page = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
+  const page = mount({ row: fullRow({ step: 6, leveled_status: "done", leveled: LEVELED }) });
   await settle();
   one(page.app, "ob-main").scrollTop = 300;
   byClass(page.app, "ob-goal")[0].fire("click");                       // redraws in place
@@ -549,7 +549,7 @@ test("the main column keeps its scroll across redraws, a sent turn scrolls to th
   assert.equal(page.title(), "What do you want to build on?", "skipping with the resources ready is choosing to plan");
   assert.equal(page.bodies.filter((b) => b.action === "brainstorm").length, 1, "no extra turn was asked for");
 
-  const early = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
+  const early = mount({ row: fullRow({ step: 6, leveled_status: "running", leveled: null }) });
   await settle();
   assert.equal(textOf(byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b)))), "Skip to resources");
   byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b))).fire("click");
@@ -559,7 +559,7 @@ test("the main column keeps its scroll across redraws, a sent turn scrolls to th
 });
 
 test("clicking a block offers Ask about this in the gutter, and the button opens the ask panel on that text", async () => {
-  const page = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
+  const page = mount({ row: fullRow({ step: 6, leveled_status: "done", leveled: LEVELED }) });
   await settle();
   const option = byClass(page.app, "ob-goal")[1];
   page.doc.fire("click", { target: option });                          // capture: the document sees it first
@@ -581,7 +581,7 @@ test("clicking a block offers Ask about this in the gutter, and the button opens
   await settle();
   assert.ok(one(early.app, "ob-askbtn"), "the first step offers Ask about this too");
   // A click on empty space puts the button away.
-  const fresh = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
+  const fresh = mount({ row: fullRow({ step: 6, leveled_status: "done", leveled: LEVELED }) });
   await settle();
   fresh.doc.fire("click", { target: byClass(fresh.app, "ob-goal")[0] });
   await settle();
@@ -593,7 +593,7 @@ test("clicking a block offers Ask about this in the gutter, and the button opens
 
 test("a reloaded brainstorm redraws every answered card with its answers, from the stored user turns", async () => {
   const page = mount({
-    row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }),
+    row: fullRow({ step: 6, leveled_status: "done", leveled: LEVELED }),
     turns: [
       { id: "t1", role: "assistant", content: "", card: { card: "questions", questions: { eyebrow: "first", items: [
         { id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math" }] },
@@ -707,7 +707,7 @@ test("a second setup starts at the paper and counts six steps from there", async
   await settle();
   assert.equal(page.title(), "Which paper are you building on?");
   assert.equal(textOf(one(page.app, "ob-count")), "Step 1 of 8");
-  assert.deepEqual(byClass(page.app, "ob-label").map(textOf), ["Paper", "Install", "Topics", "Brainstorm", "Assets", "Direction", "Subgoals", "Todos"]);
+  assert.deepEqual(byClass(page.app, "ob-label").map(textOf), ["Paper", "Install", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"]);
   assert.equal(textOf(one(page.app, "ob-caption")), "Setting up another project");
   assert.equal(textOf(one(page.app, "ob-profile-line")), "Ada · First year · Physics · Some detail");
   // The way back to the four answers, for the member whose situation changed.
@@ -809,7 +809,7 @@ test("a member who arrives with a key sees it named in the rail", async () => {
 
 test("reloading an old three-response Brainstorm hides another question even if its stored ready is false", async () => {
   const question = { card: "questions", ready: false, questions: { items: [{ id: "q", type: "free", title: "Another intake question?" }] } };
-  const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }), turns: [
+  const page = mount({ row: fullRow({ step: 6, leveled_status: "running", leveled: null }), turns: [
     { role: "assistant", content: "(asked) Another intake question?", card: question },
     { role: "user", content: "Something visual", card: { text: "Something visual" } },
     { role: "assistant", content: "(asked) Another intake question?", card: question },
@@ -864,4 +864,37 @@ test('Assets shows access fallbacks separately from the restricted original and 
     assert.match(textOf(page.app),/instead of Original ICU records/);
     assert.equal(textOf(one(page.app,'ob-as-level')),kind === 'synthetic_fallback'?'synthetic':'fallback');
   }
+});
+
+test("Brainstorm works before assessment, then continues to Topics without fitting resources early", async () => {
+  const page = mount({ row: fullRow({ step: 6, assessment: null, leveled_status: "none", leveled: null }) });
+  await settle();
+  assert.equal(page.title(), "What do you want to build?");
+  assert.equal(page.actions.includes("leveled"), false);
+  assert.doesNotMatch(textOf(page.app), /Answer the topic questions first|fitting resources to you/);
+  byClass(page.app, "ob-goal")[1].fire("click");
+  page.cta().fire("click");
+  await settle();
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.row().step, 7);
+  assert.equal(page.title(), "How familiar are you with the paper's concepts?");
+  assert.equal(page.actions.includes("leveled"), false);
+});
+
+test("skipping fresh Brainstorm goes to Topics and a failed paper can be retried there before any questions", async () => {
+  const page = mount({ row: fullRow({ step: 6, assessment: null, leveled_status: "none", leveled: null }) });
+  await settle();
+  byClass(page.app, "ob-ghost").find(b => textOf(b) === "Skip to Topics").fire("click");
+  await settle();
+  assert.equal(page.row().step, 7);
+  assert.equal(page.title(), "How familiar are you with the paper's concepts?");
+  assert.equal(page.actions.filter(a => a === "brainstorm").length, 1);
+  const failed = mount({ row: fullRow({ step: 6, assessment: null, analysis_status: "error", analysis_error: "Reading failed" }) });
+  await settle();
+  assert.equal(failed.title(), "The paper could not be read");
+  assert.equal(textOf(failed.cta()), "Try again›");
+  failed.cta().fire("click");
+  await settle();
+  assert.ok(failed.bodies.some(b => b.action === "analysis" && b.retry === true));
 });

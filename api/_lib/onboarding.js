@@ -23,7 +23,7 @@ const CALIBRATIONS = "engelbart_onboarding_calibrations";
 const ASKS = "engelbart_onboarding_asks";
 const TURNS = "engelbart_onboarding_turns";
 const PROFILES = "hc_profiles";
-const STEP = { paper: 4, install: 5, topics: 6, brainstorm: 7, assets: 8, direction: 9, subgoals: 10, todos: 11, done: 12 };
+const STEP = { paper: 4, install: 5, topics: 7, brainstorm: 6, assets: 8, direction: 9, subgoals: 10, todos: 11, done: 12 };
 const LINK_CHECK_MS = 5000;
 const MAX_LINK_CHECKS = 40;
 const RUNNING_STALE_MS = 180 * 1000;
@@ -133,6 +133,13 @@ async function open(user, body, options = {}) {
   }
   const calibrations = await calibrationsOf(row, options);
   const turns = await turnsOf(row, "brainstorm", "", options);
+  // Old step 7 meant Brainstorm after an already-completed assessment.
+  // New runs leave Topics at step 8, so this identifies old in-flight rows.
+  if (row.status === "open" && Number(row.step) === 7 && row.assessment) {
+    const last = [...turns].reverse().find((t) => t.role === "assistant");
+    const finished = last && last.card && last.card.ready || turns.filter((t) => t.role === "user" && String(t.content || "").trim() && t.content !== "(skipped those)").length >= 3;
+    await patch(row, { step: finished ? STEP.assets : STEP.brainstorm }, options);
+  }
   return { onboarding: publicRow(row), calibrations: calibrations.map(publicRow),
     turns: turns.map(publicTurn), profile_reused: Boolean(prior) };
 }
@@ -492,7 +499,7 @@ async function topicsDone(user, row, calibrations, body, options = {}) {
     return out;
   });
   if (!assessment.areas.some((a) => a.questions_asked > 0)) throw fail("Answer the topic questions first", 400);
-  await patch(row, { assessment, step: Math.max(Number(row.step) || 0, STEP.brainstorm) }, options);
+  await patch(row, { assessment, step: Math.max(Number(row.step) || 0, STEP.assets) }, options);
   return { assessment };
 }
 
