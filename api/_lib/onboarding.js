@@ -735,6 +735,7 @@ async function directionAction(user, row, calibrations, body, credentials, optio
     return { direction: row.direction, asset_chosen: row.asset_chosen, leveled: row.leveled };
   }
   const turns = await turnsOf(row, "brainstorm", "", options);
+  await ensurePaperGrounding(row, credentials, options);
   const made = await OM.direction({ reader: readerOf(row, calibrations), paper: paperOf(row), interest: row.interest || "",
     assessment: row.assessment, turns: turns.map((t) => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
     leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
@@ -752,6 +753,7 @@ async function subgoalsAction(user, row, calibrations, body, credentials, option
   Resources.assertUsable(row.direction, row.asset_chosen, row.leveled?.assets || row.assets?.assets || []);
   const feedback = long(body && body.revise, 1000);
   if (row.subgoals && !feedback && !(body && body.regenerate)) return { subgoals: row.subgoals };
+  await ensurePaperGrounding(row, credentials, options);
   const made = await OM.subgoals({ reader: readerOf(row, calibrations), paper: paperOf(row), direction: row.direction,
     asset: row.asset_chosen, leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
     previous: feedback ? row.subgoals : null, feedback }, credentials, options);
@@ -941,7 +943,19 @@ function introFor(row, reader) {
 
 function paperOf(row) {
   const a = row.analysis || {};
-  return { title: one(a.title || row.paper_title, 60), one_liner: one(a.one_liner, 300) };
+  return { title: one(a.title || row.paper_title, 60), one_liner: one(a.one_liner, 300),
+    ...(a.grounding ? {grounding: a.grounding} : {}) };
+}
+
+// Old completed analyses retain compatibility; enrich from their canonical PDF
+// before a new paper-dependent plan is generated. Never fabricate from a title.
+async function ensurePaperGrounding(row, credentials, options) {
+  if (row.analysis?.grounding || !row.paper_id) return;
+  const mine=row.paper_id;
+  const pdf=await Storage.downloadObject(Storage.paperObjectPath(mine), {...options,maxBytes:MAX_PDF_BYTES});
+  const grounding=await OM.paperGrounding({pdfBase64:pdf.toString("base64")},credentials,options);
+  if (await supersededBy(row,mine,options,"paper-grounding.check-superseded")) throw fail("The paper changed; retry with the current paper",409);
+  await patch(row,{analysis:{...row.analysis,grounding}},options);
 }
 
 // --- generation ---------------------------------------------------------------
@@ -973,6 +987,7 @@ async function todos(user, row, calibrations, body, credentials, options = {}) {
   if (!row.direction || !Array.isArray(row.subgoals) || !row.subgoals.length) throw fail("Settle the subgoals first", 409);
   if (Array.isArray(row.todos) && row.todos.length && !(body && body.regenerate)) return { todos: row.todos, name: row.project_name };
   const reader = readerOf(row, calibrations);
+  await ensurePaperGrounding(row, credentials, options);
   const made = await OM.todos({ reader, paper: paperOf(row), direction: row.direction, subgoal: row.subgoals[0],
     resources: row.asset_chosen ? [row.asset_chosen] : [] }, credentials, options);
   await patch(row, { todos: made.todos, goal_chosen: row.direction.title, project_name: row.project_name || made.name,
@@ -1027,6 +1042,7 @@ function toPayload(row, calibrations) {
   const description = [d.what_you_would_make || row.project_draft, d.why_it_fits,
     paper.title ? `Building on “${paper.title}” — ${paper.one_liner}` : "",
     row.asset_chosen ? `Starting from ${row.asset_chosen.title}${row.asset_chosen.links && row.asset_chosen.links[0] ? ` <${row.asset_chosen.links[0].url}>` : ""}.` : "",
+    d.paperBasis ? `Paper-grounded path: ${d.paperBasis.reproduce} Then ${d.paperBasis.interrogate} After observing that: ${d.paperBasis.extend} ${d.paperBasis.limitation || ""}` : "",
     row.interest ? `What drew them: ${row.interest}` : ""].filter(Boolean).join("\n\n");
   const payload = {
     resources: require("./project-resources").fromOnboarding(row),

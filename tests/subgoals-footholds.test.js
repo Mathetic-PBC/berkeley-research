@@ -45,7 +45,7 @@ for (const { id, input } of cases) for (const revise of [false, true]) {
         },
       });
       const expected = override ? P.render("subgoalsPrompt", args, overrides) : prompt;
-      assert.equal(sent.messages[0].content[0].text, expected);
+      assert.equal(sent.messages[0].content[0].text, expected + "\n\n" + require("../api/_lib/paper-grounding").rules(args,"subgoals"));
       assert.equal(expected, BP.render("subgoalsPrompt", args, overrides));
       assert.deepEqual(out, reply, "normalization preserves order and the existing output schema");
     }
