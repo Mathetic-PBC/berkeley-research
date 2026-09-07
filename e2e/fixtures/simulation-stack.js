@@ -240,7 +240,9 @@ class SimulationStack {
         return send(response, 200, {
           onboarding: clone(this.row),
           calibrations: [],
-          turns: [],
+          // This fixture starts after project shaping. Keep its completed
+          // Brainstorm transcript consistent with the persisted direction.
+          turns: [{ id: "fixture-brainstorm", role: "assistant", content: "Test the browser-to-CLI handoff.", card: { card: "none", ready: true } }],
           profile_reused: false,
           credit: { status: "active", budgetUsd: 25, spendUsd: 0 },
         });
