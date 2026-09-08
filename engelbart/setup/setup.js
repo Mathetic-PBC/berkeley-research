@@ -63,6 +63,7 @@
     base: 0,            // 4 once the profile steps are behind them: Paper is then the first of six
     test: false,        // ?test=true: every step is a click away, and the record can be cleared
     ui: {
+      railCollapsed: false,
       yearOther: false, yearText: "",
       depthPos: 0.25, depthTouched: false,
       pfile: null,      // { name, meta, id, token } once uploaded; { name, meta, uploading } meanwhile
@@ -83,6 +84,8 @@
     busy: "",           // what is being generated, for the indicator
     error: ""
   };
+
+  try { st.ui.railCollapsed = window.localStorage.getItem("engelbart.setup.railCollapsed") === "1"; } catch (e) { /* Storage can be disabled. */ }
 
   // --- helpers ---------------------------------------------------------------
 
@@ -259,9 +262,28 @@
       st.step >= DONE ? (r.todos || []).length + " todos" : ""];
   }
 
+  function updateRailToggle(button) {
+    var collapsed = st.ui.railCollapsed;
+    attr(app, "data-rail-collapsed", collapsed ? "1" : "0");
+    button.textContent = collapsed ? "›" : "‹";
+    attr(button, "aria-expanded", collapsed ? "false" : "true");
+    attr(button, "aria-label", collapsed ? "Expand navigation" : "Collapse navigation");
+    attr(button, "title", collapsed ? "Expand navigation" : "Collapse navigation");
+  }
+
   function railView() {
     var rail = el("div", "ob-rail");
-    rail.appendChild(el("div", "ob-brand", "Engelbart"));
+    var header = el("div", "ob-rail-header");
+    header.appendChild(el("div", "ob-brand", "Engelbart"));
+    var toggle = el("button", "ob-rail-toggle"); toggle.type = "button";
+    updateRailToggle(toggle);
+    on(toggle, "click", function () {
+      st.ui.railCollapsed = !st.ui.railCollapsed;
+      try { window.localStorage.setItem("engelbart.setup.railCollapsed", st.ui.railCollapsed ? "1" : "0"); } catch (e) { /* The control still works without storage. */ }
+      // Change layout in place: keep inputs, scroll, and preview frames alive.
+      updateRailToggle(toggle);
+    });
+    header.appendChild(toggle); rail.appendChild(header);
     rail.appendChild(el("div", "ob-caption", st.base ? "Setting up another project" : "Setting up your first project"));
     var vals = railValues(), reach = (st.row && st.row.step) || 0;
     if (st.base) {
@@ -284,7 +306,15 @@
       var row = el("div", "ob-row");
       attr(row, "data-active", active ? "1" : "0");
       attr(row, "data-reach", reachable && !active ? "1" : "0");
-      if (reachable && !active) on(row, "click", function () { go(i); });
+      attr(row, "title", label); attr(row, "aria-label", label);
+      if (active) attr(row, "aria-current", "step");
+      if (reachable && !active) {
+        attr(row, "role", "button"); attr(row, "tabindex", "0");
+        on(row, "click", function () { go(i); });
+        on(row, "keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(i); }
+        });
+      }
       var circle = el("span", "ob-circle", done ? "✓" : String(i - st.base + 1));
       attr(circle, "data-state", done ? "done" : active ? "now" : "todo");
       row.appendChild(circle);
