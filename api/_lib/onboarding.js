@@ -474,10 +474,17 @@ function compileAssessment(row, calibrations) {
     depth: assessed.key, depth_shift: assessed.shift, compiled_at: new Date().toISOString() };
 }
 
+// Compile only real answers. Missing and unanswered areas remain unknown.
+function latestAssessment(row, calibrations) {
+  const out = compileAssessment(row, calibrations);
+  delete out.compiled_at; // Evidence identity does not change merely because it was read again.
+  return out.areas.some((a) => a.questions_asked > 0) ? out : null;
+}
+
 async function topicsDone(user, row, calibrations, body, options = {}) {
   requireOpen(row);
   if (row.analysis_status !== "done") throw fail("The paper is still being read", 409);
-  const assessment = await telemetry.runOperation({ name: "assessment.compile", type: "processing",
+  const compiled = await telemetry.runOperation({ name: "assessment.compile", type: "processing",
     reads: ["calibrations", "analysis", "profile"], writes: ["assessment"],
     attributes: { "engelbart.assessment.calibrations": (calibrations || []).length } }, async (op) => {
     const out = compileAssessment(row, calibrations);
@@ -486,23 +493,21 @@ async function topicsDone(user, row, calibrations, body, options = {}) {
     op.snapshot("processing_output", out);
     return out;
   });
-  if (!assessment.areas.some((a) => a.questions_asked > 0)) throw fail("Answer the topic questions first", 400);
+  const assessment = compiled.areas.some((a) => a.questions_asked > 0) ? compiled : null;
   await patch(row, { assessment, step: Math.max(Number(row.step) || 0, STEP.assets) }, options);
   return { assessment };
 }
 
 // --- the assets, re-cut for this reader -----------------------------------------
 //
-// Needs the hunt AND the assessment. Started by the page as soon as the
-// topics are answered; while the hunt is still out, it answers `waiting`
-// and the page asks again during the brainstorm.
+// Needs the hunt. Topic evidence is optional; profile and familiarity are enough.
 
 async function runLeveled(user, row, calibrations, credentials, options) {
   const mine = row.paper_id;
   await patch(row, { leveled_status: "running", leveled_started_at: new Date().toISOString(), leveled_error: "" },
     traced(options, "leveled.mark-running"));
   try {
-    const leveled = await OM.levelAssets({ reader: readerOf(row, calibrations), assessment: row.assessment,
+    const leveled = await OM.levelAssets({ reader: readerOf(row, calibrations), assessment: latestAssessment(row, calibrations),
       assets: row.assets.assets, interest: row.interest || "" }, credentials, options);
     await verifyLinks(leveled.assets, options, "leveled");
     if (await supersededBy(row, mine, options, "leveled.check-superseded")) return { leveled_status: outcome("superseded") };
@@ -535,7 +540,6 @@ async function leveledAction(user, row, calibrations, body, credentials, options
     }
   }
   if (body && (body.run || body.retry)) {
-    if (!row.assessment) throw fail("Answer the topic questions first", 409);
     if (row.assets_status !== "done" || !row.assets) {
       if (row.assets_status === "error") return { leveled_status: "waiting", assets_status: "error", assets_error: row.assets_error };
       return { leveled_status: "waiting", assets_status: row.assets_status };
@@ -581,11 +585,35 @@ function assistantTurnText(reply) {
   return parts.filter(Boolean).join("\n");
 }
 
+async function initialBrainstorm(user, row, calibrations, body, credentials, options) {
+  options = Budget.start(options);
+  const args = { p_user: user.id, p_id: row.id, p_paper: row.paper_id,
+    p_token: crypto.randomUUID(), p_retry: body.retry === true };
+  const transition = (p_save = null) => rpc("engelbart_brainstorm_opening", { ...args, p_save }, options);
+  let result = await transition();
+  if (result.status === "claimed") {
+    let saved;
+    try {
+      const reply = await OM.brainstorm({ reader: readerOf(row, calibrations), paper: paperOf(row),
+        assessment: latestAssessment(row, calibrations), brief: row.assets_brief || [],
+        turns: [], readyAsked: true, opening: true }, credentials, options);
+      saved = { status: "done", content: assistantTurnText(reply),
+        card: { card: reply.card, questions: reply.questions, focus: reply.focus, ready: reply.ready === true } };
+    } catch (error) {
+      saved = { status: "error", error: one(error.message, 300) || "Could not prepare the first question" };
+    }
+    result = await transition(saved);
+  }
+  return { initial_status: result.status, initial_error: result.error || "",
+    ...(result.turn ? publicReply(result.turn) : {}), leveled_status: row.leveled_status };
+}
+
 async function brainstormAction(user, row, calibrations, body, credentials, options = {}) {
   requireOpen(row);
   if (row.analysis_status !== "done") throw fail("The paper is still being read", 409);
   const turns = await turnsOf(row, "brainstorm", "", options);
   const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");
+  if (body.prewarm || (!turns.length && !userTurnText(body))) return initialBrainstorm(user, row, calibrations, body, credentials, options);
   // A settled conversation stays settled across polling, reloads, and again.
   if (lastAssistant && lastAssistant.card && lastAssistant.card.ready) {
     return { ...publicReply(lastAssistant), leveled_status: row.leveled_status, interest: row.interest || "" };
@@ -608,7 +636,7 @@ async function brainstormAction(user, row, calibrations, body, credentials, opti
   let reply;
   try {
     reply = capped && !said ? { card: "none", ready: true } : await OM.brainstorm({
-      reader: readerOf(row, calibrations), paper: paperOf(row), assessment: row.assessment,
+      reader: readerOf(row, calibrations), paper: paperOf(row), assessment: latestAssessment(row, calibrations),
       brief: row.assets_brief || [], turns: turns.map((t) => ({ role: t.role, content: t.content })), readyAsked: true,
     }, credentials, options);
   } catch (error) {
@@ -710,7 +738,7 @@ async function plan(user, row, calibrations, body, credentials, options = {}) {
   const feedback = long(body.revise, 1000);
   const turns = kind === "direction" ? await turnsOf(row, "brainstorm", "", options) : [];
   const input = { reader: readerOf(row, calibrations), paper: paperOf(row), interest: row.interest || "",
-    assessment: row.assessment, turns: turns.map(t => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
+    assessment: latestAssessment(row, calibrations), turns: turns.map(t => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
     leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
     direction: row.direction, subgoal: row.subgoals?.[0], resources: [row.asset_chosen],
     previous: feedback ? (kind === "subgoals" ? { subgoals: row.subgoals } : row.direction) : null, feedback };
@@ -742,7 +770,7 @@ async function directionAction(user, row, calibrations, body, credentials, optio
   const turns = await turnsOf(row, "brainstorm", "", options);
   await ensurePaperGrounding(row, credentials, options);
   const made = await OM.direction({ reader: readerOf(row, calibrations), paper: paperOf(row), interest: row.interest || "",
-    assessment: row.assessment, turns: turns.map((t) => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
+    assessment: latestAssessment(row, calibrations), turns: turns.map((t) => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
     leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
     previous: feedback ? row.direction : null, feedback }, credentials, options);
   Resources.assertUsable(made, row.asset_chosen, row.leveled?.assets || row.assets?.assets || []);
@@ -923,7 +951,8 @@ function readerOf(row, calibrations) {
   const levels = areaLevels(row.analysis, calibrations);
   const assessed = assessedDepth(row.depth, levels);
   return { name: row.name, year: row.year, major: row.major, depth: assessed.key,
-    knowledge: knowledgeOf(row.analysis, calibrations), assessed };
+    knowledge: knowledgeOf(row.analysis, calibrations), assessed,
+    paper_familiarity: row.paper_familiarity, chosen_depth: row.depth };
 }
 
 function registerNote(row, reader) {
@@ -1129,6 +1158,6 @@ module.exports = {
   plan, paperGrounding, open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
   assets: assetsAction, topicsDone, leveled: leveledAction, brainstorm: brainstormAction, assetAsk, chooseAsset,
   direction: directionAction, subgoals: subgoalsAction,
-  areaLevels, knowledgeOf, assessedDepth, readerOf, toPayload, analysisRunning, publicRow,
+  latestAssessment, areaLevels, knowledgeOf, assessedDepth, readerOf, toPayload, analysisRunning, publicRow,
   compileAssessment, verifyLinks, findAsset, userTurnText,
 };

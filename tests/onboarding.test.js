@@ -47,6 +47,23 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
     const body = init.body ? JSON.parse(init.body) : null;
     const json = (value, status = 200) => ({ ok: status < 300, status, async text() { return JSON.stringify(value); }, async json() { return value; },
       async arrayBuffer() { return pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength); } });
+    if (u.pathname.endsWith("/rpc/engelbart_brainstorm_opening")) {
+      const row = tables.engelbart_onboardings.find(r => r.id === body.p_id);
+      const turns = tables.engelbart_onboarding_turns;
+      const turn = turns.find(t => t.onboarding_id === row.id && t.stage === "brainstorm" && t.role === "assistant");
+      if (turn) return json({ status: "done", turn });
+      row.planning ||= {};
+      if (!body.p_save) {
+        row.planning.brainstorm_initial = { status: "running", token: body.p_token };
+        return json({ status: "claimed" });
+      }
+      row.planning.brainstorm_initial = body.p_save;
+      if (body.p_save.status === "error") return json(body.p_save);
+      const made = { id: `id-${++ids}`, onboarding_id: row.id, stage: "brainstorm", role: "assistant",
+        content: body.p_save.content, card: body.p_save.card };
+      turns.push(made);
+      return json({ status: "done", turn: made });
+    }
     if (u.pathname.startsWith("/rest/v1/rpc/")) { rpcs.push({ name: u.pathname.split("/").pop(), body }); return json("33333333-3333-3333-3333-333333333333"); }
     if (u.pathname.startsWith("/rest/v1/")) {
       const table = u.pathname.slice("/rest/v1/".length);
@@ -694,14 +711,14 @@ test("topics_done compiles the assessment from the calibration rows without the 
   assert.equal(out.assessment.mean, 38);
   assert.equal(out.assessment.depth, "technical", "a mean between the shifts leaves the register alone");
   assert.equal(row.step, OB.STEP.assets);
-  await assert.rejects(OB.topicsDone(USER, row, [], {}, db.options), (e) => e.statusCode === 400);
+  assert.equal((await OB.topicsDone(USER, row, [], { skip: true }, db.options)).assessment, null);
 });
 
 test("leveled waits for the hunt, then re-cuts the assets with children and checks their links", async () => {
   const db = fake({ model: { assets: ASSETS, leveled: LEVELED }, dead: ["https://x.org/gone"] });
   const row = await ready(db);
   const cals = db.tables.engelbart_onboarding_calibrations;
-  await assert.rejects(OB.leveled(USER, row, cals, { run: true }, CREDS, db.options), (e) => e.statusCode === 409, "needs the assessment");
+  assert.equal((await OB.leveled(USER, row, [], { run: true }, CREDS, db.options)).leveled_status, "waiting");
   await OB.topicsDone(USER, row, cals, {}, db.options);
   const waiting = await OB.leveled(USER, row, cals, { run: true }, CREDS, db.options);
   assert.equal(waiting.leveled_status, "waiting");
@@ -1108,4 +1125,58 @@ test("the deferred grounding endpoint caches its full-paper extraction", async (
   assert.deepEqual(await OB.paperGrounding(USER, row, {}, CREDS, db.options), first);
   assert.equal(modelCalls(db), 1);
   assert.equal(row.direction, null);
+});
+
+test("the opening uses profile and familiarity; later turns use fresh partial evidence without restarting", async () => {
+  const prompts = [];
+  const db = fake({ model: { brainstorm: prompt => {
+    prompts.push(prompt);
+    return { card: "questions", ready: false, questions: {items:[{id:"idea",type:"text",title:"Which result would you compare?"}]} };
+  } } });
+  const row = await ready(db, {step:7,assessment:null,paper_familiarity:3});
+  db.tables.engelbart_onboarding_calibrations.length = 0;
+  const cals = db.tables.engelbart_onboarding_calibrations;
+  const opening = await OB.brainstorm(USER,row,cals,{prewarm:true},CREDS,db.options);
+  assert.equal(opening.initial_status,"done");
+  assert.equal(row.step,7);
+  assert.match(prompts[0],/Self-reported paper familiarity \(not a grade\)/);
+  assert.doesNotMatch(prompts[0],/How they did on the topic questions/);
+  const request = JSON.parse(db.calls.find(c=>c.url.endsWith("/v1/messages")).init.body);
+  assert.match(request.model,/haiku/);
+  assert.equal(request.max_tokens,1500);
+  cals.push({area_index:0,answered_at:"2026-09-08",self_level:50,graded_level:75,answer:"A newly explained mechanism"});
+  const repeated = await OB.brainstorm(USER,row,cals,{prewarm:true},CREDS,db.options);
+  assert.equal(repeated.turn_id,opening.turn_id);
+  assert.equal(prompts.length,1,"Topic evidence does not regenerate an opening");
+  await OB.brainstorm(USER,row,cals,{text:"Compare the trajectories"},CREDS,db.options);
+  assert.match(prompts[1],/A newly explained mechanism/);
+  assert.match(prompts[1],/\(75\)/);
+  assert.match(prompts[1],/graded ungraded/,"unanswered areas are not assigned level zero");
+  assert.equal(db.tables.engelbart_onboarding_turns[0].id,opening.turn_id);
+  cals[0].answer = "A revised explanation after another Topic";
+  cals[0].graded_level = 100;
+  await OB.brainstorm(USER,row,cals,{text:"Visualize the difference"},CREDS,db.options);
+  assert.match(prompts[2],/A revised explanation after another Topic/);
+  assert.match(prompts[2],/\(100\)/);
+});
+
+test("skipping Topics retains partial answers and fitting works with zero answers", async () => {
+  const db=fake({model:{assets:ASSETS,leveled:LEVELED}});
+  const row=await ready(db,{paper_familiarity:2});
+  const cals=db.tables.engelbart_onboarding_calibrations;
+  const skip=await OB.topicsDone(USER,row,cals,{skip:true},db.options);
+  assert.equal(skip.assessment.areas[0].questions_asked,1);
+  assert.equal(cals.length,1);
+  cals.length=0;
+  await OB.topicsDone(USER,row,cals,{skip:true},db.options);
+  assert.equal(row.assessment,null);
+  await OB.assets(USER,row,{run:true},CREDS,db.options);
+  const fitted=await OB.leveled(USER,row,cals,{run:true},CREDS,db.options);
+  assert.equal(fitted.leveled_status,"done");
+  assert.equal(row.assessment,null,"fitting must not manufacture an assessment");
+  const request=db.calls.filter(c=>c.url.endsWith("/v1/messages")).map(c=>JSON.parse(c.init.body))
+    .find(r=>JSON.stringify(r).includes("locus of problem solving would lie"));
+  const prompt=request.messages[0].content.map(b=>b.text||"").join("\n");
+  assert.match(prompt,/Self-reported paper familiarity/);
+  assert.doesNotMatch(prompt,/How they did on the topic questions/);
 });

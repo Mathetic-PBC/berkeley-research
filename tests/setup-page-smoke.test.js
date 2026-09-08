@@ -257,7 +257,7 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
 
   assert.equal(page.title(), "Which computer are you on?", "the install step follows the paper");
   assert.deepEqual(page.actions, ["open", "step", "step", "step", "step",
-    "own_paper", "own_paper_saved", "sources", "analysis", "assets", "step", "issue"]);
+    "own_paper", "own_paper_saved", "sources", "analysis", "assets", "step", "brainstorm", "issue"]);
   assert.equal(page.row().name, "Ada");
   assert.equal(page.row().year, "Second year");
   assert.equal(page.row().depth, "technical");
@@ -414,7 +414,7 @@ test("the slider paints itself while it is dragged and only commits on release",
   assert.equal(one(page.app, "ob-track"), track, "the element under the finger survives the move");
   assert.equal(one(page.app, "ob-thumb").style.left, "70.00%");
   assert.equal(textOf(one(page.app, "ob-slider-name")), "Technical");
-  assert.equal(page.actions.length, 1, "a drag writes nothing");
+  assert.equal(page.actions.filter(a => a !== "brainstorm").length, 1, "a drag writes nothing");
 
   // The release lands on the window: a finger that left the track still lets go.
   page.win.fire("pointerup", {});
@@ -906,4 +906,34 @@ test("Brainstorm starts before any Topics answers and continues into Topics", as
   await settle();
   assert.equal(page.title(),"How familiar are you with the paper's concepts?");
   assert.equal(page.row().step,7);
+});
+
+test("Topics prewarms once without interrupting input, and Skip Topics opens resources with no assessment",async()=>{
+  const page=mount({row:fullRow({step:7,assessment:null,leveled:null,leveled_status:"none"}),
+    replies:{topics_done:()=>Promise.resolve({ok:true,json:async()=>({assessment:null})})}});
+  await settle();
+  assert.equal(page.bodies.filter(b=>b.action==="brainstorm" && b.prewarm).length,1);
+  const input=find(page.app,n=>n.tagName === "textarea")[0];
+  input.value="A partial draft"; input.fire("input");
+  byClass(page.app,"ob-skip")[0].fire("click");
+  await settle();
+  assert.equal(page.bodies.find(b=>b.action==="topics_done").skip,true);
+  assert.equal(page.bodies.filter(b=>b.action==="answer").length,0);
+  assert.equal(page.title(),"Select which resource to start with");
+  assert.ok(page.bodies.some(b=>b.action==="leveled" && b.run));
+  assert.equal(page.bodies.filter(b=>b.action==="brainstorm").length,1);
+});
+
+test("a failed background opening waits for explicit retry",async()=>{
+  let calls=0;
+  const page=mount({row:fullRow({step:6,assessment:null}),replies:{brainstorm:()=> {
+    calls++;
+    return Promise.resolve({ok:true,json:async()=>({initial_status:"error",initial_error:"Timed out"})});
+  }}});
+  await settle();
+  assert.equal(calls,1);
+  assert.match(textOf(page.app),/Timed out/);
+  page.cta().fire("click"); await settle();
+  assert.equal(calls,2);
+  assert.equal(page.bodies.filter(b=>b.action==="brainstorm")[1].retry,true);
 });

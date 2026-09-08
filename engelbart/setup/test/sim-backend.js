@@ -339,8 +339,24 @@
     }
     function readerOf(row, cals) {
       var levels = areaLevels(row, cals), assessed = assessedDepth(row.depth, levels);
-      return { name: row.name, year: row.year, major: row.major, depth: assessed.key, assessed: assessed,
+      return { name: row.name, year: row.year, major: row.major, depth: assessed.key, assessed: assessed, paper_familiarity: row.paper_familiarity, chosen_depth: row.depth,
         knowledge: levels.map(function (l, i) { return l == null ? null : { area: row.analysis.areas[i].area, level: l, project_role: row.analysis.areas[i].project_role }; }).filter(Boolean) };
+    }
+    function latestAssessment(row, cals) {
+      var levels = areaLevels(row, cals), assessed = assessedDepth(row.depth, levels);
+      var areas = (row.analysis && row.analysis.areas || []).map(function (a, i) {
+        var mine = cals.filter(function (c) { return Number(c.area_index) === i && c.answered_at; })
+          .sort(function (a,b) { return String(a.answered_at).localeCompare(String(b.answered_at)); });
+        var last = mine[mine.length - 1], grade = mine.filter(function(c) { return c.graded_level != null; }).pop();
+        return { area:a.area, parent_field:a.parent_field || "", project_role:a.project_role || "",
+          self_level:last ? Number(last.self_level) : null, graded_level:levels[i],
+          confidence:grade ? grade.grade_confidence : null, rationale:grade ? grade.grade_rationale : "",
+          questions_asked:mine.length, answers:mine.map(function(c) { return c.answer; }) };
+      });
+      if (!areas.some(function(a) { return a.questions_asked > 0; })) return null;
+      var known = levels.filter(function(l) { return l != null; });
+      return { areas:areas, mean:known.length ? Math.round(known.reduce(function(a,b) { return a+b; },0)/known.length) : null,
+        depth:assessed.key, depth_shift:assessed.shift, compiled_at:now() };
     }
     function paperOf(row) { var a = row.analysis || {}; return { title: one(a.title || row.paper_title, 60), one_liner: one(a.one_liner, 300), grounding: a.grounding || null }; }
 
@@ -377,6 +393,11 @@
             return { ok: true };
           });
         }).then(function () {
+          if (row.paper_id !== body.paper_id) {
+            db.turns = db.turns.filter(function(t) { return t.onboarding_id !== row.id || t.stage !== "brainstorm"; });
+            db.calibrations = db.calibrations.filter(function(c) { return c.onboarding_id !== row.id; });
+            if (row.planning) delete row.planning.brainstorm_initial;
+          }
           return patchRow(ctx, row, { paper_id: body.paper_id, project_url: one(body.project_url, 500), repo_url: one(body.repo_url, 500), paper_familiarity: Number(body.paper_familiarity),
             analysis: null, paper_title: "", analysis_status: "none", analysis_error: "", analysis_started_at: null,
             assets: null, assets_brief: null, assets_status: "none", assets_error: "", assets_started_at: null,
@@ -566,7 +587,7 @@
             graded_level: levels[i], confidence: lastGraded ? lastGraded.grade_confidence : null, rationale: lastGraded ? lastGraded.grade_rationale : "", questions_asked: mine.length,
             answers: mine.map(function (c) { return c.answer; }) };
         });
-        if (!areas.some(function (a) { return a.questions_asked > 0; })) throw fail("Answer the topic questions first", 400);
+        if (!areas.some(function (a) { return a.questions_asked > 0; })) { assessment = null; return null; }
         var known = levels.filter(function (l) { return l != null; });
         assessment = { areas: areas, mean: known.length ? Math.round(known.reduce(function (a, b) { return a + b; }, 0) / known.length) : null, depth: assessed.key, depth_shift: assessed.shift, compiled_at: now() };
         return assessment;
@@ -581,7 +602,6 @@
         if (row.leveled_status === "error") out.leveled_error = row.leveled_error;
         return Promise.resolve(out);
       }
-      if (!row.assessment) throw fail("Answer the topic questions first", 409);
       if (row.assets_status !== "done" || !row.assets) return Promise.resolve({ leveled_status: "waiting", assets_status: row.assets_status, assets_error: row.assets_error || undefined });
       if (running(row, "leveled")) return Promise.resolve({ leveled_status: "running" });
       if (row.leveled_status === "done" && row.leveled && !body.retry) return Promise.resolve({ leveled_status: "done", leveled: row.leveled });
@@ -589,8 +609,8 @@
       return patchRow(ctx, row, { leveled_status: "running", leveled_started_at: now(), leveled_error: "" }, "mark the fitting running")
         .then(function () {
           var reader = readerOf(row, cals);
-          return ctx.op("model", "fit the resources to the reader", "sonnet · web_search (max 8) · locus, sticky knowledge, stand-ins", modelRequest("sonnet", [{ type: "text", text: promptText("levelPrompt", { reader: reader, assessment: row.assessment, assets: row.assets.assets, interest: row.interest || "" }, knobs) }], 8192, { key: "levelPrompt", tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }], timeoutMs: 100000, prompt: "levelPrompt: decide where the locus of problem solving lies for this reader and which knowledge is sticky; add beginner stand-ins as children only where the sticky part is one the grades show the reader lacks; rewrite every description at the reader's register.",
-              context: { reader: reader, assessment: row.assessment, assets: row.assets.assets, interest: row.interest || "", tools: "web_search, up to 8 uses, for the stand-ins' links" } }),
+          return ctx.op("model", "fit the resources to the reader", "sonnet · web_search (max 8) · locus, sticky knowledge, stand-ins", modelRequest("sonnet", [{ type: "text", text: promptText("levelPrompt", { reader: reader, assessment: latestAssessment(row, cals), assets: row.assets.assets, interest: row.interest || "" }, knobs) }], 8192, { key: "levelPrompt", tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }], timeoutMs: 100000, prompt: "levelPrompt: decide where the locus of problem solving lies for this reader and which knowledge is sticky; add beginner stand-ins as children only where the sticky part is one the grades show the reader lacks; rewrite every description at the reader's register.",
+              context: { reader: reader, assessment: latestAssessment(row, cals), assets: row.assets.assets, interest: row.interest || "", tools: "web_search, up to 8 uses, for the stand-ins' links" } }),
             function () { leveled = clone(FX.LEVELED); return leveled; },
             modelMeta("sonnet", { input: 5200, output: 2300, web_searches: 4, lat: "level" }));
         }).then(function () {
@@ -610,7 +630,7 @@
     A.brainstorm = function (ctx, row, cals, body) {
       requireOpen(row);
       if (row.analysis_status !== "done") throw fail("The paper is still being read", 409);
-      var turns, lastAssistant, said, reply, made;
+      var turns, lastAssistant, said, reply, made, paper = row.paper_id;
       return ctx.op("db", "select engelbart_onboarding_turns", "GET /rest/v1/engelbart_onboarding_turns?onboarding_id=eq." + row.id + "&stage=eq.brainstorm&select=*&order=created_at.asc", {}, function () { turns = turnsOf(row, "brainstorm").slice(); return turns.map(publicTurn); })
         .then(function () {
           lastAssistant = turns.slice().reverse().filter(function (t) { return t.role === "assistant"; })[0];
@@ -635,14 +655,14 @@
           var rounds = turns.filter(function (t) { return t.role === "user" && String(t.content || "").trim() && t.content.trim() !== "(skipped those)"; }).length;
           var assistants = turns.filter(function (t) { return t.role === "assistant"; }).length;
           var reader = readerOf(row, cals);
-          return ctx.op("model", "brainstorm turn", "sonnet · " + turns.length + " turns of transcript · ready asked: " + readyAsked, modelRequest("sonnet", [{ type: "text", text: promptText("brainstormPrompt", { reader: reader, paper: paperOf(row), assessment: row.assessment, brief: row.assets_brief || [], turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), readyAsked: readyAsked }, knobs) }], 4096, { key: "brainstormPrompt", prompt: "brainstormPrompt: grounded possibilities, at most one preference question, three distinct preference signals and at most three responses; human readiness is independent of resource fitting" + (readyAsked ? "; also say whether the reader is ready to plan." : "."),
+          return ctx.op("model", "brainstorm turn", (turns.length ? "sonnet" : "haiku") + " · " + turns.length + " turns of transcript · ready asked: " + readyAsked, modelRequest(turns.length ? "sonnet" : "haiku", [{ type: "text", text: promptText("brainstormPrompt", { reader: reader, paper: paperOf(row), assessment: latestAssessment(row, cals), brief: row.assets_brief || [], turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), readyAsked: readyAsked }, knobs) }], turns.length ? 4096 : 1500, { timeoutMs: turns.length ? 90000 : 25000, key: "brainstormPrompt", prompt: "brainstormPrompt: grounded possibilities, at most one preference question, three distinct preference signals and at most three responses; human readiness is independent of resource fitting" + (readyAsked ? "; also say whether the reader is ready to plan." : "."),
               context: { reader: reader, paper: paperOf(row), assessment: row.assessment ? { depth: row.assessment.depth, depth_shift: row.assessment.depth_shift, areas: row.assessment.areas.map(function (a) { return a.area + " = " + a.graded_level; }) } : null, brief: row.assets_brief || [], transcript: turns.map(function (t) { return { role: t.role, content: t.content }; }), ready_asked: readyAsked, not_included: "the assets' links and descriptions (only the brief)" } }),
             function () {
               var B = FX.BRAINSTORM;
               reply = clone(rounds === 0 ? B.opening : rounds === 1 ? B.focus : rounds === 2 ? B.inquiry : B.ready);
               if (knobs.readyGate === "always" && readyAsked) reply.ready = true;
               return reply;
-            }, Object.assign(modelMeta("sonnet", { input: 2600 + 120 * turns.length + Math.round(tokens(JSON.stringify(reader))), output: assistants === 0 ? 420 : assistants === 1 ? 300 : 120 }),
+            }, Object.assign(modelMeta(turns.length ? "sonnet" : "haiku", { input: 2600 + 120 * turns.length + Math.round(tokens(JSON.stringify(reader))), output: assistants === 0 ? 420 : assistants === 1 ? 300 : 120 }),
               { why: "human readiness is independent of resources, with a hard cap of three user responses" }))
             .then(function () {
               if (rounds >= 3 || reply.ready || reply.card === "none") {
@@ -657,10 +677,34 @@
               var card = { card: reply.card, questions: reply.questions, focus: reply.focus, ready: reply.ready === true };
               var text = [reply.say]; if (reply.card === "questions") text = text.concat(reply.questions.items.map(function (q) { return "(asked) " + q.title + (q.options ? " Options: " + q.options.map(function (o) { return o.label; }).join(" / ") : ""); }));
               if (reply.card === "focus") text.push("(offered) " + reply.focus.options.map(function (o) { return o.label; }).join(" / "));
+              if (row.paper_id !== paper) throw fail("The paper changed", 409);
               return addTurn(ctx, row, "brainstorm", "", "assistant", text.filter(Boolean).join("\n"), card);
-            }).then(function (t) { made = t; var values = { step: Math.max(Number(row.step) || 0, 6) }; if (reply.interest) values.interest = reply.interest; return patchRow(ctx, row, values, "step, interest"); })
+            }).then(function (t) { made = t; var values = body.prewarm ? {} : { step: Math.max(Number(row.step) || 0, 6) }; if (reply.interest) values.interest = reply.interest; return patchRow(ctx, row, values, "step, interest"); })
             .then(function () { return Object.assign(publicReply(made), { leveled_status: row.leveled_status, interest: row.interest || "" }); });
         });
+    };
+
+    var brainstormTurn = A.brainstorm;
+    A.brainstorm = function(ctx, row, cals, body) {
+      var existing = turnsOf(row, "brainstorm");
+      if (body.prewarm && existing.length) return Promise.resolve(Object.assign({ initial_status: "done" },
+        publicReply(existing.filter(function(t) { return t.role === "assistant"; })[0])));
+      if (existing.length || body.text || body.answers || body.pick) return brainstormTurn(ctx,row,cals,body);
+      row.planning = row.planning || {};
+      var initial = row.planning.brainstorm_initial;
+      if (initial && initial.status === "running" && initial.lease_until > Date.now()) return Promise.resolve({ initial_status: "running" });
+      if (initial && initial.status === "error" && !body.retry) return Promise.resolve({ initial_status: "error", initial_error: initial.error });
+      var paper = row.paper_id;
+      row.planning.brainstorm_initial = { status:"running", lease_until:Date.now()+45000 }; save();
+      return brainstormTurn(ctx,row,cals,Object.assign({},body,{prewarm:true})).then(function(out) {
+        if (row.paper_id !== paper) return {initial_status:"superseded"};
+        row.planning.brainstorm_initial = {status:"done"}; save();
+        return Object.assign({initial_status:"done"},out);
+      }).catch(function(e) {
+        if (row.paper_id !== paper) return {initial_status:"superseded"};
+        row.planning.brainstorm_initial = {status:"error",error:e.message}; save();
+        return {initial_status:"error",initial_error:e.message};
+      });
     };
 
     function findAsset(row, key) {
@@ -711,7 +755,7 @@
       if (job.stage === "grounding") {
         work = A.paper_grounding(ctx, row).then(function () { job.stage = "draft"; mine = JSON.stringify(context()); });
       } else if (job.stage === "draft") {
-        var input = {reader: readerOf(row,cals), paper: paperOf(row), asset: row.asset_chosen, interest: row.interest || "", assessment: row.assessment,
+        var input = {reader: readerOf(row,cals), paper: paperOf(row), asset: row.asset_chosen, interest: row.interest || "", assessment: latestAssessment(row, cals),
           turns: turnsOf(row,"brainstorm"), leveled: row.leveled, direction: row.direction, subgoal: (row.subgoals || [])[0], resources: [row.asset_chosen],
           previous: job.feedback ? (kind === "direction" ? row.direction : {subgoals: row.subgoals}) : null, feedback: job.feedback};
         work = ctx.op("model", "draft " + kind, "sonnet · one resumable call", modelRequest("sonnet", [{type:"text",text:promptText(kind + "Prompt",input,knobs)}],4096,{key:kind + "Prompt"}), function () {
@@ -747,7 +791,7 @@
       return ctx.op("db", "select engelbart_onboarding_turns", "GET /rest/v1/engelbart_onboarding_turns?…&stage=eq.brainstorm", {}, function () { return turnsOf(row, "brainstorm").map(publicTurn); })
         .then(function (turns) {
           return ctx.op("model", feedback ? "revise the direction" : "propose one direction", "sonnet · reader, paper, interest, transcript, chosen thing, locus/sticky" + (feedback ? ", previous + feedback" : ""),
-            modelRequest("sonnet", [{ type: "text", text: promptText("directionPrompt", { reader: readerOf(row, cals), paper: paperOf(row), interest: row.interest || "", assessment: row.assessment, turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), asset: row.asset_chosen, leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null, previous: feedback ? row.direction : null, feedback: feedback }, knobs) }], 4096, { key: "directionPrompt", prompt: "directionPrompt: propose one direction (title, what you would make, first visible result, why it fits, what it uses), at the reader's register" + (feedback ? "; revise the previous one according to the feedback." : "."),
+            modelRequest("sonnet", [{ type: "text", text: promptText("directionPrompt", { reader: readerOf(row, cals), paper: paperOf(row), interest: row.interest || "", assessment: latestAssessment(row, cals), turns: turns.map(function (t) { return { role: t.role, content: t.content }; }), asset: row.asset_chosen, leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null, previous: feedback ? row.direction : null, feedback: feedback }, knobs) }], 4096, { key: "directionPrompt", prompt: "directionPrompt: propose one direction (title, what you would make, first visible result, why it fits, what it uses), at the reader's register" + (feedback ? "; revise the previous one according to the feedback." : "."),
               context: { reader: readerOf(row, cals), paper: paperOf(row), interest: row.interest || "", assessment: row.assessment ? { depth: row.assessment.depth, areas: row.assessment.areas.map(function (a) { return a.area + " = " + a.graded_level; }) } : null, transcript: turns.map(function (t) { return { role: t.role, content: t.content }; }), chosen_asset: row.asset_chosen, locus_and_sticky: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null, previous: feedback ? row.direction : undefined, feedback: feedback || undefined } }),
             function () { made = clone(feedback ? FX.REVISED_DIRECTION : FX.DIRECTION); return made; }, modelMeta("sonnet", { input: 3300 + tokens(feedback), output: 360 }));
         }).then(function () { return feedback ? addTurn(ctx, row, "direction", "", "user", feedback, null) : null; })

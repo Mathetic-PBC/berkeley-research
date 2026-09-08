@@ -512,6 +512,7 @@
     if (st.screen === "loading") { app.appendChild(el("div", "ob-wait", st.error || "Waking up…")); return; }
     if (st.screen === "signin") { window.location.href = "/engelbart/signin"; return; }
     if (st.screen === "error") { var e = el("div", "ob-wait"); e.appendChild(el("div", "ob-err", st.error)); app.appendChild(e); return; }
+    if (st.row && st.row.status === "open") { warmBrainstorm(); if (st.row.analysis_status === "running") pollAnalysis(); }
     app.appendChild(railView());
     var main = el("div", "ob-main"), body = el("div", "ob-body"), content = el("div", "ob-content");
     content.id = "content";
@@ -850,6 +851,10 @@
       st.ui.psending = true; st.error = ""; draw();
       api(sources).then(function (out) {
         st.ui.psending = false;
+        if (st.row.paper_id !== sources.paper_id) {
+          st.turns = []; st.cals = []; st.ui.fIdx = 0; st.ui.fAnswers = {}; st.ui.fam = {};
+          st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false };
+        }
         if (out && out.onboarding) st.row = out.onboarding;
         else {
           st.row.paper_id = sources.paper_id;
@@ -924,10 +929,12 @@
   var poll = null;
   function readingUpdate(read) {
     if (!read || read.analysis_status === "superseded") return;
+    var changed = st.row.analysis_status !== read.analysis_status;
     st.row.analysis_status = read.analysis_status;
     if (read.analysis) st.row.analysis = read.analysis;
     st.row.analysis_error = read.analysis_error || "";
-    draw();
+    warmBrainstorm();
+    if (changed || st.step === 6 || st.step === 7) draw();
   }
   function startReading(body) {
     st.row.analysis_status = "running"; st.row.analysis_error = "";
@@ -938,7 +945,7 @@
   function pollAnalysis() {
     if (poll) return;
     poll = setInterval(function () {
-      if ((st.step !== 6 && st.step !== 7) || (st.row && st.row.analysis_status === "done")) { clearInterval(poll); poll = null; return; }
+      if (!st.row || st.row.analysis_status === "done" || st.row.status !== "open") { clearInterval(poll); poll = null; return; }
       api("analysis").then(function (out) {
         if (out.analysis_status !== "running") { clearInterval(poll); poll = null; }
         readingUpdate(out);
@@ -1053,8 +1060,16 @@
       on(d, "click", function () { st.ui.fIdx = i; draw(); }); pd.appendChild(d);
     });
     nav.appendChild(pd);
-    var next = cta(st.busy === "grading" ? "Sending…" : st.busy === "compiling" ? "One moment…" : last && !follow ? "On to brainstorming" : "Next", !answer.trim() || !!st.busy, submit);
-    nav.appendChild(next); box2.appendChild(nav); content.appendChild(box2);
+    var next = cta(st.busy === "grading" ? "Sending…" : st.busy === "compiling" ? "One moment…" : last && !follow ? "On to resources" : "Next", !answer.trim() || !!st.busy, submit);
+    nav.appendChild(next); box2.appendChild(nav);
+    var skip = el("button", "ob-ghost ob-skip", "Skip Topics"); skip.type = "button"; skip.disabled = !!st.busy;
+    on(skip, "click", function () {
+      st.busy = "compiling"; draw();
+      api("topics_done", { skip: true }).then(function (out) {
+        st.busy = ""; st.row.assessment = out.assessment; startLeveled(); go(8);
+      }).catch(fail);
+    });
+    box2.appendChild(skip); content.appendChild(box2);
   }
 
   // --- the leveled resources, fitted to them in the background ------------------
@@ -1074,7 +1089,6 @@
     st.row.leveled_error = out.leveled_error || "";
   }
   function startLeveled() {
-    if (!st.row.assessment) return;
     if (st.row.leveled_status === "done") return;
     st.row.leveled_status = st.row.assets_status === "done" ? "running" : st.row.leveled_status;
     api("leveled", { run: true }).then(function (out) { leveledUpdate(out); draw(); }).catch(function (e) {
@@ -1110,6 +1124,39 @@
     // each; only the prose is shown, the card draws the rest.
     var text = str(turn.content);
     return turn.role === "assistant" ? text.split(/(?:^|\n)\((?:asked|offered)\)/)[0] : text;
+  }
+
+  // One request per paper, independent of the visible step. The server owns
+  // the claim and persisted turn; polling joins an in-flight request after reload.
+  var opening = { key: "", pending: false, error: "", timer: null };
+  function warmBrainstorm(retry) {
+    var r = st.row;
+    if (!r || r.analysis_status !== "done" || r.status !== "open" || st.turns.length) return;
+    var key = r.id + ":" + r.paper_id;
+    if (opening.key !== key) {
+      clearTimeout(opening.timer);
+      opening = { key: key, pending: false, error: "", timer: null };
+    }
+    if (opening.pending || opening.timer || opening.error && !retry) return;
+    opening.pending = true; opening.error = ""; st.ui.bs.thinking = true;
+    api("brainstorm", { prewarm: true, retry: retry === true }).then(function (out) {
+      if (!st.row || st.row.id + ":" + st.row.paper_id !== key) return;
+      opening.pending = false;
+      if (out.initial_status === "running") {
+        opening.timer = setTimeout(function () { opening.timer = null; warmBrainstorm(); }, 3000);
+        return;
+      }
+      st.ui.bs.thinking = false;
+      if (out.initial_status === "error") opening.error = out.initial_error || "Could not prepare the first question.";
+      else if (out.turn_id && !st.turns.some(function (t) { return t.id === out.turn_id; })) {
+        st.turns.push({ id: out.turn_id, role: "assistant", content: out.say,
+          card: { card: out.card, questions: out.questions, focus: out.focus, ready: out.ready === true } });
+      } else if (!out.turn_id) opening.error = "The paper changed. Reload to continue.";
+      if (st.step === 6) draw();
+    }).catch(function (e) {
+      if (!st.row || st.row.id + ":" + st.row.paper_id !== key) return;
+      opening.pending = false; opening.error = e.message; st.ui.bs.thinking = false; if (st.step === 6) draw();
+    });
   }
 
   function sendTurn(body) {
@@ -1185,7 +1232,14 @@
       w.appendChild(el("div", "ob-wait-t", "Still reading your paper"));
       content.appendChild(w); if (r.analysis_status !== "done") pollAnalysis(); return;
     }
-    if (!st.turns.length && !bs.thinking) { sendTurn({}); return; }
+    if (!st.turns.length) {
+      if (opening.error) {
+        var failedOpening = stepBox(content, count(6), "Your first question could not be prepared");
+        failedOpening.appendChild(el("div", "ob-sub", opening.error));
+        failedOpening.appendChild(cta("Try again", false, function () { warmBrainstorm(true); draw(); }));
+      } else generating(content, "Preparing your first question");
+      return;
+    }
     if (r.assessment && r.leveled_status !== "done") pollLeveled();
     var box = el("div", "ob-step ob-bs-step");
     var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(6, "Brainstorm")));
@@ -1345,7 +1399,6 @@
   function drawAssets(content) {
     var r = st.row, as = st.ui.as;
     if (r.leveled_status !== "done" || !r.leveled) {
-      if (!r.assessment) { stepBox(content, count(8), "Answer the topic questions first"); return; }
       var w = el("div", "ob-wait"); w.appendChild(dots());
       w.appendChild(el("div", "ob-wait-t", r.assets_status === "done" ? "Fitting the resources to you" : "Finding what the paper rests on"));
       if (r.assets_status === "error" || r.leveled_status === "error") {
