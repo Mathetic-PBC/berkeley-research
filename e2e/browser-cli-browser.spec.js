@@ -251,7 +251,8 @@ test('local folder path beneath Paper becomes an active linked dataset without c
     const r=project.resources.find(r=>r.source.provider==='local_path');
     expect(r.status).toBe('ready');expect(project.activeDatasetId).toBe(r.id);expect(r.access.linked).toBe(true);
     expect(r.manifest.files[0].path).toBe('nested/metrics.csv');
-    expect(fs.realpathSync(r.access.localPath)).toBe(fs.realpathSync(folder));
+    const linkedStat=fs.statSync(r.access.localPath,{bigint:true}), originalStat=fs.statSync(folder,{bigint:true});
+    expect([linkedStat.dev,linkedStat.ino]).toEqual([originalStat.dev,originalStat.ino]);
     await page.reload();await page.getByRole('tab',{name:'Dataset',exact:true}).click();
     await expect(page.getByRole('heading',{name:'External dataset',exact:true})).toBeVisible();
   } finally {await machine.stop();await stack.stop();}
