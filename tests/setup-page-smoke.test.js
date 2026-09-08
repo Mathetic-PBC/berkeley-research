@@ -1213,3 +1213,20 @@ test("preview lookahead stays bounded through a sixteen-design bracket", async (
   assert.equal(rounds, 16);
   assert.equal(page.title(), "Your top four");
 });
+
+
+test("a saved ranking can be redone without overwriting it until the new bracket finishes", async () => {
+  const saved = { top: MOCKUPS.map((m, i) => ({ rank: i + 1, id: m.id, name: m.name })) };
+  const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS, mockupSaved: saved });
+  await settle();
+  const again = byClass(page.app, "ob-ghost").find(n => textOf(n) === "Rank again");
+  assert.ok(again); again.fire("click"); await settle();
+  assert.equal(page.title(), "Which of these two is better?");
+  assert.match(textOf(page.app), /pick 1 of 4/);
+  assert.equal(page.mockSaves.length, 0);
+  for (let i = 0; i < 4; i++) { picks(page)[1].fire("click"); await settle(); }
+  assert.equal(page.mockSaves.length, 1);
+  assert.equal(page.mockSaves[0].picks.length, 4);
+  assert.equal(page.title(), "Your top four");
+  assert.ok(byClass(page.app, "ob-ghost").some(n => textOf(n) === "Rank again"));
+});

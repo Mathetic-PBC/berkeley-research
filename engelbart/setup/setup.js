@@ -194,6 +194,7 @@
   }
 
   function go(n) {
+    if (n === 6) st.ui.mock.leaving = false;
     st.step = n;
     st.error = "";
     st.ui.todoConfirm = -1;
@@ -1428,7 +1429,7 @@
   function drawMockPlacing(box, content) {
     var m = st.ui.mock;
     box.appendChild(el("div", "ob-title", "Your top four"));
-    box.appendChild(el("div", "ob-sub", "Kept with your account. You can rank them again any time at /engelbart/mockups."));
+    box.appendChild(el("div", "ob-sub", "Kept with your account. Rank again to change your choices; your current ranking stays saved until you finish."));
     var list = el("ol", "ob-mk-places");
     m.placed.forEach(function (t, i) {
       var row = el("li", "ob-mk-place");
@@ -1438,6 +1439,14 @@
     });
     box.appendChild(list);
     var acts = el("div", "ob-actions");
+    if (m.list.length > 1) {
+      var again = el("button", "ob-ghost", "Rank again"); again.type = "button";
+      acts.appendChild(on(again, "click", function () {
+        m.placed = null; m.error = ""; m.saveError = ""; m.leaving = false;
+        m.t = window.EngelbartTournament.create(window.EngelbartTournament.shuffle(m.list.map(function (item) { return item.id; })));
+        draw();
+      }));
+    }
     acts.appendChild(cta("Continue", false, leaveMockups));
     box.appendChild(acts);
     content.appendChild(box);
