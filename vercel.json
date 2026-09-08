@@ -140,6 +140,10 @@
       "destination": "/engelbart/lab-search/index.html"
     },
     {
+      "source": "/engelbart/mockups",
+      "destination": "/engelbart/mockups/index.html"
+    },
+    {
       "source": "/engelbart/admin",
       "destination": "/engelbart/admin/index.html"
     },
