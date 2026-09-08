@@ -60,7 +60,7 @@ Limits remain intentional: provider listing bounds, 5,000-entry browser drop gua
 
 | Suite | Result |
 | --- | --- |
-| Berkeley `npm test` | 507 passed |
+| Berkeley `npm test` | 508 passed |
 | Berkeley `npm run check` | Passed |
 | Hosted Firefox/WebKit compatibility | 8 passed |
 | Native installer/hook/loopback round trip, rebuilt 0.20.0 wheel | 3 passed |

@@ -60,3 +60,8 @@ test('slash-containing GitHub refs and canonical collection identity survive URL
  const same=await R.probeUrl('https://github.com/org/research-repo/tree/main/dataset/',github({tree:files.map(path=>({type:'blob',path,size:20}))}));
  assert.equal(r.collection.id,same.collection.id);
 });
+
+test('GitHub release-file URLs retain the single-file path',async()=>{
+ const r=await R.probeUrl('https://github.com/org/research-repo/releases/download/v1/metrics.csv',{fetchImpl:async()=>new Response('metric,label\n1,yes\n')});
+ assert.equal(r.state,'available');assert.equal(r.format,'csv');
+});

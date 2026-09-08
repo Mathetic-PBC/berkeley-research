@@ -105,7 +105,8 @@ async function probeUrl(url, options = {}, depth = 0) {
       const [owner, repo, mode, ref, ...rest] = parsed.pathname.split('/').filter(Boolean);
       if (!owner || !repo) return access('unavailable', 'No repository identified');
       if (mode === 'blob' && rest.length) return probeUrl(`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${rest.join('/')}`, options, depth + 1);
-      return Collections.resolve(url, options, boundedResponse);
+      const found = await Collections.resolve(url, options, boundedResponse);
+      if (found) return found;
     }
     if (parsed.hostname === 'anonymous.4open.science') return await Collections.resolve(url, options, boundedResponse) || access('unavailable','Unsupported anonymous repository URL');
 
