@@ -10,10 +10,13 @@ const { patchRows, rpc, selectOne, selectRows } = require("./supabase");
 // never pinned here and never drifts when the proxy adds a model.
 const ALL_PROXY_MODELS = Object.freeze(["all-proxy-models"]);
 
+// Budget columns use numeric(12, 2); the admin chooses the pool ceiling.
+const MAX_BUDGET_USD = 9_999_999_999.99;
+
 function positiveMoney(value, name) {
   const number = Number(value);
-  if (!Number.isFinite(number) || number <= 0 || number > 1000) {
-    const error = new Error(`${name} must be between $0.01 and $1,000`);
+  if (!Number.isFinite(number) || number < 0.01 || number > MAX_BUDGET_USD) {
+    const error = new Error(`${name} must be between $0.01 and $9,999,999,999.99`);
     error.statusCode = 400;
     throw error;
   }
