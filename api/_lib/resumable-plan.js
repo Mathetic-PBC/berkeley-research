@@ -64,13 +64,13 @@ async function advance(user, row, body, input, credentials, options = {}) {
         const made = job.draft;
         if (kind === "direction") {
           updates = { ...updates, direction: made, subgoals: null, todos: null, asset_chosen: job.input.asset,
-            ...(row.leveled ? { leveled: { ...row.leveled, assets: job.assets } } : {}), step: 9 };
+            ...(row.leveled ? { leveled: { ...row.leveled, assets: job.assets } } : {}), step: 10 };
           job.result = { direction: made, asset_chosen: job.input.asset, leveled: updates.leveled || row.leveled };
         } else if (kind === "subgoals") {
-          updates = { ...updates, subgoals: made.subgoals, todos: null, step: 10 };
+          updates = { ...updates, subgoals: made.subgoals, todos: null, step: 11 };
           job.result = { subgoals: made.subgoals };
         } else {
-          updates = { ...updates, todos: made.todos, goal_chosen: row.direction.title, project_name: row.project_name || made.name, step: 11 };
+          updates = { ...updates, todos: made.todos, goal_chosen: row.direction.title, project_name: row.project_name || made.name, step: 12 };
           job.result = { todos: made.todos, name: updates.project_name };
         }
       } else {

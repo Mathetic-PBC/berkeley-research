@@ -162,14 +162,14 @@ function mount(options = {}) {
       if (body.action === "analysis") return answer({ analysis_status: "done", analysis: ANALYSIS });
       if (body.action === "assets") return answer({ assets_status: "done", assets: { assets: LEVELED.assets }, assets_brief: row.assets_brief || [] });
       if (body.action === "answer") return answer({ graded_level: 50, grade_confidence: 0.8, grade_rationale: "fine" });
-      if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 8 }; return answer({ assessment: ASSESSMENT }); }
+      if (body.action === "topics_done") { row = { ...row, assessment: ASSESSMENT, step: 9 }; return answer({ assessment: ASSESSMENT }); }
       if (body.action === "leveled") return answer({ leveled_status: "done", leveled: LEVELED, assets_status: "done" });
       if (body.action === "brainstorm") return answer(body.text || body.answers || body.pick || body.again
         ? { turn_id: "t2", say: "Good. Angles it is.", card: "none", interest: "the geometry of poses", leveled_status: row.leveled_status, ready: true }
         : { turn_id: "t1", say: "", card: "questions", leveled_status: row.leveled_status,
             questions: { eyebrow: "first", items: [{ id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math", why: "w" }] }] } });
       if (body.action === "asset_ask") return answer({ answer: "Start with the toy.", turn_id: "a1" });
-      if (body.action === "choose_asset") { row = { ...row, asset_chosen: { key: body.key, title: body.key.split(" :: ").pop() }, step: 9 }; return answer({ asset_chosen: row.asset_chosen }); }
+      if (body.action === "choose_asset") { row = { ...row, asset_chosen: { key: body.key, title: body.key.split(" :: ").pop() }, step: 10 }; return answer({ asset_chosen: row.asset_chosen }); }
       if (body.action === "paper_grounding") return answer({ grounding: {} });
       if (body.action === "direction") { const d = body.revise ? { ...DIRECTION, title: "Pose to angles, live" } : DIRECTION; row = { ...row, direction: d }; return answer({ direction: d }); }
       if (body.action === "subgoals") { row = { ...row, subgoals: SUBGOALS }; return answer({ subgoals: SUBGOALS }); }
@@ -228,14 +228,15 @@ function mount(options = {}) {
 test("every step draws from the record, and none of them throws", async () => {
   const titles = ["What is your name?", "What year are you?", "What is your major?",
     "How technical should explanations be?", "Which paper are you building on?", "Which computer are you on?",
-    "What do you want to build?", "How familiar are you with the paper's concepts?",
+    "Which of these two is better?", "What do you want to build?", "How familiar are you with the paper's concepts?",
     "Select which resource to start with", "Pose to angles", "Pose to angles", "One pose drawn"];
   for (let step = 0; step < titles.length; step += 1) {
-    const page = mount({ row: fullRow({ step }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] });
+    const page = mount({ row: fullRow({ step }), mockups: MOCKUPS,
+      turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] });
     await settle();
     assert.equal(page.title(), titles[step], `step ${step}`);
   }
-  const done = mount({ row: fullRow({ step: 12, status: "created" }) });
+  const done = mount({ row: fullRow({ step: 13, status: "created" }) });
   await settle();
   assert.doesNotMatch(textOf(done.app), /Open a new Claude chat|written for/, "the done screen carries no summary sentence");
 });
@@ -291,7 +292,9 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
   page.cta().fire("click");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.row().step, 6);
+  // Install writes step 6, the mock-ups; the bucket is empty here, so the step
+  // takes itself out of the way and writes the brainstorm behind it.
+  assert.equal(page.row().step, 7);
   assert.doesNotMatch(textOf(page.app), /Two things you can do on every screen/);
   assert.equal(page.title(), "What do you want to build?");
 });
@@ -440,7 +443,7 @@ test("typing a major narrows the seeds without replacing the field", async () =>
 test("topics are answered one area at a time, a disagreeing grade asks once more, and samples never show", async () => {
   let calls = 0;
   const page = mount({
-    row: fullRow({ step: 7, assessment: null, leveled_status: "none", leveled: null, todos: null, goal_chosen: "" }),
+    row: fullRow({ step: 8, assessment: null, leveled_status: "none", leveled: null, todos: null, goal_chosen: "" }),
     replies: { answer: () => { calls += 1; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
       calls === 1 ? { graded_level: 25, grade_rationale: "recognises only", follow_up: { question_level: 25, question: "You said weights: weights of what?", generated: true },
                      calibrations: [{ id: "c1", area_index: 0, question_level: 0, answered_at: "2026-09-03T00:00:00Z", graded_level: 25 },
@@ -475,7 +478,7 @@ test("topics are answered one area at a time, a disagreeing grade asks once more
 
 test("a follow-up is a stored row: it survives a reload, the slider cannot move it, and the next area is untouched", async () => {
   const page = mount({
-    row: fullRow({ step: 7, assessment: null }),
+    row: fullRow({ step: 8, assessment: null }),
     calibrations: [{ id: "c1", area_index: 0, question_level: 50, answered_at: "2026-09-03T00:00:00Z", graded_level: 25, self_level: 50 },
       { id: "c2", area_index: 0, question_level: 25, question: "From what you said: which part is learned?", answered_at: null, self_level: 50 }],
     replies: { answer: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
@@ -506,7 +509,7 @@ test("a follow-up is a stored row: it survives a reload, the slider cannot move 
 });
 
 test("the brainstorm opens on the card, keeps answered cards as cards, and offers the plan only when the model says ready", async () => {
-  const page = mount({ row: fullRow({ step: 6, leveled_status: "running", leveled: null }) });
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
   await settle();
   assert.equal(page.title(), "What do you want to build?");
   assert.equal(page.actions.filter((a) => a === "brainstorm").length, 1, "the opening turn is asked for once");
@@ -532,13 +535,13 @@ test("the brainstorm opens on the card, keeps answered cards as cards, and offer
   assert.doesNotMatch(textOf(page.app), /Keep brainstorming|Go on/);
   page.cta().fire("click");
   await settle();
-  assert.equal(page.row().step, 7, "Topics follows Brainstorm");
+  assert.equal(page.row().step, 8, "Topics follows Brainstorm");
   assert.equal(page.actions.filter((a) => a === "brainstorm").length, 2, "no filler model call");
 
 });
 
 test("the main column keeps its scroll across redraws, a sent turn scrolls to the thinking row, and Skip goes to Topics regardless of resource readiness", async () => {
-  const page = mount({ row: fullRow({ step: 6, leveled_status: "done", leveled: LEVELED }) });
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }) });
   await settle();
   one(page.app, "ob-main").scrollTop = 300;
   byClass(page.app, "ob-goal")[0].fire("click");                       // redraws in place
@@ -549,12 +552,12 @@ test("the main column keeps its scroll across redraws, a sent turn scrolls to th
   assert.equal(page.title(), "How familiar are you with the paper's concepts?", "skipping Brainstorm still goes through Topics");
   assert.equal(page.bodies.filter((b) => b.action === "brainstorm").length, 1, "no extra turn was asked for");
 
-  const early = mount({ row: fullRow({ step: 6, leveled_status: "running", leveled: null }) });
+  const early = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }) });
   await settle();
   assert.equal(textOf(byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b)))), "Skip to Topics");
   byClass(early.app, "ob-ghost").find((b) => /Skip/.test(textOf(b))).fire("click");
   await settle();
-  assert.equal(early.row().step, 7);
+  assert.equal(early.row().step, 8);
   assert.equal(early.bodies.filter((b) => b.action === "brainstorm").length, 1, "skipping never asks filler questions");
 });
 
@@ -571,7 +574,7 @@ function openRemembered(page) {
   button.fire("click");
 }
 test("the empty modal has only Cancel and dismisses by Escape or scrim, not the card",async()=>{
-  const page=mount({row:fullRow({step:7})}); await settle();
+  const page=mount({row:fullRow({step:8})}); await settle();
   one(page.app,"ob-ask-open").fire("click");
   assert.match(textOf(one(page.app,"ob-modal")),/Highlight a sentence in the step first/);
   assert.equal(one(page.app,"ob-ask-row"),undefined);
@@ -590,7 +593,7 @@ test("the empty modal has only Cancel and dismisses by Escape or scrim, not the 
 });
 test("the remembered quote survives button mouseup; answers and follow-ups stay in the modal",async()=>{
   let release;
-  const page=mount({row:fullRow({step:7,depth:"some"}),replies:{ask:()=>new Promise(resolve=>{release=resolve;})}});
+  const page=mount({row:fullRow({step:8,depth:"some"}),replies:{ask:()=>new Promise(resolve=>{release=resolve;})}});
   await settle(); await highlight(page,"A highlighted mechanism");
   openRemembered(page); await settle();
   assert.equal(textOf(one(page.app,"ob-ask-quote")),"“A highlighted mechanism”");
@@ -621,7 +624,7 @@ test("the remembered quote survives button mouseup; answers and follow-ups stay 
   assert.equal(page.row().depth,"some","re-asking does not change the Explanations preference");
 });
 test("plain clicks and short or outside selections do not supply a quote",async()=>{
-  const page=mount({row:fullRow({step:7})});await settle();
+  const page=mount({row:fullRow({step:8})});await settle();
   await highlight(page,"ok");openRemembered(page);
   assert.ok(one(page.app,"ob-ask-empty"));
   one(page.app,"ob-scrim").fire("click");
@@ -633,7 +636,7 @@ test("plain clicks and short or outside selections do not supply a quote",async(
 
 test("a reloaded brainstorm redraws every answered card with its answers, from the stored user turns", async () => {
   const page = mount({
-    row: fullRow({ step: 6, leveled_status: "done", leveled: LEVELED }),
+    row: fullRow({ step: 7, leveled_status: "done", leveled: LEVELED }),
     turns: [
       { id: "t1", role: "assistant", content: "", card: { card: "questions", questions: { eyebrow: "first", items: [
         { id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math" }] },
@@ -654,7 +657,7 @@ test("a reloaded brainstorm redraws every answered card with its answers, from t
 });
 
 test("the assets list folds simpler stand-ins behind a toggle; picking a row shows what it is; the pick resets the plan", async () => {
-  const page = mount({ row: fullRow({ step: 8, asset_chosen: null, direction: null, subgoals: null, todos: null }) });
+  const page = mount({ row: fullRow({ step: 9, asset_chosen: null, direction: null, subgoals: null, todos: null }) });
   await settle();
   assert.equal(page.title(), "Select which resource to start with");
   assert.deepEqual(byClass(page.app, "ob-as-title").map(textOf), ["Pose viewer", "Toy poses", "Dance corpus"], "the first resource starts expanded");
@@ -681,7 +684,7 @@ test("the assets list folds simpler stand-ins behind a toggle; picking a row sho
 });
 
 test("direction and subgoals are one proposal each; a change request revises in place; todos come for the first piece", async () => {
-  const page = mount({ row: fullRow({ step: 9, direction: null, subgoals: null, todos: null, project_name: "" }) });
+  const page = mount({ row: fullRow({ step: 10, direction: null, subgoals: null, todos: null, project_name: "" }) });
   await settle();
   assert.equal(page.title(), "Pose to angles");
   assert.match(textOf(page.app), /A page that turns a pose into angles\./, "the direction is its title and what they would make");
@@ -745,26 +748,27 @@ test("only a change of step replays the entry animation; a pick or a slider rele
 
 // --- the profile is asked once ----------------------------------------------------
 
-test("a second setup starts at the paper and counts six steps from there", async () => {
+test("a second setup starts at the paper and counts nine steps from there", async () => {
   const page = mount({ profileReused: true, row: fullRow({ step: 4, paper_id: null, analysis: null, analysis_status: "none" }) });
   await settle();
   assert.equal(page.title(), "Which paper are you building on?");
-  assert.equal(textOf(one(page.app, "ob-count")), "Step 1 of 8");
-  assert.deepEqual(byClass(page.app, "ob-label").map(textOf), ["Paper", "Install", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"]);
+  assert.equal(textOf(one(page.app, "ob-count")), "Step 1 of 9");
+  assert.deepEqual(byClass(page.app, "ob-label").map(textOf),
+    ["Paper", "Install", "Mock-ups", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"]);
   assert.equal(textOf(one(page.app, "ob-caption")), "Setting up another project");
   assert.equal(textOf(one(page.app, "ob-profile-line")), "Ada · First year · Physics · Some detail");
   // The way back to the four answers, for the member whose situation changed.
   one(page.app, "ob-profile").children.find((n) => n.tagName === "button").fire("click");
   assert.equal(page.title(), "What is your name?");
-  assert.equal(textOf(one(page.app, "ob-count")), "Step 1 of 12");
-  assert.equal(byClass(page.app, "ob-label").length, 12);
+  assert.equal(textOf(one(page.app, "ob-count")), "Step 1 of 13");
+  assert.equal(byClass(page.app, "ob-label").length, 13);
 });
 
-test("a first setup still counts twelve", async () => {
+test("a first setup still counts every step", async () => {
   const page = mount({ row: fullRow({ step: 4 }) });
   await settle();
-  assert.equal(textOf(one(page.app, "ob-count")), "Step 5 of 12");
-  assert.equal(byClass(page.app, "ob-label").length, 12);
+  assert.equal(textOf(one(page.app, "ob-count")), "Step 5 of 13");
+  assert.equal(byClass(page.app, "ob-label").length, 13);
   assert.equal(one(page.app, "ob-profile"), undefined);
 });
 
@@ -775,9 +779,10 @@ test("?test=true makes every step clickable and offers the two clears", async ()
   await settle();
   assert.equal(page.app.attrs["data-test"], "1");
   const rows = byClass(page.app, "ob-row");
-  assert.equal(rows.length, 12);
-  assert.deepEqual(rows.map((r) => r.attrs["data-reach"]), ["1", "1", "0", "1", "1", "1", "1", "1", "1", "1", "1", "1"], "all but the active step answer a click");
-  rows[8].fire("click");
+  assert.equal(rows.length, 13);
+  assert.deepEqual(rows.map((r) => r.attrs["data-reach"]),
+    ["1", "1", "0", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1"], "all but the active step answer a click");
+  rows[9].fire("click");
   await settle();
   assert.equal(page.title(), "Select which resource to start with", "a step ahead of the record opens");
   assert.deepEqual(byClass(page.app, "ob-test").length, 1);
@@ -796,7 +801,7 @@ test("without ?test the rail only reaches back", async () => {
   assert.equal(page.app.attrs["data-test"], "0");
   assert.equal(one(page.app, "ob-test"), undefined);
   const rows = byClass(page.app, "ob-row");
-  assert.deepEqual(rows.map((r) => r.attrs["data-reach"]), ["1", "1", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]);
+  assert.deepEqual(rows.map((r) => r.attrs["data-reach"]), ["1", "1", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]);
 });
 
 // --- the member's own Anthropic key --------------------------------------------
@@ -852,7 +857,7 @@ test("a member who arrives with a key sees it named in the rail", async () => {
 
 test("reloading an old three-response Brainstorm hides another question even if its stored ready is false", async () => {
   const question = { card: "questions", ready: false, questions: { items: [{ id: "q", type: "free", title: "Another intake question?" }] } };
-  const page = mount({ row: fullRow({ step: 6, leveled_status: "running", leveled: null }), turns: [
+  const page = mount({ row: fullRow({ step: 7, leveled_status: "running", leveled: null }), turns: [
     { role: "assistant", content: "(asked) Another intake question?", card: question },
     { role: "user", content: "Something visual", card: { text: "Something visual" } },
     { role: "assistant", content: "(asked) Another intake question?", card: question },
@@ -871,7 +876,7 @@ test("reloading an old three-response Brainstorm hides another question even if 
 test('Assets renders persisted access progress and restrictions without a new step',async()=>{
   const pending={assets:[{title:'Real events',type:'dataset',links:[],access:{state:'checking'}}]};
   const timers=[];
-  const page=mount({row:fullRow({step:8,leveled_status:'done',leveled:pending}),captureIntervals:timers,
+  const page=mount({row:fullRow({step:9,leveled_status:'done',leveled:pending}),captureIntervals:timers,
     replies:{leveled:()=>Promise.resolve({ok:true,json:async()=>({leveled_status:'done',leveled:{assets:[{...pending.assets[0],access:{state:'available',format:'csv',size:1200}}]}})})}});
   await settle();
   assert.match(textOf(page.app),/Checking access…/);
@@ -879,7 +884,7 @@ test('Assets renders persisted access progress and restrictions without a new st
   timers.forEach(fn=>fn()); await settle();
   assert.match(textOf(page.app),/✓ Available/);
   assert.doesNotMatch(textOf(page.app),/Checking access/);
-  const restricted=mount({row:fullRow({step:8,leveled_status:'done',leveled:{assets:[{...pending.assets[0],access:{state:'restricted',reason:'Requires author approval'}}]}})});
+  const restricted=mount({row:fullRow({step:9,leveled_status:'done',leveled:{assets:[{...pending.assets[0],access:{state:'restricted',reason:'Requires author approval'}}]}})});
   await settle();
   byClass(restricted.app,'ob-as-row')[0].click(); await settle();
   assert.match(textOf(restricted.app),/! Restricted/);
@@ -887,7 +892,7 @@ test('Assets renders persisted access progress and restrictions without a new st
 });
 
 test('a blocked resource direction shows the existing error and does not automatically retry forever',async()=>{
-  const page=mount({row:fullRow({step:9,direction:null,asset_chosen:{title:'Restricted records',type:'dataset'}}),
+  const page=mount({row:fullRow({step:10,direction:null,asset_chosen:{title:'Restricted records',type:'dataset'}}),
     refuse:{direction:{status:409,error:'This dataset needs a verified alternative'}}});
   await settle(); await settle();
   assert.equal(page.actions.filter(a=>a==='direction').length,1);
@@ -901,7 +906,7 @@ test('Assets shows access fallbacks separately from the restricted original and 
     const original={title:'Original ICU records',type:'dataset',links:[],access:{state:'restricted',reason:'Requires author approval'}};
     const child={title:kind === 'synthetic_fallback'?'Synthetic stand-in for ICU records':'Authors released subset',type:'dataset',links:[],access:{state:'available'},fallbackOf:{title:original.title,kind,access:original.access}};
     const chosen={...child,key:original.title+' :: '+child.title};
-    const page=mount({row:fullRow({step:8,asset_chosen:chosen,leveled_status:'done',leveled:{assets:[{...original,children:[child]}]}})});
+    const page=mount({row:fullRow({step:9,asset_chosen:chosen,leveled_status:'done',leveled:{assets:[{...original,children:[child]}]}})});
     await settle();
     assert.match(textOf(page.app),/! Restricted/);assert.match(textOf(page.app),/✓ Available/);
     assert.match(textOf(page.app),/instead of Original ICU records/);
@@ -911,7 +916,7 @@ test('Assets shows access fallbacks separately from the restricted original and 
 
 
 test("Direction waits for paper grounding and offers a retry when grounding fails", async () => {
-  const page = mount({ row: fullRow({ step: 9, direction: null, asset_chosen: LEVELED.assets[0] }),
+  const page = mount({ row: fullRow({ step: 10, direction: null, asset_chosen: LEVELED.assets[0] }),
     refuse: { direction: { status: 502, error: "Paper grounding failed" } } });
   await settle(); await settle();
   assert.equal(page.actions.filter(a => a === "direction").length, 1);
@@ -921,7 +926,7 @@ test("Direction waits for paper grounding and offers a retry when grounding fail
 
 test("the browser advances a saved draft through review before showing Direction", async () => {
   let count=0;
-  const page=mount({row:fullRow({step:9,direction:null,asset_chosen:LEVELED.assets[0]}),replies:{plan:body=>{
+  const page=mount({row:fullRow({step:10,direction:null,asset_chosen:LEVELED.assets[0]}),replies:{plan:body=>{
     assert.equal(body.kind,'direction');count++;
     const result=count===1?{status:'pending',stage:'review',message:'Checking the proposal'}:{status:'complete',direction:DIRECTION};
     return Promise.resolve({ok:true,status:200,json:async()=>result});
@@ -932,7 +937,7 @@ test("the browser advances a saved draft through review before showing Direction
 
 
 test("Brainstorm starts before any Topics answers and continues into Topics", async () => {
-  const page = mount({row:fullRow({step:6,assessment:null,leveled_status:"none",leveled:null})});
+  const page = mount({row:fullRow({step:7,assessment:null,leveled_status:"none",leveled:null})});
   await settle();
   assert.equal(page.title(),"What do you want to build?");
   assert.equal(page.actions.filter(a=>a==="brainstorm").length,1);
@@ -940,11 +945,11 @@ test("Brainstorm starts before any Topics answers and continues into Topics", as
   byClass(page.app,"ob-ghost").find(b=>textOf(b)==="Skip to Topics").fire("click");
   await settle();
   assert.equal(page.title(),"How familiar are you with the paper's concepts?");
-  assert.equal(page.row().step,7);
+  assert.equal(page.row().step,8);
 });
 
 test("Topics prewarms once without interrupting input, and Skip Topics opens resources with no assessment",async()=>{
-  const page=mount({row:fullRow({step:7,assessment:null,leveled:null,leveled_status:"none"}),
+  const page=mount({row:fullRow({step:8,assessment:null,leveled:null,leveled_status:"none"}),
     replies:{topics_done:()=>Promise.resolve({ok:true,json:async()=>({assessment:null})})}});
   await settle();
   assert.equal(page.bodies.filter(b=>b.action==="brainstorm" && b.prewarm).length,1);
@@ -961,7 +966,7 @@ test("Topics prewarms once without interrupting input, and Skip Topics opens res
 
 test("a failed background opening waits for explicit retry",async()=>{
   let calls=0;
-  const page=mount({row:fullRow({step:6,assessment:null}),replies:{brainstorm:()=> {
+  const page=mount({row:fullRow({step:7,assessment:null}),replies:{brainstorm:()=> {
     calls++;
     return Promise.resolve({ok:true,json:async()=>({initial_status:"error",initial_error:"Timed out"})});
   }}});
@@ -979,7 +984,7 @@ test("grounding remains non-blocking across Install, Brainstorm, Topics, Skip To
   }});
   await settle();
   assert.equal(page.bodies.filter(b=>b.action==="paper_grounding" && b.run).length,1);
-  for(const [step,title] of [[6,"What do you want to build?"],[7,"How familiar are you with the paper's concepts?"]]){
+  for(const [step,title] of [[7,"What do you want to build?"],[8,"How familiar are you with the paper's concepts?"]]){
     byClass(page.app,"ob-row")[step].fire("click");await settle();
     assert.equal(page.title(),title);
   }
@@ -990,7 +995,7 @@ test("grounding remains non-blocking across Install, Brainstorm, Topics, Skip To
 });
 test("grounding reload joins running work, reuses legacy evidence, and never loops on an error",async()=>{
   for(const status of ["running","error","legacy"]){
-    const row=fullRow({step:7,planning:{paper_grounding:{status,error:{message:"Timed out"}}}});
+    const row=fullRow({step:8,planning:{paper_grounding:{status,error:{message:"Timed out"}}}});
     if(status==="legacy") row.analysis={...ANALYSIS,grounding:{contribution:"Angles",evidence:[{kind:"method",claim:"Compare",quote:"Compare",location:"Methods"}]}};
     const page=mount({row,replies:{paper_grounding:()=>Promise.resolve({ok:true,json:async()=>({grounding_status:status})})}});
     await settle();
@@ -1003,7 +1008,7 @@ test("grounding reload joins running work, reuses legacy evidence, and never loo
 
 test("reopening Direction does not implicitly retry failed grounding; Try again opts in",async()=>{
   const requests=[];
-  const page=mount({row:fullRow({step:9,direction:null,planning:{paper_grounding:{status:"error"}}}),replies:{
+  const page=mount({row:fullRow({step:10,direction:null,planning:{paper_grounding:{status:"error"}}}),replies:{
     plan:body=>{
       requests.push(body);
       return Promise.resolve({ok:true,json:async()=>body.grounding_retry ? {status:"complete",direction:DIRECTION}
@@ -1018,25 +1023,25 @@ test("reopening Direction does not implicitly retry failed grounding; Try again 
 });
 
 // --- the mock-up comparison, between Install and Brainstorm ------------------
-// Two mock-ups side by side, the better one picked, a bracket to four places.
-// What is pinned here is that it holds the step while it runs, that it saves
-// the placing the member actually chose, and above all that it is never in the
-// way: an empty bucket, a failure, a placing already made, or Skip, and the
-// brainstorm draws exactly as it did before.
+// Mock-ups: the sixth step, between Install and Brainstorm. Two mock-ups side
+// by side, the better one picked, a bracket to four places. What is pinned
+// here is that it is a step of its own — numbered in the rail, walked into and
+// out of like any other — and that it is never a wall: an empty bucket, one
+// mock-up, a failure, or Skip, and it carries itself into the brainstorm.
 
 const MOCKUPS = [
   { id: "m1", name: "01 Rail" }, { id: "m2", name: "02 Stepper" },
   { id: "m3", name: "03 Dark side" }, { id: "m4", name: "04 Terminal" },
 ];
-const AT_BRAINSTORM = { row: fullRow({ step: 6 }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] };
+const AT_MOCKUPS = { row: fullRow({ step: 6 }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] };
 const picks = (page) => byClass(page.app, "ob-mk-pick");
 const frames = (page) => find(page.app, (n) => n.tagName === "iframe");
 
-test("the comparison holds the step after Install, and each pick is between two of the bucket's mock-ups", async () => {
-  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS });
+test("Mock-ups is the sixth step in the rail, and each pick is between two of the bucket's mock-ups", async () => {
+  const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS });
   await settle();
 
-  assert.equal(page.title(), "Which of these two is better?", "the comparison comes before the brainstorm");
+  assert.equal(page.title(), "Which of these two is better?", "the comparison is the step Install leads into");
   assert.match(textOf(page.app), /Semifinal · pick 1 of 4/, "four entrants: two semifinals, third place, final");
   assert.equal(picks(page).length, 2, "two mock-ups, one pick each");
 
@@ -1051,10 +1056,16 @@ test("the comparison holds the step after Install, and each pick is between two 
   const names = byClass(page.app, "ob-mk-name").map(textOf);
   assert.equal(new Set(names).size, 2, "a pick is never a mock-up against itself");
   for (const n of names) assert.ok(MOCKUPS.some((m) => m.name === n), `${n} is one of the bucket's, named by the server`);
+
+  // Sixth in the rail, numbered, between Install and Brainstorm.
+  const labels = byClass(page.app, "ob-label").map(textOf);
+  assert.deepEqual(labels.slice(5, 8), ["Install", "Mock-ups", "Brainstorm"], "it has a place of its own in the rail");
+  assert.equal(textOf(byClass(page.app, "ob-circle")[6]), "7", "and a number, counting the profile in");
+  assert.match(textOf(page.app), /Step 7 of 13 · Mock-ups/, "the step says which one it is");
 });
 
 test("picking through the bracket saves the placing the member chose, then goes on to the brainstorm", async () => {
-  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS });
+  const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS });
   await settle();
 
   const chosen = [];
@@ -1085,33 +1096,50 @@ test("picking through the bracket saves the placing the member chose, then goes 
   assert.equal(page.mockSaves.length, 1, "moving on writes nothing more");
 });
 
-test("Skip goes straight to the brainstorm and writes no placing", async () => {
-  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS });
+test("Skip carries the step into the brainstorm and writes no placing", async () => {
+  const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS });
   await settle();
   assert.equal(page.title(), "Which of these two is better?");
 
   byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Skip").fire("click");
   await settle();
   assert.equal(page.title(), "What do you want to build?");
+  assert.equal(page.row().step, 7, "the step is behind them, so a reload lands on the brainstorm");
   assert.equal(page.mockSaves.length, 0, "a skipped comparison is not a placing");
 });
 
-test("the comparison is never in the way: no bucket, one mock-up, a failure, or a placing already made", async () => {
+test("with nothing to compare the step carries itself into the brainstorm", async () => {
   for (const [why, options] of [
     ["an empty bucket", {}],
     ["a single mock-up", { mockups: [MOCKUPS[0]] }],
     ["a request that failed", { mockups: MOCKUPS, mockupsFail: true }],
-    ["a placing already made", { mockups: MOCKUPS, mockupSaved: { top: [{ rank: 1, id: "m1", name: "01 Rail" }], entrants: 4 } }],
   ]) {
-    const page = mount({ ...AT_BRAINSTORM, ...options });
+    const page = mount({ ...AT_MOCKUPS, ...options });
     await settle();
     assert.equal(page.title(), "What do you want to build?", `${why}: the brainstorm draws as it always did`);
     assert.equal(frames(page).length, 0, `${why}: nothing is framed`);
     assert.equal(page.mockSaves.length, 0, `${why}: nothing is written`);
+    assert.equal(page.row().step, 7, `${why}: and the step is not asked for again`);
   }
 });
 
-test("the comparison fills the wait while the paper is still being read", async () => {
+test("a placing already made is shown back, not asked for again", async () => {
+  const saved = { entrants: 4, updated_at: "2026-09-08T00:00:00.000Z",
+    top: MOCKUPS.map((m, i) => ({ rank: i + 1, id: m.id, name: m.name })) };
+  const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS, mockupSaved: saved });
+  await settle();
+
+  assert.equal(page.title(), "Your top four", "the step shows what they chose last time");
+  assert.deepEqual(byClass(page.app, "ob-mk-place-name").map(textOf), MOCKUPS.map((m) => m.name));
+  assert.equal(frames(page).length, 0, "and asks for no more picks");
+
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.title(), "What do you want to build?");
+  assert.equal(page.mockSaves.length, 0, "showing a placing writes no placing");
+});
+
+test("the step fills the wait while the paper is still being read", async () => {
   const page = mount({ row: fullRow({ step: 6, analysis_status: "running" }), turns: [], mockups: MOCKUPS });
   await settle();
   assert.equal(page.title(), "Which of these two is better?", "it does not wait on the paper");
@@ -1119,7 +1147,7 @@ test("the comparison fills the wait while the paper is still being read", async 
 });
 
 test("the arrow keys pick the mock-up on that side, and are left alone once the comparison is done", async () => {
-  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS });
+  const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS });
   await settle();
   const left = textOf(byClass(page.app, "ob-mk-name")[0]);
   const right = textOf(byClass(page.app, "ob-mk-name")[1]);
@@ -1141,7 +1169,7 @@ test("the arrow keys pick the mock-up on that side, and are left alone once the 
 });
 
 test("a placing the server refused is offered again, and can be left behind", async () => {
-  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS, mockupsSaveFail: true });
+  const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS, mockupsSaveFail: true });
   await settle();
   for (let i = 0; i < 4; i += 1) { picks(page)[0].fire("click"); await settle(); }
 

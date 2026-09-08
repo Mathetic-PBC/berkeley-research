@@ -25,8 +25,9 @@ test("the page talks to the onboarding endpoint and the paper upload", () => {
   assert.match(js, /"\/engelbart\/signin"/);
 });
 
-test("the rail names the twelve steps in order", () => {
-  const labels = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"];
+test("the rail names the thirteen steps in order", () => {
+  const labels = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Mock-ups", "Brainstorm", "Topics",
+    "Assets", "Direction", "Subgoals", "Todos"];
   const found = /var LABELS = \[([^\]]*)\]/.exec(js);
   assert.ok(found, "LABELS array");
   assert.deepEqual(JSON.parse("[" + found[1] + "]"), labels);

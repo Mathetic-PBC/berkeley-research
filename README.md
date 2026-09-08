@@ -10,10 +10,10 @@ Static site with no build step:
 - `/engelbart/admin` — password/TOTP-protected invite and credit administration
 - `/engelbart/mockups` — the design mock-ups in the `mock-us` storage bucket, two at a
   time in a single-elimination bracket; each member's top four are kept in
-  `engelbart_mockup_rankings` through `/api/engelbart-mockups`. The setup page shows
-  the same bracket once, between Install and Brainstorm, while the paper is being
-  read; an empty bucket, a failed request, or a placing already made and it is
-  skipped, so onboarding never waits on it
+  `engelbart_mockup_rankings` through `/api/engelbart-mockups`. The same bracket is
+  the setup page's sixth step, Mock-ups, between Install and Brainstorm, while the
+  paper is being read; an empty bucket, one mock-up, or a failed request and the
+  step carries itself into the brainstorm, so onboarding never waits on it
 - `/api/engelbart-config` — browser-safe runtime configuration only
 - `/api/engelbart-credentials` — authenticated, invite-entitled LiteLLM provisioning
 - `/api/engelbart-device` — CLI device-authorization pairing (`start`, `approve`,

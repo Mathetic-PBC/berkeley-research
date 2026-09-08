@@ -41,7 +41,14 @@ for file in \
   "$HC/supabase/migrations/20260831190000_hc_reader_profile.sql" \
   "$HC/supabase/migrations/20260902120000_hc_reader_knowledge.sql" \
   supabase/migrations/20260903120000_engelbart_onboarding_plan.sql \
-  supabase/migrations/20260905120000_engelbart_telemetry.sql; do
+  supabase/migrations/20260905120000_engelbart_telemetry.sql \
+  supabase/migrations/20260906120000_engelbart_member_model_keys.sql \
+  supabase/migrations/20260908050000_resumable_planning.sql \
+  supabase/migrations/20260908060000_brainstorm_before_topics.sql \
+  supabase/migrations/20260908070000_brainstorm_opening.sql \
+  supabase/migrations/20260908080000_background_paper_grounding.sql \
+  supabase/migrations/20260908120000_engelbart_mockup_rankings.sql \
+  supabase/migrations/20260908140000_mockups_step.sql; do
   echo "== $file"
   "$PSQL" "$url" -v ON_ERROR_STOP=1 -q -f "$file"
 done

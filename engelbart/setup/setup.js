@@ -19,7 +19,7 @@
   var DEVICE_API = "/api/engelbart-device";
   var MOCKUPS_API = "/api/engelbart-mockups";
 
-  var LABELS = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"];
+  var LABELS = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Mock-ups", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"];
   var DONE = LABELS.length;  // the step after the last label
   var YEARS = ["First year", "Second year", "Third year", "Fourth year"];
   var MAJORS = ["Computer Science", "Electrical Engineering & Computer Sciences", "Data Science", "Cognitive Science",
@@ -76,7 +76,7 @@
       key: { open: false, text: "", busy: false, err: "" },         // the own-key control: unfolded, what is typed, in-flight, what went wrong
       // The mock-up comparison, between Install and Brainstorm: what the
       // bucket holds, the bracket in play, the placing once it is saved.
-      mock: { loaded: false, busy: false, error: "", saveError: "", list: [], names: {}, saved: null, t: null, placed: null, done: false },
+      mock: { loaded: false, busy: false, error: "", saveError: "", list: [], names: {}, saved: null, t: null, placed: null, leaving: false },
       todoConfirm: -1,                  // the todo row whose × was pressed once
       change: { open: false, text: "", thinking: false, log: [] }                             // direction / subgoals
     },
@@ -219,6 +219,9 @@
     // starts the next one at the paper, and the rail counts from there.
     st.base = out.profile_reused ? 4 : 0;
     st.step = r.status === "created" ? DONE : Math.max(st.base, Math.min(DONE - 1, r.step || 0));
+    // Past the comparison: read the placing so the rail can name it, and so
+    // clicking back into the step shows what they chose rather than asking again.
+    if (r.status === "open" && st.step > 6) loadMockups();
   }
 
   // What only this tab knew about the record it is leaving behind.
@@ -247,11 +250,12 @@
     var r = st.row || {}, u = st.ui;
     return [str(r.name), str(r.year), str(r.major), r.depth ? DEPTHS[depthIndex()].label : "",
       u.pfile ? trunc(u.pfile.name, 26) : "", st.step > 5 ? "Connected" : "",
-      st.step > 6 ? trunc(str(r.interest) || "Brainstormed", 26) : "",
-      r.assessment && st.step > 7 ? r.assessment.areas.length + " areas" : "",
-      r.asset_chosen && st.step > 8 ? trunc(str(r.asset_chosen.title), 26) : "",
-      r.direction && st.step > 9 ? trunc(str(r.direction.title), 26) : "",
-      r.subgoals && st.step > 10 ? r.subgoals.length + " pieces" : "",
+      st.step > 6 ? (u.mock.placed ? "Top four" : "Skipped") : "",
+      st.step > 7 ? trunc(str(r.interest) || "Brainstormed", 26) : "",
+      r.assessment && st.step > 8 ? r.assessment.areas.length + " areas" : "",
+      r.asset_chosen && st.step > 9 ? trunc(str(r.asset_chosen.title), 26) : "",
+      r.direction && st.step > 10 ? trunc(str(r.direction.title), 26) : "",
+      r.subgoals && st.step > 11 ? r.subgoals.length + " pieces" : "",
       st.step >= DONE ? (r.todos || []).length + " todos" : ""];
   }
 
@@ -528,8 +532,8 @@
     var main = el("div", "ob-main"), body = el("div", "ob-body"), content = el("div", "ob-content");
     content.id = "content";
     lastContent = content;
-    var drawers = [drawName, drawYear, drawMajor, drawDepth, drawPaper, drawInstall, drawBrainstorm, drawTopics, drawAssets,
-      drawDirection, drawSubgoals, drawTodos, drawDone];
+    var drawers = [drawName, drawYear, drawMajor, drawDepth, drawPaper, drawInstall, drawMockups, drawBrainstorm, drawTopics,
+      drawAssets, drawDirection, drawSubgoals, drawTodos, drawDone];
     drawers[Math.min(st.step, drawers.length - 1)](content);
     if (st.error) content.appendChild(el("div", "ob-err", st.error));
     body.appendChild(content);
@@ -848,7 +852,7 @@
 
   function generating(content, text) { var w = el("div", "ob-wait"); w.appendChild(dots()); w.appendChild(el("div", "ob-wait-t", text)); content.appendChild(w); }
 
-  // --- 7 Topics ------------------------------------------------------------------
+  // --- 8 Topics ------------------------------------------------------------------
   //
   // Per area: a familiarity slider and the question at its level. Answering
   // sends it for grading; a grade that disagrees brings one follow-up at the
@@ -862,7 +866,9 @@
     if (read.analysis) st.row.analysis = Object.assign({}, read.analysis, st.row.analysis && st.row.analysis.grounding ? { grounding: st.row.analysis.grounding } : {});
     st.row.analysis_error = read.analysis_error || "";
     warmBrainstorm(); maybeWarmGrounding();
-    if (changed || st.step === 6 || st.step === 7) draw();
+    // Not while the comparison is up: a redraw reloads both frames, and the
+    // only thing here it would change is a line in the header.
+    if (changed || st.step === 7 || st.step === 8) draw();
   }
   function startReading(body) {
     st.row.analysis_status = "running"; st.row.analysis_error = "";
@@ -894,7 +900,7 @@
       startReading({ run: true });
     }
     if (r.analysis_status === "error") {
-      var box = stepBox(content, count(7), "The paper could not be read");
+      var box = stepBox(content, count(8), "The paper could not be read");
       box.appendChild(el("div", "ob-sub", r.analysis_error || "Something went wrong while reading it."));
       var acts = el("div", "ob-actions");
       acts.appendChild(cta("Try again", false, function () { startReading({ retry: true }); draw(); }));
@@ -907,7 +913,7 @@
     }
     var a = r.analysis, areas = a.areas, fi = Math.min(st.ui.fIdx || 0, areas.length - 1), area = areas[fi];
     var box2 = el("div", "ob-step");
-    box2.appendChild(el("div", "ob-count", count(7, "Topics")));
+    box2.appendChild(el("div", "ob-count", count(8, "Topics")));
     box2.appendChild(el("div", "ob-title", "How familiar are you with the paper's concepts?"));
     var paper = el("div", "ob-paper"); paper.appendChild(el("div", "ob-paper-icon"));
     var pt = el("div", "ob-grow"), line = el("div", "ob-paper-line");
@@ -955,7 +961,7 @@
         st.busy = "";
         st.row.assessment = out.assessment;
         startLeveled();
-        go(8);
+        go(9);
       }).catch(fail);
     }
     function submit() {
@@ -994,7 +1000,7 @@
     on(skip, "click", function () {
       st.busy = "compiling"; draw();
       api("topics_done", { skip: true }).then(function (out) {
-        st.busy = ""; st.row.assessment = out.assessment; startLeveled(); go(8);
+        st.busy = ""; st.row.assessment = out.assessment; startLeveled(); go(9);
       }).catch(fail);
     });
     box2.appendChild(skip); content.appendChild(box2);
@@ -1030,7 +1036,7 @@
     if (levelTimer) return;
     levelTimer = setInterval(function () {
       var r = st.row;
-      if (!r || (st.step !== 7 && st.step !== 8) || r.leveled_status === "done" && !checkingAccess(r.leveled && r.leveled.assets)) { clearInterval(levelTimer); levelTimer = null; return; }
+      if (!r || (st.step !== 8 && st.step !== 9) || r.leveled_status === "done" && !checkingAccess(r.leveled && r.leveled.assets)) { clearInterval(levelTimer); levelTimer = null; return; }
       if (r.leveled_status === "running" || checkingAccess(r.leveled && r.leveled.assets)) {
         api("leveled").then(function (out) { leveledUpdate(out); if (out.leveled_status !== "running") draw(); }).catch(function () {});
       } else if (r.assets_status === "error" || r.leveled_status === "error") {
@@ -1041,7 +1047,7 @@
     }, 6000);
   }
 
-  // --- 6 Brainstorm ---------------------------------------------------------------
+  // --- 7 Brainstorm ---------------------------------------------------------------
   //
   // A conversation, one card at a time, about what in this paper is worth
   // building on. The transcript is the server's; this draws it and sends
@@ -1120,10 +1126,10 @@
         st.turns.push({ id: out.turn_id, role: "assistant", content: out.say,
           card: { card: out.card, questions: out.questions, focus: out.focus, ready: out.ready === true } });
       } else if (!out.turn_id) opening.error = "The paper changed. Reload to continue.";
-      if (st.step === 6) draw();
+      if (st.step === 7) draw();
     }).catch(function (e) {
       if (!st.row || st.row.id + ":" + st.row.paper_id !== key) return;
-      opening.pending = false; opening.error = e.message; st.ui.bs.thinking = false; if (st.step === 6) draw();
+      opening.pending = false; opening.error = e.message; st.ui.bs.thinking = false; if (st.step === 7) draw();
     });
   }
 
@@ -1186,24 +1192,55 @@
     return null;
   }
 
-  // --- the mock-up comparison, between Install and Brainstorm ---------------
+  // --- 6 Mock-ups: between Install and Brainstorm ---------------------------
   //
   // Two of the design mock-ups from the storage bucket side by side, each in
   // a sandboxed frame; the better one is picked, and a single-elimination
   // bracket (engelbart/mockups/tournament.js) runs until four places are
   // decided. It fills the wait while the paper is read.
   //
-  // It is never in the way. A browser without the module, an empty bucket, a
-  // request that fails, a placing this member already made, or Skip, and the
-  // brainstorm draws exactly as it did before: onboarding never waits on it.
+  // It is a step of its own, but never a wall. A browser without the module,
+  // an empty bucket, one mock-up, or a request that failed, and the step
+  // carries itself into the brainstorm without being seen; Skip does the same
+  // on purpose. Onboarding never waits on it.
 
-  function mockPending() {
+  // Nothing to compare: the step has no question to ask and takes itself out
+  // of the way. The answer has to have landed first, or there is nothing to
+  // know yet.
+  function mockEmpty() {
     var m = st.ui.mock;
-    if (!window.EngelbartTournament || m.done || m.error) return false;
-    if (!m.loaded) return true;          // the answer decides; the step holds until it lands
-    if (m.placed) return true;           // the four places, read before moving on
-    return m.list.length > 1 && !m.saved;
+    if (!window.EngelbartTournament) return true;
+    if (!m.loaded) return false;
+    return !!m.error || (!m.placed && m.list.length < 2);
   }
+
+  // Continue, Skip, and the step taking itself out of the way all write the
+  // same thing: the comparison is behind them.
+  function leaveMockups() {
+    if (st.ui.mock.leaving) return;
+    st.ui.mock.leaving = true;
+    save(7, {}).then(function () { go(7); }).catch(function (e) { st.ui.mock.leaving = false; fail(e); });
+  }
+
+  // A mock-up is a whole page: drawn at this size and scaled to the pane, so
+  // the whole design is visible rather than the top left corner of it.
+  var MOCK_W = 1280, MOCK_H = 820;
+
+  // Measured after the step is drawn and on every resize. The boxes are held
+  // by reference rather than looked up, so this asks the document nothing.
+  function fitMocks() {
+    var boxes = st.ui.mock.fits || [];
+    for (var i = 0; i < boxes.length; i++) {
+      var box = boxes[i], frame = box && box.children && box.children[0];
+      if (!box || !frame || !frame.style || !box.style) continue;
+      var w = box.clientWidth || (box.getBoundingClientRect ? box.getBoundingClientRect().width : 0);
+      if (!w) continue;
+      var s = w / MOCK_W;
+      frame.style.transform = "scale(" + s + ")";
+      box.style.height = Math.round(MOCK_H * s) + "px";
+    }
+  }
+  if (window.addEventListener) window.addEventListener("resize", fitMocks);
 
   function mockName(id) { return st.ui.mock.names[id] || str(id); }
   function mockUrl(id) { return MOCKUPS_API + "?html=" + encodeURIComponent(id); }
@@ -1224,6 +1261,7 @@
         m.list = (out.mockups || []).filter(function (x) { return x && x.id; });
         m.names = {}; m.list.forEach(function (x) { m.names[x.id] = x.name; });
         m.saved = out.saved || null;
+        if (m.saved && m.saved.top && m.saved.top.length) m.placed = m.saved.top;
         if (m.list.length > 1 && !m.saved) {
           m.t = T.create(T.shuffle(m.list.map(function (x) { return x.id; })));
           if (T.done(m.t)) { saveMockups(); return; }
@@ -1265,12 +1303,16 @@
     pane.appendChild(head);
     // The mock-up's own scripts run on an opaque origin: it can never read the
     // page that frames it, nor the member's session.
+    var fit = el("div", "ob-mk-fit");
     var frame = el("iframe", "ob-mk-frame");
     attr(frame, "sandbox", "allow-scripts allow-popups allow-forms");
     attr(frame, "referrerpolicy", "no-referrer");
     attr(frame, "title", mockName(id));
+    attr(frame, "width", String(MOCK_W)); attr(frame, "height", String(MOCK_H));
     attr(frame, "src", mockUrl(id));
-    pane.appendChild(frame);
+    fit.appendChild(frame);
+    pane.appendChild(fit);
+    (st.ui.mock.fits = st.ui.mock.fits || []).push(fit);
     var pick = el("button", "ob-mk-pick"); pick.type = "button";
     pick.appendChild(el("span", "", side === "left" ? "\u25c0 This one" : "This one \u25b6"));
     on(pick, "click", function () { pickMock(id); });
@@ -1291,13 +1333,15 @@
     });
     box.appendChild(list);
     var acts = el("div", "ob-actions");
-    acts.appendChild(cta("Continue", false, function () { st.ui.mock.done = true; draw(); }));
+    acts.appendChild(cta("Continue", false, leaveMockups));
     box.appendChild(acts);
     content.appendChild(box);
   }
 
   function drawMockups(content) {
     var m = st.ui.mock, T = window.EngelbartTournament;
+    if (mockEmpty()) { leaveMockups(); return generating(content, "Getting your first question ready"); }
+    if (!m.loaded && !m.busy) loadMockups();
     var box = el("div", "ob-step ob-mk-step");
     var head = el("div", "ob-head");
     head.appendChild(el("span", "ob-count", count(6, "Mock-ups")));
@@ -1317,7 +1361,7 @@
       box.appendChild(el("div", "ob-err", m.saveError || "The placing was not written."));
       var again = attr(el("div", "ob-actions"), "data-between", "1");
       var past = el("button", "ob-ghost", "Continue anyway"); past.type = "button";
-      again.appendChild(on(past, "click", function () { st.ui.mock.done = true; draw(); }));
+      again.appendChild(on(past, "click", leaveMockups));
       again.appendChild(cta("Try again", false, function () { saveMockups(); }));
       box.appendChild(again);
       content.appendChild(box); return;
@@ -1330,13 +1374,16 @@
     fill.style.width = (p.total ? Math.round(100 * p.made / p.total) : 0) + "%";
     bar.appendChild(fill); box.appendChild(bar);
     var arena = el("div", "ob-mk-arena");
+    st.ui.mock.fits = [];
     arena.appendChild(mockPane("left", cur.a));
     arena.appendChild(mockPane("right", cur.b));
     box.appendChild(arena);
+    // The panes have no width until the step is in the document.
+    setTimeout(fitMocks, 0);
     if (m.saveError) box.appendChild(el("div", "ob-err", m.saveError));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
     var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
-    acts.appendChild(on(skip, "click", function () { st.ui.mock.done = true; draw(); }));
+    acts.appendChild(on(skip, "click", leaveMockups));
     acts.appendChild(el("span", "ob-mk-keys", "\u2190 left \u00b7 \u2192 right"));
     box.appendChild(acts);
     content.appendChild(box);
@@ -1344,11 +1391,9 @@
 
   function drawBrainstorm(content) {
     var r = st.row, bs = st.ui.bs;
-    // The mock-up comparison holds this step until it is done or skipped.
-    if (mockPending()) { loadMockups(); drawMockups(content); return; }
     if (r.analysis_status === "none" && r.paper_id) startReading({ run: true });
     if (r.analysis_status === "error") {
-      var failed = stepBox(content, count(6), "The paper could not be read");
+      var failed = stepBox(content, count(7), "The paper could not be read");
       failed.appendChild(el("div", "ob-sub", r.analysis_error || "Try reading the paper again."));
       failed.appendChild(cta("Try again", false, function () { startReading({ retry: true }); draw(); }));
       return;
@@ -1360,7 +1405,7 @@
     }
     if (!st.turns.length) {
       if (opening.error) {
-        var failedOpening = stepBox(content, count(6), "Your first question could not be prepared");
+        var failedOpening = stepBox(content, count(7), "Your first question could not be prepared");
         failedOpening.appendChild(el("div", "ob-sub", opening.error));
         failedOpening.appendChild(cta("Try again", false, function () { warmBrainstorm(true); draw(); }));
       } else generating(content, "Preparing your first question");
@@ -1368,7 +1413,7 @@
     }
     if (r.assessment && r.leveled_status !== "done") pollLeveled();
     var box = el("div", "ob-step ob-bs-step");
-    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(6, "Brainstorm")));
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(7, "Brainstorm")));
     head.appendChild(el("span", "ob-count", r.leveled_status === "done" ? "resources ready" : "fitting resources to you")); box.appendChild(head);
     box.appendChild(el("div", "ob-title", "What do you want to build?"));
     var humanDone = (lastCard() && lastCard().ready) || st.turns.filter(function (t) {
@@ -1471,7 +1516,7 @@
         var acts = attr(el("div", "ob-actions"), "data-between", "1");
         var skip = el("button", "ob-ghost", "Skip to Topics"); skip.type = "button";
         acts.appendChild(on(skip, "click", function () {
-          save(7, {}).then(function () { go(7); }).catch(fail);
+          save(8, {}).then(function () { go(8); }).catch(fail);
         }));
         sendBtn = cta("Send answers", !ready(), function () { sendTurn({ answers: bs.answers }); });
         acts.appendChild(sendBtn); qcard.appendChild(acts);
@@ -1510,11 +1555,11 @@
     card.appendChild(el("div", "ob-cap", "ready when you are"));
     card.appendChild(el("div", "ob-question", "Next, a few questions about the paper’s concepts."));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
-    acts.appendChild(cta("Continue", false, function () { save(7, {}).then(function () { go(7); }).catch(fail); }));
+    acts.appendChild(cta("Continue", false, function () { save(8, {}).then(function () { go(8); }).catch(fail); }));
     card.appendChild(acts); box.appendChild(card);
   }
 
-  // --- 8 Assets ------------------------------------------------------------------
+  // --- 9 Assets ------------------------------------------------------------------
   //
   // What the paper rests on, fitted to them: one list, expand for the
   // description, the links, and a place to ask; children sit under their
@@ -1550,7 +1595,7 @@
     }
     var box = el("div", "ob-step ob-as-step");
     var head = el("div", "ob-as-header");
-    head.appendChild(el("div", "ob-count", count(8, "Assets")));
+    head.appendChild(el("div", "ob-count", count(9, "Assets")));
     head.appendChild(el("h1", "ob-as-h1", "Select which resource to start with"));
     head.appendChild(el("div", "ob-as-sub", "Choose the dataset, code, or demo you’ll use for your first project."));
     box.appendChild(head);
@@ -1569,7 +1614,7 @@
       st.busy = "choose"; draw();
       api("choose_asset", { key: as.picked }).then(function (out) {
         st.busy = ""; st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; st.row.direction = null; st.row.subgoals = null; st.row.todos = null;
-        st.ui.change = { open: false, text: "", thinking: false, log: [] }; go(9);
+        st.ui.change = { open: false, text: "", thinking: false, log: [] }; go(10);
       }).catch(fail);
     }));
     box.appendChild(acts);
@@ -1633,7 +1678,7 @@
     return row;
   }
 
-  // --- 9 Direction, 10 Subgoals ---------------------------------------------------
+  // --- 10 Direction, 11 Subgoals ---------------------------------------------------
   //
   // One proposal, not a choice of three. "Looks good" moves on; "Change
   // something" unfolds a box, and what is typed there revises the proposal.
@@ -1681,31 +1726,31 @@
 
   function drawDirection(content) {
     var r = st.row;
-    if (!r.asset_chosen) { stepBox(content, count(9), "Pick what to build on first"); return; }
+    if (!r.asset_chosen) { stepBox(content, count(10), "Pick what to build on first"); return; }
     if (!r.direction || activePlan("direction")) {
-      if (st.error) { var blocked = stepBox(content, count(9), "Couldn’t prepare the direction"); blocked.appendChild(cta("Try again", false, function () { st.ui.retryGrounding = true; st.error = ""; st.busy = ""; draw(); })); blocked.appendChild(cta("Back to Assets", false, function () { go(8); })); return; }
+      if (st.error) { var blocked = stepBox(content, count(10), "Couldn’t prepare the direction"); blocked.appendChild(cta("Try again", false, function () { st.ui.retryGrounding = true; st.error = ""; st.busy = ""; draw(); })); blocked.appendChild(cta("Back to Assets", false, function () { go(9); })); return; }
       if (st.busy !== "direction") { st.busy = "direction"; api("direction", st.ui.planRejected ? { regenerate: true } : {}).then(function (out) { st.busy = ""; st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } draw(); }).catch(fail); }
       generating(content, st.ui.planMessage || "Drafting your direction"); return;
     }
     var d = r.direction, box = el("div", "ob-step");
-    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(9, "Direction"))); head.appendChild(el("span", "ob-count", "one direction")); box.appendChild(head);
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(10, "Direction"))); head.appendChild(el("span", "ob-count", "one direction")); box.appendChild(head);
     box.appendChild(el("div", "ob-question", d.title));
     box.appendChild(el("div", "ob-dir-body", d.what_you_would_make));
     if (r.asset_chosen.fallbackOf) box.appendChild(el("div", "ob-dir-line", "Using " + r.asset_chosen.title + " instead of " + r.asset_chosen.fallbackOf.title + " (" + r.asset_chosen.fallbackOf.access.state.replace(/_/g, " ") + ")."));
-    changeBox(box, "direction", function () { st.ui.change = { open: false, text: "", thinking: false, log: [] }; save(10, {}).then(function () { go(10); }).catch(fail); });
+    changeBox(box, "direction", function () { st.ui.change = { open: false, text: "", thinking: false, log: [] }; save(11, {}).then(function () { go(11); }).catch(fail); });
     content.appendChild(box);
   }
 
   function drawSubgoals(content) {
     var r = st.row;
-    if (!r.direction) { stepBox(content, count(10), "Settle the direction first"); return; }
+    if (!r.direction) { stepBox(content, count(11), "Settle the direction first"); return; }
     if (!r.subgoals || activePlan("subgoals")) {
       if (st.error) { planRetry(content, 10); return; }
       if (st.busy !== "subgoals") { st.busy = "subgoals"; api("subgoals", st.ui.planRejected ? { regenerate: true } : {}).then(function (out) { st.busy = ""; st.row.subgoals = out.subgoals; draw(); }).catch(fail); }
       generating(content, st.ui.planMessage || "Drafting three subgoals"); return;
     }
     var box = el("div", "ob-step");
-    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(10, "Subgoals"))); head.appendChild(el("span", "ob-count", "three pieces")); box.appendChild(head);
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(11, "Subgoals"))); head.appendChild(el("span", "ob-count", "three pieces")); box.appendChild(head);
     box.appendChild(el("div", "ob-cap", "Direction")); box.appendChild(el("div", "ob-goal-title", r.direction.title));
     var list = el("div", "ob-sg-list");
     r.subgoals.forEach(function (g, i) {
@@ -1719,11 +1764,11 @@
       row.appendChild(t); list.appendChild(row);
     });
     box.appendChild(list);
-    changeBox(box, "subgoals", function () { st.ui.change = { open: false, text: "", thinking: false, log: [] }; save(11, {}).then(function () { go(11); }).catch(fail); });
+    changeBox(box, "subgoals", function () { st.ui.change = { open: false, text: "", thinking: false, log: [] }; save(12, {}).then(function () { go(12); }).catch(fail); });
     content.appendChild(box);
   }
 
-  // --- 11 Todos -----------------------------------------------------------------
+  // --- 12 Todos -----------------------------------------------------------------
 
   function issueCode() {
     return post(DEVICE_API, { action: "issue" }).then(function (v) {
@@ -1733,7 +1778,7 @@
 
   function drawTodos(content) {
     var r = st.row;
-    if (!r.direction || !r.subgoals) { stepBox(content, count(11), "Settle the pieces first"); return; }
+    if (!r.direction || !r.subgoals) { stepBox(content, count(12), "Settle the pieces first"); return; }
     if (st.busy === "create") { generating(content, "Making " + (st.ui.projName || "your project")); return; }
     if (!r.todos || !r.todos.length || activePlan("todos")) {
       if (st.error) { planRetry(content, 11); return; }
@@ -1746,7 +1791,7 @@
     if (!st.ui.todos.length) st.ui.todos = r.todos.slice();
     var todos = st.ui.todos, n = todos.length, canAdd = n < 4;
     var box = el("div", "ob-step");
-    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(11, "Todos"))); head.appendChild(el("span", "ob-count", n + " of 4")); box.appendChild(head);
+    var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(12, "Todos"))); head.appendChild(el("span", "ob-count", n + " of 4")); box.appendChild(head);
     box.appendChild(el("div", "ob-title", r.subgoals[0].label));
     var rows = el("div", "ob-rows");
     todos.forEach(function (t, i) {
@@ -1798,7 +1843,7 @@
     name.appendChild(create); box.appendChild(name); content.appendChild(box);
   }
 
-  // --- 12 Done: open a new chat and run /bart -----------------------------------------
+  // --- 13 Done: open a new chat and run /bart -----------------------------------------
 
   function drawDone(content) {
     var r = st.row;
@@ -1841,7 +1886,7 @@
   // Left and right pick the mock-up on that side, while the comparison is on
   // screen and nothing is being typed into.
   if (document.addEventListener) document.addEventListener("keydown", function (e) {
-    if (st.step !== 6 || e.metaKey || e.ctrlKey || e.altKey || !mockPending()) return;
+    if (st.step !== 6 || e.metaKey || e.ctrlKey || e.altKey || !window.EngelbartTournament) return;
     var m = st.ui.mock, T = window.EngelbartTournament;
     if (m.busy || m.placed || !m.t) return;
     var tag = e.target && e.target.tagName ? String(e.target.tagName).toLowerCase() : "";
@@ -1852,7 +1897,7 @@
   });
 
   var QUICK = ["What does this mean?", "Why does this matter?", "Give me an example", "Is this too much for a first project?"];
-  function askable() { return st.screen === "flow" && st.step >= 6 && st.step <= 11; }
+  function askable() { return st.screen === "flow" && st.step >= 7 && st.step <= 12; }
   function asksFor(quote) { return (st.ui.asks || []).filter(function (a) { return a.quote === quote; }); }
 
   if (document.addEventListener) document.addEventListener("keydown", function (e) {
