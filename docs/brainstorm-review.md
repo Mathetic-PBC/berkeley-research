@@ -1,5 +1,13 @@
 # Onboarding Brainstorm review
 
+Topics is optional evidence. Brainstorm follows Install and precedes Topics; the first turn is prepared as soon as analysis finishes, regardless of which step is visible. It uses the paper analysis, profile, chosen explanation level, self-reported paper familiarity, available asset brief, and any answers already saved.
+
+The opening uses one Haiku call with a 1,500-token output cap and a 25-second deadline. The existing transcript stores its card. A server-only database claim in the existing planning state prevents competing tabs from generating duplicates; the claim expires after 45 seconds for crash recovery. Errors persist until explicit retry. Topic changes do not invalidate the opening. Every subsequent turn compiles the latest real calibration evidence, including partial answers, without restarting the conversation.
+
+Skip Topics retains saved answers and advances to Assets. With no answers, assessment stays null and Resource Fitter uses profile/familiarity. Unknown areas stay unknown in prompts; absence of answers is never a low grade. Replacing the paper clears its obsolete Brainstorm transcript and calibration rows.
+
+Deployment requires `20260908060000_brainstorm_before_topics.sql` and `20260908070000_brainstorm_opening.sql` before the updated endpoint. The former preserves the visible screen when reordering existing open setups. The latter adds the opening claim RPC and paper-change cleanup trigger.
+
 Current policy: usually gather about three complementary preference signals, one question per turn, with a hard cap of three nonempty user responses. Stop earlier only for unusually specific intent that already covers the useful dimensions. Runtime, debugger, simulator and reload guards are synchronized.
 
 The dimensions are what part of the material interests the student, what they want to do with it, and what they would like to discover, change, or compare. Skip dimensions already covered; do not repeatedly narrow the same preference. Readiness remains independent of resource loading. Direction, Subgoals and Todos retain their existing jobs.

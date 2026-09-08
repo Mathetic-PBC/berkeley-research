@@ -140,3 +140,13 @@ test('Subgoals and TODOs use the same persisted review boundary',async()=>{
   }
   const row=await f.row();assert.equal(row.subgoals.length,3);assert.equal(row.todos.length,2);assert.equal(row.project_name,'loop-workbench');
 });
+
+test('the order migration keeps existing readers on their current screen',async()=>{
+  const rows=[{id:crypto.randomUUID(),step:6,status:'open'},{id:crypto.randomUUID(),step:7,status:'open'},{id:crypto.randomUUID(),step:7,status:'created'}];
+  for(const r of rows) await db.query('insert into engelbart_onboardings(id,user_id,status,step,interest) values($1,$2,$3,$4,$5)',[r.id,user.id,r.status,r.step,'Keep this interest']);
+  await db.exec(fs.readFileSync(require.resolve('../supabase/migrations/20260908060000_brainstorm_before_topics.sql'),'utf8'));
+  for(const [i,r] of rows.entries()){
+    const saved=(await db.query('select step,interest from engelbart_onboardings where id=$1',[r.id])).rows[0];
+    assert.equal(saved.step,[7,6,7][i]);assert.equal(saved.interest,'Keep this interest');
+  }
+});

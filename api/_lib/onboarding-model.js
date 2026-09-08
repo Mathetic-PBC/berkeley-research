@@ -378,7 +378,7 @@ async function generate(key, input, normalize, credentials, options, what, purpo
   const checked = grounded && ["direction", "subgoals", "todos"].includes(purpose);
   let correction = "", accessError = null;
   for (let attempt = 0; attempt < (checked ? 2 : 1); attempt++) {
-    const raw = await callModel({ content: [text([pr.text, resourceRule, (["direction","subgoals","todos","brainstorm","goals"].includes(purpose) ? Grounding.rules(input,purpose) : ""), correction].filter(Boolean).join("\n\n"))], family: "sonnet", purpose, reads, template: pr.template, templateEdited: pr.edited }, credentials, options);
+    const raw = await callModel({ content: [text([pr.text, resourceRule, (["direction","subgoals","todos","brainstorm","goals"].includes(purpose) ? Grounding.rules(input,purpose) : ""), correction].filter(Boolean).join("\n\n"))], family: input.opening ? "haiku" : "sonnet", ...(input.opening ? { maxTokens: 1500, timeoutMs: 25000 } : {}), purpose, reads, template: pr.template, templateEdited: pr.edited }, credentials, options);
     const out = await normalized(purpose, raw, normalize);
     accessError = null;
     if (out && purpose === "direction") {
