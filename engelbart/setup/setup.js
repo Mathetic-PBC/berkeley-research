@@ -1530,8 +1530,6 @@
     box.appendChild(el("div", "ob-question", d.title));
     box.appendChild(el("div", "ob-dir-body", d.what_you_would_make));
     if (r.asset_chosen.fallbackOf) box.appendChild(el("div", "ob-dir-line", "Using " + r.asset_chosen.title + " instead of " + r.asset_chosen.fallbackOf.title + " (" + r.asset_chosen.fallbackOf.access.state.replace(/_/g, " ") + ")."));
-    if (d.first_visible_result) { var fv = el("div", "ob-dir-line"); fv.appendChild(el("span", "ob-as-lead", "First thing you'd see · ")); fv.appendChild(el("span", "", d.first_visible_result)); box.appendChild(fv); }
-    if (d.why_it_fits) { var wf = el("div", "ob-dir-line"); wf.appendChild(el("span", "ob-as-lead", "Why this one · ")); wf.appendChild(el("span", "", d.why_it_fits)); box.appendChild(wf); }
     changeBox(box, "direction", function () { st.ui.change = { open: false, text: "", thinking: false, log: [] }; save(10, {}).then(function () { go(10); }).catch(fail); });
     content.appendChild(box);
   }
