@@ -226,3 +226,33 @@ test("a dataset uploaded beneath Paper is automatically present in the installed
     await expect(page.getByRole('heading',{name:'uploaded-with-paper.csv',exact:true})).toBeVisible();
   } finally {await machine.stop();await stack.stop();}
 });
+
+test('local folder path beneath Paper becomes an active linked dataset without cloud upload',async({page})=>{
+  test.setTimeout(240000);
+  const fs=require('node:fs'),path=require('node:path');
+  const stack=new SimulationStack();await stack.start();stack.row.asset_chosen={type:'code',title:'Existing code'};
+  const machine=new SimulatedMachine(stack.url);
+  const folder=path.join(machine.root,'External dataset');fs.mkdirSync(path.join(folder,'nested'),{recursive:true});
+  fs.writeFileSync(path.join(folder,'nested','metrics.csv'),'metric,label\n1,yes\n');
+  try {
+    stack.codeIssued=true;await machine.install(SETUP_CODE);
+    await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
+    await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    await page.getByLabel('Local dataset folder path',{exact:true}).fill(folder);
+    await page.getByRole('button',{name:'Use local folder',exact:true}).click();
+    await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Inspected when Engelbart opens locally');
+    expect(stack.datasetFiles.size).toBe(0);
+    await page.locator('.ob-row').filter({hasText:'Todos'}).click();await page.getByRole('button',{name:/Create project/}).click();
+    await expect(page.getByText('Browser CLI Round Trip is saved',{exact:true})).toBeVisible();
+    const opened=await machine.openBart('local-dataset');await page.goto(opened.url);
+    await page.getByRole('tab',{name:'Dataset',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'External dataset',exact:true})).toBeVisible();
+    const project=await page.evaluate(()=>window.engelbart.store.get().project);
+    const r=project.resources.find(r=>r.source.provider==='local_path');
+    expect(r.status).toBe('ready');expect(project.activeDatasetId).toBe(r.id);expect(r.access.linked).toBe(true);
+    expect(r.manifest.files[0].path).toBe('nested/metrics.csv');
+    expect(fs.realpathSync(r.access.localPath)).toBe(fs.realpathSync(folder));
+    await page.reload();await page.getByRole('tab',{name:'Dataset',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'External dataset',exact:true})).toBeVisible();
+  } finally {await machine.stop();await stack.stop();}
+});

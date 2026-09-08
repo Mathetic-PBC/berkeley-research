@@ -865,6 +865,7 @@
       section.appendChild(el("div", "ob-file-name", resource.name));
       var manifest = resource.manifest;
       section.appendChild(el("div", "ob-hint", manifest ? manifest.fileCount + " files · " + ((manifest.totalBytes || 0) / 1024 / 1024).toFixed(1) + " MB · Attached to project" : "Attached to project"));
+      if (resource.source && resource.source.provider === "local_path") section.appendChild(el("div", "ob-hint", resource.source.path + " · Inspected when Engelbart opens locally"));
       if (resource.error) section.appendChild(el("div", "ob-hint", resource.error));
     }
     var drop = el("div", "ob-dataset-drop", "Drop a dataset file or folder here");
@@ -888,6 +889,14 @@
       controls.appendChild(on(remove, "click", function () {datasetChange({op:"remove"});}));
     }
     section.appendChild(controls);
+    var local = el("div", "ob-dataset-controls"), localInput = el("input"); localInput.type = "text";
+    localInput.placeholder = "~/Desktop/Dataset/dataset"; localInput.value = state.localPath || ""; localInput.disabled = state.busy;
+    attr(localInput, "aria-label", "Local dataset folder path");
+    on(localInput, "input", function () {state.localPath = localInput.value;});
+    var localAttach = el("button", "ob-seed", "Use local folder"); localAttach.type = "button"; localAttach.disabled = state.busy;
+    on(localAttach, "click", function () {datasetChange({op:"local_path", path:state.localPath});});
+    local.appendChild(localInput); local.appendChild(localAttach); section.appendChild(local);
+    section.appendChild(el("div", "ob-hint", "Use a folder already on the computer where Engelbart will run. Only its path is saved here; files stay on your computer. Keep the folder in place."));
     var link = el("div", "ob-dataset-controls"), input = el("input"); input.type = "url"; input.placeholder = "Dataset or repository URL"; input.value = state.url; input.disabled = state.busy;
     attr(input, "aria-label", "Dataset or repository URL"); on(input, "input", function () {state.url = input.value;});
     var attach = el("button", "ob-seed", "Attach link"); attach.type = "button"; attach.disabled = state.busy;

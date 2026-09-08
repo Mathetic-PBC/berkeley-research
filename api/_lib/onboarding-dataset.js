@@ -1,5 +1,5 @@
 "use strict";
-const {randomUUID}=require('node:crypto');
+const {randomUUID,createHash}=require('node:crypto');
 const {patchRows}=require('./supabase');
 const Storage=require('./dataset-storage');
 const Resources=require('./project-resources');
@@ -46,6 +46,16 @@ async function handle(user,row,body,options={}) {
   if(row.status!=='open')throw fail('This setup is already finished',409);
   const op=body.op, storage=options.datasetStorage || Storage;
   if(op==='remove')return write(user,row,{dataset_resource:null,dataset_upload:null},options);
+  if(op==='local_path') {
+    const path=String(body.path || '').trim().replace(/^(["'])(.*)\1$/, '$2');
+    if(path.length>2000 || /[\x00-\x1f]/.test(path) || !/^(?:\/|~\/|[A-Za-z]:[\\/])/.test(path) || path.split(/[\\/]/).includes('..'))
+      throw fail('Enter the full local folder path, such as ~/Desktop/Dataset/dataset');
+    const name=path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'Local dataset';
+    const resource={id:'dataset-'+createHash('sha256').update(path).digest('hex').slice(0,20),kind:'dataset',name,status:'selected',error:'',
+      source:{type:'local_folder',provider:'local_path',path},metadata:{},
+      provenance:{onboardingId:row.id,providedBy:'user',selectedBy:'paper-step'}};
+    return write(user,row,{dataset_resource:resource,dataset_upload:null},options);
+  }
   if(op==='link') {
     const url=String(body.url || '').trim();
     if(url.length>2000)throw fail('Dataset URL is too long');
