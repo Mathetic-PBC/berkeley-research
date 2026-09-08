@@ -154,3 +154,48 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     await stack.stop();
   }
 });
+
+test("GitHub folder handoff is one collection satisfied by a local folder in the installed Dataset pane", async ({page}) => {
+  test.setTimeout(240_000);
+  const fs=require('node:fs'),path=require('node:path');
+  const R=require('../api/_lib/project-resources');
+  const stack=new SimulationStack(); await stack.start();
+  const machine=new SimulatedMachine(stack.url),sessionId='collection-round-trip';
+  const sourceUrl='https://github.com/org/research-repo/tree/main/dataset';
+  const access=await R.probeUrl(sourceUrl,{fetchImpl:async url=>{
+    if(url.endsWith('/commits/main'))return Response.json({sha:'a'.repeat(40),commit:{tree:{sha:'tree'}}});
+    if(url.includes('/git/trees/'))return Response.json({tree:['dataset/metrics.csv','dataset/labels.csv','dataset/raw/events.parquet'].map(p=>({path:p,type:'blob',size:20}))});
+    return Response.json({default_branch:'main'});
+  }});
+  expect(access.state).toBe('available');
+  // The public listing was verified; acquisition is deliberately unavailable in
+  // this isolated fixture. It must be satisfiable without changing the source.
+  stack.row.asset_chosen={key:'research-collection',type:'dataset',title:'Research dataset',links:[{url:sourceUrl}],access:{...access,state:'restricted',reason:'Needs local folder: provider access required in this fixture'}};
+  try {
+    stack.codeIssued=true;await machine.install(SETUP_CODE);
+    await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
+    await page.getByRole('button',{name:/Create project/}).click();
+    await expect(page.getByText('Browser CLI Round Trip is saved',{exact:true})).toBeVisible();
+    const resource=stack.pendingSetup.resources.find(r=>r.kind==='dataset');
+    expect(resource.manifest.fileCount).toBe(3);expect(resource.source.rootPath).toBe('dataset');
+    const opened=await machine.openBart(sessionId);await page.goto(opened.url);
+    await page.getByRole('tab',{name:'Dataset',exact:true}).click();
+    await expect(page.locator('.resource-detail')).toContainText('Needs local folder');
+    const folder=path.join(machine.root,'Research dataset');fs.mkdirSync(path.join(folder,'raw'),{recursive:true});
+    fs.writeFileSync(path.join(folder,'metrics.csv'),'metric,value\nlatency,1\n');
+    fs.writeFileSync(path.join(folder,'labels.csv'),'query,label\nq1,yes\n');
+    fs.copyFileSync(path.join(__dirname,'fixtures','collection-events.parquet'),path.join(folder,'raw','events.parquet'));
+    await page.getByLabel('Choose dataset folder',{exact:true}).setInputFiles(folder);
+    await expect(page.locator('.resource-detail')).toContainText('3 files');
+    await expect.poll(()=>page.evaluate(()=>window.engelbart.store.get().project?.activeDatasetId || '')).not.toBe('');
+    const project=await page.evaluate(()=>window.engelbart.store.get().project);
+    const active=project.resources.find(r=>r.id===project.activeDatasetId);
+    expect(active.status).toBe('ready');expect(active.manifest.fileCount).toBe(3);
+    expect(active.provenance.replaces[0].source.repo).toBe('org/research-repo');
+    await page.reload();await page.getByRole('tab',{name:'Dataset',exact:true}).click();
+    await expect(page.locator('.resource-detail')).toContainText('raw/events.parquet');
+    const context=await machine.buildProjectContext(sessionId);
+    expect(context).toContain('relevantFiles');expect(context).toContain('metrics.csv');expect(context).toContain('labels.csv');
+    expect(context.length).toBeLessThan(12000);
+  } finally {await machine.stop();await stack.stop();}
+});

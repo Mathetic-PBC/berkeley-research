@@ -11,15 +11,17 @@ function fromOnboarding(row) {
     provenance: { onboardingId: row.id || '', selectedBy: 'onboarding' } });
   const a = row.asset_chosen;
   if (a?.type === 'dataset') {
+    const collection = a.access?.collection;
     const originals = a.sourceLinks || a.links || [];
     const links = (a.links?.length ? a.links : originals).filter(l => l.kind === 'download');
     const url = a.access?.downloadUrl || (links.length === 1 ? links[0] : originals[0])?.url || '';
-    out.push({ id: 'dataset-' + createHash('sha256').update(a.key || url || a.title).digest('hex').slice(0, 20),
-      kind: 'dataset', name: a.title, status: a.access?.state === 'unavailable' ? 'failed' : ['restricted','too_large','remote_only'].includes(a.access?.state) ? 'needs_user' : 'selected',
+    const singleManifest = !collection && a.access?.state === 'available' && a.access?.format && a.access.format !== 'zip' ? {version:1,root:'',fileCount:1,folderCount:0,totalBytes:a.access.size || null,files:[{path:(url.split('/').pop() || a.title).split('?')[0].slice(0,500),size:a.access.size || null,format:a.access.format,role:'table'}]} : null;
+    out.push({ id: collection?.id || 'dataset-' + createHash('sha256').update(a.key || url || a.title).digest('hex').slice(0, 20),
+      kind: 'dataset', name: a.title, ...(collection || singleManifest ? {manifest:collection?.manifest || singleManifest} : {}), status: a.access?.state === 'unavailable' ? 'failed' : ['restricted','too_large','remote_only','rate_limited'].includes(a.access?.state) ? 'needs_user' : 'selected',
       error: a.access?.state && a.access.state !== 'available' ? a.access.reason || 'Access is unresolved' : '',
-      source: { url, ...(a.inlineCsv ? {inlineCsv:a.inlineCsv} : {}), originalUrl: originals[0]?.url || '', ambiguous: !a.access?.downloadUrl && links.length > 1, gated: a.access ? a.access.state !== 'available' : a.availability !== 'usable',
-        licenseRequired: Boolean(a.licenseRequired) || /accept.{0,30}licen[cs]e|sign.?in|log.?in|request access/i.test(a.description || '') },
-      metadata: { description: a.description || '', generatedStructure:a.generatedStructure || null, accessCheck: a.access || {}, fallbackOf: a.fallbackOf || null }, provenance: { onboardingId: row.id || '', assetKey: a.key || '', selectedBy: 'direction', fallbackOf: a.fallbackOf || null } });
+      source: { url, ...(collection?.source || {type:'remote'}), ...(a.inlineCsv ? {inlineCsv:a.inlineCsv} : {}), originalUrl: originals[0]?.url || '', ambiguous: !collection && !a.access?.downloadUrl && links.length > 1, gated: a.access ? a.access.state !== 'available' : a.availability !== 'usable',
+        licenseRequired: Boolean(a.licenseRequired) || /accept.{0,30}licen[cs]e|request access/i.test(a.description || '') },
+      metadata: { description: a.description || '', generatedStructure:a.generatedStructure || null, accessCheck: a.access ? {...a.access, collection:undefined} : {}, fallbackOf: a.fallbackOf || null }, provenance: { onboardingId: row.id || '', assetKey: a.key || '', selectedBy: 'direction', fallbackOf: a.fallbackOf || null } });
   }
   return out;
 }
@@ -47,10 +49,11 @@ module.exports = { fromOnboarding, forClaim };
 
 // Access is a preflight fact. `available` here never means workspace `ready`.
 const PageFetch = require('./page-fetch');
+const Collections = require('./dataset-collections');
 const PROBE_BYTES = 32 * 1024;
-const DEFAULT_MAX_BYTES = 50 * 1024 * 1024;
-const DATA_FILE = /\.(csv|tsv|parquet|jsonl|ndjson|json|zip)(?:$|[?#])/i;
-const RESTRICTED = /available (?:only )?(?:upon|on) request|author.{0,20}approval|request access|accept.{0,30}licen[cs]e|sign.?in|log.?in|authentication required/i;
+const DEFAULT_MAX_BYTES = 1024 * 1024 * 1024;
+const DATA_FILE = /\.(csv|tsv|parquet|xlsx|jsonl|ndjson|json|zip)(?:$|[?#])/i;
+const RESTRICTED = /available (?:only )?(?:upon|on) request|author.{0,20}approval|request access|accept.{0,30}licen[cs]e|authentication required/i;
 function limitOf(options) { const n = Number((options.env || process.env).HC_RESOURCE_MAX_BYTES); return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_BYTES; }
 function access(state, reason, extra = {}) { return { state, reason, checkedAt: new Date().toISOString(), ...extra }; }
 function header(response, name) { return response.headers?.get?.(name) || ''; }
@@ -74,7 +77,7 @@ async function boundedResponse(url, options, max = PROBE_BYTES) {
       continue;
     }
     let size = Number(response.status === 206 ? /\/(\d+)$/.exec(header(response, 'content-range'))?.[1] : header(response, 'content-length')) || null;
-    if (size > limitOf(options)) { await response.body?.cancel?.(); return { response, url, size, body: Buffer.alloc(0), tooLarge: true }; }
+    if (size > (options.metadata ? max : limitOf(options))) { await response.body?.cancel?.(); return { response, url, size, body: Buffer.alloc(0), tooLarge: true }; }
     const reader = response.body?.getReader?.();
     let body = Buffer.alloc(0), complete = false;
     if (!reader) {
@@ -89,7 +92,7 @@ async function boundedResponse(url, options, max = PROBE_BYTES) {
       }
     } finally { await reader.cancel(); }
     if (!size && complete && response.status === 200) size = body.length;
-    return { response, url, size, body };
+    return { response, url, size, body, truncated: !complete && body.length >= max };
   }
   throw Error('Too many redirects');
 }
@@ -102,22 +105,10 @@ async function probeUrl(url, options = {}, depth = 0) {
       const [owner, repo, mode, ref, ...rest] = parsed.pathname.split('/').filter(Boolean);
       if (!owner || !repo) return access('unavailable', 'No repository identified');
       if (mode === 'blob' && rest.length) return probeUrl(`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${rest.join('/')}`, options, depth + 1);
-      const info = await boundedResponse(`https://api.github.com/repos/${owner}/${repo}`, options);
-      if (!info.response?.ok) return access(info.response?.status === 403 ? 'restricted' : 'unavailable', 'Repository cannot be inspected');
-      const branch = JSON.parse(info.body).default_branch;
-      if (!branch) return access('unavailable', 'Repository has no default branch');
-      const tree = await boundedResponse(`https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, options);
-      const value = JSON.parse(tree.body);
-      if (!tree.response?.ok || value.truncated) return access('unavailable', 'Repository data listing could not be verified');
-      const prefix = mode === 'tree' ? rest.join('/') : '';
-      const files = (value.tree || []).filter(f => f.type === 'blob' && DATA_FILE.test(f.path) && (!prefix || f.path.startsWith(prefix + '/')))
-        .sort((a,b) => Number(!/data|sample|example/i.test(a.path)) - Number(!/data|sample|example/i.test(b.path))).slice(0, 4);
-      for (const file of files) {
-        const found = await probeUrl(`https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${file.path}`, options, depth + 1);
-        if (found.state === 'available') return { ...found, repository: url };
-      }
-      return access('unavailable', 'Repository exists, but no readable dataset file was verified');
+      return Collections.resolve(url, options, boundedResponse);
     }
+    if (parsed.hostname === 'anonymous.4open.science') return await Collections.resolve(url, options, boundedResponse) || access('unavailable','Unsupported anonymous repository URL');
+
     const got = await boundedResponse(url, options);
     const { response, body, size } = got;
     if (got.restricted || [401,403].includes(response?.status)) return access('restricted', 'Provider sign-in or access approval is required');
@@ -149,7 +140,7 @@ async function probeUrl(url, options = {}, depth = 0) {
       } catch {}
     }
     const format = body.subarray(0,4).toString() === 'PAR1' ? 'parquet'
-      : body.subarray(0,4).equals(Buffer.from([80,75,3,4])) ? 'zip'
+      : body.subarray(0,4).equals(Buffer.from([80,75,3,4])) ? (suffix === 'xlsx' ? 'xlsx' : 'zip')
       : (suffix === 'csv' || suffix === 'tsv') && text.trim().split(/\r?\n/).length >= 2 && text.includes(suffix === 'tsv' ? '\t' : ',') ? suffix
       : ['json','jsonl','ndjson'].includes(suffix) && /^\s*[\[{]/.test(text) ? suffix : '';
     if (format && !size) return access('unavailable', 'Download size could not be established within the access-check budget');
@@ -166,7 +157,7 @@ async function probeAsset(asset, options = {}) {
   for (const link of links) {
     const found = await probeUrl(link.url, options);
     if (found.state === 'available') return found;
-    if (['restricted','too_large','remote_only'].includes(found.state)) best = found;
+    if (['restricted','too_large','remote_only','rate_limited'].includes(found.state) || best.state === 'unavailable') best = found;
   }
   return best;
 }
@@ -241,7 +232,7 @@ function syntheticCandidate(original, value) {
 async function resolveChosen(chosen, assets, options = {}) {
   if (chosen?.type !== 'dataset') return chosen;
   const original = { ...chosen, access: chosen.access?.state && chosen.access.state !== 'checking' && !chosen.access.retryable ? chosen.access : await probeAsset(chosen, options) };
-  if (original.access.state === 'available') return original;
+  if (['available','rate_limited'].includes(original.access.state)) return original;
   const parent = walkAssets(assets).find(a => a.title === chosen.title);
   if (parent) parent.access = original.access;
   const probeOptions = {...options, deadline:Date.now() + 18000};

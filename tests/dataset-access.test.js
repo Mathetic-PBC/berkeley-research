@@ -36,16 +36,17 @@ test('huge public files stop at headers and unknown-length bodies stay bounded',
   const r=await R.probeAsset(direct(),transport({'https://data.example/events.csv':()=>new Response(stream,{headers:{'Content-Length':String(3*1024**3)}})}));
   assert.equal(r.state,'too_large'); assert.equal(cancelled,true); assert.ok(pulled<=1);
 });
-test('a repository needs actual dataset bytes, not just a successful tree response',async()=>{
+test('a repository resolves a manifest of data files without downloading their bytes',async()=>{
   for (const included of [true,false]) {
     const opts=transport({
       'https://api.github.com/repos/lab/study':()=>Response.json({default_branch:'main'}),
-      'https://api.github.com/repos/lab/study/git/trees/main?recursive=1':()=>Response.json({tree:included?[{type:'blob',path:'data/events.csv'}]:[{type:'blob',path:'README.md'}]}),
+      'https://api.github.com/repos/lab/study/commits/main':()=>Response.json({sha:'a'.repeat(40),commit:{tree:{sha:'tree'}}}),
+      'https://api.github.com/repos/lab/study/git/trees/tree?recursive=1':()=>Response.json({tree:included?[{type:'blob',path:'data/events.csv'}]:[{type:'blob',path:'README.md'}]}),
       'https://raw.githubusercontent.com/lab/study/main/data/events.csv':csv,
     });
     const r=await R.probeAsset(direct('https://github.com/lab/study'),opts);
     assert.equal(r.state,included?'available':'unavailable');
-    if(included) assert.match(r.downloadUrl,/raw.githubusercontent/);
+    if(included) assert.equal(r.collection.manifest.files[0].path,'data/events.csv');
   }
 });
 test('a public API with actual records is remote only; network failures remain truthful',async()=>{
