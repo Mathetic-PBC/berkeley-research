@@ -20,7 +20,7 @@ const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("
 const { verifyUser } = require("./_lib/supabase");
 const { telemetry, userHash } = require("./_lib/telemetry");
 
-const MODEL_ACTIONS = new Set(["sources", "analysis", "assets", "leveled", "answer", "brainstorm", "asset_ask",
+const MODEL_ACTIONS = new Set(["sources", "analysis", "paper_grounding", "assets", "leveled", "answer", "brainstorm", "asset_ask",
   "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"]);
 // The three background readers are polled for free; only starting or
 // retrying one bills the key.
@@ -151,6 +151,7 @@ async function route(user, body, d, action) {
   if (action === "brainstorm") return OB.brainstorm(user, row, calibrations, body, credentials, options);
   if (action === "asset_ask") return OB.assetAsk(user, row, calibrations, body, credentials, options);
   if (action === "choose_asset") return OB.chooseAsset(user, row, body, options);
+  if (action === "paper_grounding") return OB.paperGrounding(user, row, body, credentials, options);
   if (action === "direction") return OB.direction(user, row, calibrations, body, credentials, options);
   if (action === "subgoals") return OB.subgoals(user, row, calibrations, body, credentials, options);
   if (action === "details") return OB.details(user, row, calibrations, body, credentials, options);

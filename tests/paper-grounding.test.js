@@ -12,10 +12,15 @@ const direction={title:'Reconstruct one instruction-to-software example',what_yo
 function input(extra={}) {return {reader:{},paper:{title:'Instruction mapping',one_liner:'Instructions generate exercises',grounding},asset:{type:'dataset',title:'Released examples',access:{state:'available'},links:[]},...extra};}
 function boundary(replies,calls=[]) {return {fetchImpl:async(url,init)=>{calls.push(JSON.parse(init.body));assert.ok(replies.length,'bounded expected model calls');return {ok:true,status:200,json:async()=>({content:[{type:'text',text:JSON.stringify(replies.shift())}]})};}};}
 
-test('existing PDF analysis retains bounded source evidence and claim manifest carries it',async()=>{
+test('Topics analysis stays lightweight; a separate full-paper call supplies the claim manifest',async()=>{
  const q=[0,25,50,75,100].map(level=>({level,question:'Question',sample_response:'Answer'}));
  const calls=[];const out=await OM.analyze({pdfText:'Methods §3: We map the action and repetition count to the exercise template.',familiarityLabel:'Unfamiliar',depthLabel:'Everyday'},credentials,boundary([{title:'Instructions',one_liner:'Mapping',areas:[{area:'Templates',questions:q},{area:'Programming',questions:q}],grounding}],calls));
- assert.deepEqual(out.grounding,grounding);assert.match(calls[0].messages[0].content.at(-1).text,/short verbatim supporting passage/);
+ assert.equal(out.grounding,undefined);
+ assert.doesNotMatch(calls[0].messages[0].content.at(-1).text,/short verbatim supporting passage/);
+ out.grounding=await OM.paperGrounding({pdfText:'Full paper methods and experiments'},credentials,boundary([{grounding}],calls));
+ assert.deepEqual(out.grounding,grounding);
+ assert.match(calls[1].messages[0].content.at(-1).text,/contribution, methods, experiments, evidence, and limitations/);
+ assert.match(JSON.stringify(calls[1]),/Full paper methods and experiments/);
  assert.deepEqual(R.fromOnboarding({paper_id:'paper',analysis:out})[0].metadata.grounding,grounding);
  assert.ok(JSON.stringify(G.normalize({...grounding,evidence:Array(100).fill(grounding.evidence[0])})).length<10000);
 });
