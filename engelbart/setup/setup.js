@@ -862,7 +862,9 @@
     if (read.analysis) st.row.analysis = Object.assign({}, read.analysis, st.row.analysis && st.row.analysis.grounding ? { grounding: st.row.analysis.grounding } : {});
     st.row.analysis_error = read.analysis_error || "";
     warmBrainstorm(); maybeWarmGrounding();
-    if (changed || st.step === 6 || st.step === 7) draw();
+    // Not while the comparison is up: a redraw reloads both frames, and the
+    // only thing here it would change is a line in the header.
+    if (changed || ((st.step === 6 || st.step === 7) && !mockPending())) draw();
   }
   function startReading(body) {
     st.row.analysis_status = "running"; st.row.analysis_error = "";
@@ -1120,10 +1122,10 @@
         st.turns.push({ id: out.turn_id, role: "assistant", content: out.say,
           card: { card: out.card, questions: out.questions, focus: out.focus, ready: out.ready === true } });
       } else if (!out.turn_id) opening.error = "The paper changed. Reload to continue.";
-      if (st.step === 6) draw();
+      if (st.step === 6 && !mockPending()) draw();
     }).catch(function (e) {
       if (!st.row || st.row.id + ":" + st.row.paper_id !== key) return;
-      opening.pending = false; opening.error = e.message; st.ui.bs.thinking = false; if (st.step === 6) draw();
+      opening.pending = false; opening.error = e.message; st.ui.bs.thinking = false; if (st.step === 6 && !mockPending()) draw();
     });
   }
 
@@ -1205,6 +1207,26 @@
     return m.list.length > 1 && !m.saved;
   }
 
+  // A mock-up is a whole page: drawn at this size and scaled to the pane, so
+  // the whole design is visible rather than the top left corner of it.
+  var MOCK_W = 1280, MOCK_H = 820;
+
+  // Measured after the step is drawn and on every resize. The boxes are held
+  // by reference rather than looked up, so this asks the document nothing.
+  function fitMocks() {
+    var boxes = st.ui.mock.fits || [];
+    for (var i = 0; i < boxes.length; i++) {
+      var box = boxes[i], frame = box && box.children && box.children[0];
+      if (!box || !frame || !frame.style || !box.style) continue;
+      var w = box.clientWidth || (box.getBoundingClientRect ? box.getBoundingClientRect().width : 0);
+      if (!w) continue;
+      var s = w / MOCK_W;
+      frame.style.transform = "scale(" + s + ")";
+      box.style.height = Math.round(MOCK_H * s) + "px";
+    }
+  }
+  if (window.addEventListener) window.addEventListener("resize", fitMocks);
+
   function mockName(id) { return st.ui.mock.names[id] || str(id); }
   function mockUrl(id) { return MOCKUPS_API + "?html=" + encodeURIComponent(id); }
 
@@ -1265,12 +1287,16 @@
     pane.appendChild(head);
     // The mock-up's own scripts run on an opaque origin: it can never read the
     // page that frames it, nor the member's session.
+    var fit = el("div", "ob-mk-fit");
     var frame = el("iframe", "ob-mk-frame");
     attr(frame, "sandbox", "allow-scripts allow-popups allow-forms");
     attr(frame, "referrerpolicy", "no-referrer");
     attr(frame, "title", mockName(id));
+    attr(frame, "width", String(MOCK_W)); attr(frame, "height", String(MOCK_H));
     attr(frame, "src", mockUrl(id));
-    pane.appendChild(frame);
+    fit.appendChild(frame);
+    pane.appendChild(fit);
+    (st.ui.mock.fits = st.ui.mock.fits || []).push(fit);
     var pick = el("button", "ob-mk-pick"); pick.type = "button";
     pick.appendChild(el("span", "", side === "left" ? "\u25c0 This one" : "This one \u25b6"));
     on(pick, "click", function () { pickMock(id); });
@@ -1330,9 +1356,12 @@
     fill.style.width = (p.total ? Math.round(100 * p.made / p.total) : 0) + "%";
     bar.appendChild(fill); box.appendChild(bar);
     var arena = el("div", "ob-mk-arena");
+    st.ui.mock.fits = [];
     arena.appendChild(mockPane("left", cur.a));
     arena.appendChild(mockPane("right", cur.b));
     box.appendChild(arena);
+    // The panes have no width until the step is in the document.
+    setTimeout(fitMocks, 0);
     if (m.saveError) box.appendChild(el("div", "ob-err", m.saveError));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
     var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
