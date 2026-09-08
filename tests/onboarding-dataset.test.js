@@ -88,3 +88,13 @@ test('missing deployed dataset columns and bucket produce actionable configurati
  await assert.rejects(S.upload('path',{env,trace:false,fetchImpl:async()=>Response.json({message:'Bucket not found'},{status:400})}),e=>e.statusCode===503 && /migration/.test(e.message));
  await assert.rejects(S.upload('path',{env,trace:false,fetchImpl:async()=>Response.json({message:'Invalid credentials'},{status:403})}),e=>e.statusCode===403 && !/migration/.test(e.message));
 });
+
+test('local folder path attaches without storage or provider access and survives claim',async()=>{
+ const f=fixture();const path='~/Desktop/Dataset/TutorTrace_dataset_and_benchmark/dataset';
+ await D.handle(user,f.row,{op:'local_path',path},f.options);
+ const resource=f.row.dataset_resource;assert.equal(resource.source.path,path);assert.equal(resource.source.provider,'local_path');assert.equal(resource.status,'selected');
+ assert.equal(f.row.dataset_upload,null);assert.equal(f.calls.length,1);
+ const payload=await R.forClaim({resources:R.fromOnboarding(f.row)},{fetchImpl:()=>{throw Error('No network needed');}});
+ assert.deepEqual(payload.resources[0],resource);
+ for(const path of ['relative/path','/tmp/../etc','https://example.org/data','/tmp/\nsecret'])await assert.rejects(D.handle(user,f.row,{op:'local_path',path},f.options),/full local folder path/);
+});

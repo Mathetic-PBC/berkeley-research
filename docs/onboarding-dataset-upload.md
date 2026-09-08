@@ -39,3 +39,11 @@ The native round trip uses the real installer, vendored runtime, installed hook 
 Merging/deploying the web PR does not run Supabase migrations. If attaching files or links fails with a database error, confirm that `engelbart_onboardings.dataset_upload` and `dataset_resource` exist and the private `engelbart-datasets` bucket exists. Apply `20260908160000_onboarding_dataset_upload.sql` if missing. Missing columns/bucket now return a specific deployment-configuration error; other Supabase failures retain their actual status without exposing backend details.
 
 Provider collection listings have a separate 20-second per-read timeout, one retry for interrupted network reads, and a shared 60-second listing budget (also bounded by the hosting request deadline). Persistent timeouts ask the user to retry or supply the folder; authentication and rate-limit failures are not automatically retried. This does not change data-file sampling limits or treat failed verification as ready.
+
+## Use an existing local folder
+
+Enter an absolute path or `~/Desktop/...` in **Local dataset folder path**, then choose **Use local folder**. For the desktop TutorTrace checkout, use `~/Desktop/Dataset/TutorTrace_dataset_and_benchmark/dataset`. This stores the path as a selected `local_path` dataset resource and cancels any unfinished cloud upload. It does not upload files or claim that the browser has verified the directory.
+
+Engelbart 0.20.2 resolves the path on the installed computer, enumerates the collection, inspects bounded samples and activates it through the existing Dataset/Build pipeline. Files stay in their original directory; only the manifest and previews are persisted in workspace metadata. Missing folders need user action; unsafe entries fail without replacing the prior active dataset. The folder must remain available at its original path on that computer. Data bytes never pass through Supabase, though the path itself is saved with the hosted project. Existing cloud and remote-resource options remain available.
+
+No additional schema migration is required beyond the existing dataset attachment migration. Release the 0.20.2 installed runtime before deploying the hosted path option.
