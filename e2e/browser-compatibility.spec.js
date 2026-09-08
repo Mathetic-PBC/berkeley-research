@@ -32,3 +32,31 @@ test("the install handoff is operable for every supported desktop OS", async ({ 
     await stack.stop();
   }
 });
+
+
+test("navigation collapses, remembers its width, and expands with the keyboard", async ({ page }) => {
+  const stack = new SimulationStack();
+  await stack.start();
+  try {
+    await installBrowserSession(page);
+    await page.goto(`${stack.url}/engelbart/setup/?test=true`);
+    const rail = page.locator(".ob-rail");
+    const before = await rail.boundingBox();
+    await page.getByRole("button", { name: "Collapse navigation", exact: true }).click();
+    await expect(rail).toHaveCSS("width", "64px");
+    expect((await rail.boundingBox()).width).toBeLessThan(before.width / 2);
+    await page.reload();
+    await expect(rail).toHaveCSS("width", "64px");
+    // Step names remain accessible while their labels are visually hidden.
+    await page.getByRole("button", { name: "Paper", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Which paper are you building on?", { exact: true })).toBeVisible();
+    const expand = page.getByRole("button", { name: "Expand navigation", exact: true });
+    await expand.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Collapse navigation", exact: true })).toHaveAttribute("aria-expanded", "true");
+    expect((await rail.boundingBox()).width).toBe(before.width);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Collapse navigation", exact: true })).toBeVisible();
+  } finally { await stack.stop(); }
+});

@@ -49,6 +49,12 @@ test("mock-up desktop previews fit and stay mounted across analysis completion a
     await expect(page.locator(".ob-mk-reading")).toHaveText("");
     expect(await original.evaluate(el => el.isConnected)).toBe(true);
     expect(htmlLoads).toBe(2);
+    await page.getByRole("button", { name: "Collapse navigation", exact: true }).click();
+    await expect(page.locator(".ob-rail")).toHaveCSS("width", "64px");
+    await expect.poll(async () => page.locator(".ob-mk-fit").first().evaluate(box => Math.abs(box.firstElementChild.getBoundingClientRect().width - box.clientWidth) < 2)).toBe(true);
+    await page.getByRole("button", { name: "Expand navigation", exact: true }).click();
+    expect(await original.evaluate(el => el.isConnected)).toBe(true);
+    expect(htmlLoads).toBe(2);
     expect(violations).toEqual([]);
     await page.screenshot({ path: test.info().outputPath("mockup-previews.png") });
     await page.locator(".ob-mk-pick").first().click();

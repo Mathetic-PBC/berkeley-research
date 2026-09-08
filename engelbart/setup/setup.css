@@ -553,3 +553,16 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
   .ob-mk-arena{grid-template-columns:1fr;width:100%;margin-left:0;transform:none}
   .ob-mk-keys{display:none}
 }
+
+/* Collapse the rail without rebuilding the current step. */
+.ob-rail-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ob-rail-toggle{flex:none;width:32px;height:32px;display:grid;place-items:center;padding:0;border:1px solid var(--bd);border-radius:var(--radius-pill);background:var(--panel);color:var(--mut);font:24px/1 var(--font-sans);cursor:pointer}
+.ob-rail-toggle:hover{color:var(--ink);border-color:var(--bd2)}
+.ob-rail-toggle:focus-visible,.ob-row:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+.ob[data-rail-collapsed="1"] .ob-rail{width:64px;box-sizing:border-box;padding:36px 8px}
+.ob[data-rail-collapsed="1"] .ob-rail-header{justify-content:center}
+.ob[data-rail-collapsed="1"] .ob-rail>:not(.ob-rail-header):not(.ob-steps),
+.ob[data-rail-collapsed="1"] .ob-brand,
+.ob[data-rail-collapsed="1"] .ob-row .ob-grow{display:none}
+.ob[data-rail-collapsed="1"] .ob-row{justify-content:center;padding:8px 0}
+.ob[data-rail-collapsed="1"] .ob-con{margin-left:23px}
