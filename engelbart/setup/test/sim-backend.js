@@ -138,6 +138,10 @@
     var persist = opts.persist || null;
     var seq = 0, stageSeq = 0;
     var db = (opts.seed ? clone(opts.seed) : null) || load() || fresh();
+    if (db.flow_order !== "brainstorm-topics") {
+      (db.onboardings || []).forEach(function (row) { if (row.status === "open" && (row.step === 6 || row.step === 7)) row.step = 13 - row.step; });
+      db.flow_order = "brainstorm-topics"; save();
+    }
     // A configured participant: the account has finished a setup before, so the profile is on record and
     // the next setup starts at the paper with their links and familiarity already filled in.
     var participant = opts.participant || null;
@@ -156,7 +160,7 @@
     seedParticipant();
 
     function fresh() {
-      return { n: 0, onboardings: [], calibrations: [], turns: [], asks: [], profiles: [], papers: [], codes: [],
+      return { flow_order: "brainstorm-topics", n: 0, onboardings: [], calibrations: [], turns: [], asks: [], profiles: [], papers: [], codes: [],
         credit: { user_id: USER.id, email: USER.email, status: "ready", blocked: false, budget_usd: 25, spend_usd: 0.4187, models: ["all-proxy-models"], synced_at: null } };
     }
     function load() { if (!persist) return null; try { var raw = window.localStorage.getItem(persist); return raw ? JSON.parse(raw) : null; } catch (e) { return null; } }
@@ -304,11 +308,6 @@
           return ctx.op("db", "select engelbart_onboarding_calibrations", "GET /rest/v1/engelbart_onboarding_calibrations?onboarding_id=eq." + row.id + "&select=*&order=asked_at.asc", {}, function () { return calsOf(row).map(publicRow); });
         }).then(function () {
           return ctx.op("db", "select engelbart_onboarding_turns", "GET /rest/v1/engelbart_onboarding_turns?onboarding_id=eq." + row.id + "&stage=eq.brainstorm&select=*&order=created_at.asc", {}, function () { return turnsOf(row, "brainstorm").map(publicTurn); });
-        }).then(function () {
-          if (row.status === "open") {
-            if (Number(row.step) === 7 && !row.assessment) return patchRow(ctx, row, { step: 6 }, "resume Topics before Brainstorm");
-            if (Number(row.step) === 6 && row.assessment) return patchRow(ctx, row, { step: 7 }, "resume Brainstorm after Topics");
-          }
         }).then(function () {
           return { row: row, onboarding: publicRow(row), calibrations: calsOf(row).map(publicRow), turns: turnsOf(row, "brainstorm").map(publicTurn), profile_reused: !!prior };
         });
@@ -571,7 +570,7 @@
         var known = levels.filter(function (l) { return l != null; });
         assessment = { areas: areas, mean: known.length ? Math.round(known.reduce(function (a, b) { return a + b; }, 0) / known.length) : null, depth: assessed.key, depth_shift: assessed.shift, compiled_at: now() };
         return assessment;
-      }, { why: "no model call: each area's level is its last graded answer; the mean sets the register (≤25 drops a stop, ≥75 raises one" + (knobs.depthShift ? ")" : ", disabled by knob depthShift)") }).then(function () { return patchRow(ctx, row, { assessment: assessment, step: Math.max(Number(row.step) || 0, 7) }, "store the assessment"); })
+      }, { why: "no model call: each area's level is its last graded answer; the mean sets the register (≤25 drops a stop, ≥75 raises one" + (knobs.depthShift ? ")" : ", disabled by knob depthShift)") }).then(function () { return patchRow(ctx, row, { assessment: assessment, step: Math.max(Number(row.step) || 0, 8) }, "store the assessment"); })
         .then(function () { return { assessment: assessment }; });
     };
 
@@ -659,7 +658,7 @@
               var text = [reply.say]; if (reply.card === "questions") text = text.concat(reply.questions.items.map(function (q) { return "(asked) " + q.title + (q.options ? " Options: " + q.options.map(function (o) { return o.label; }).join(" / ") : ""); }));
               if (reply.card === "focus") text.push("(offered) " + reply.focus.options.map(function (o) { return o.label; }).join(" / "));
               return addTurn(ctx, row, "brainstorm", "", "assistant", text.filter(Boolean).join("\n"), card);
-            }).then(function (t) { made = t; var values = { step: Math.max(Number(row.step) || 0, 7) }; if (reply.interest) values.interest = reply.interest; return patchRow(ctx, row, values, "step, interest"); })
+            }).then(function (t) { made = t; var values = { step: Math.max(Number(row.step) || 0, 6) }; if (reply.interest) values.interest = reply.interest; return patchRow(ctx, row, values, "step, interest"); })
             .then(function () { return Object.assign(publicReply(made), { leveled_status: row.leveled_status, interest: row.interest || "" }); });
         });
     };

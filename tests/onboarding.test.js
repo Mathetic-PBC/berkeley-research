@@ -693,7 +693,7 @@ test("topics_done compiles the assessment from the calibration rows without the 
   assert.deepEqual(out.assessment.areas[1].answers, ["I have seen tensors"]);
   assert.equal(out.assessment.mean, 38);
   assert.equal(out.assessment.depth, "technical", "a mean between the shifts leaves the register alone");
-  assert.equal(row.step, OB.STEP.brainstorm);
+  assert.equal(row.step, OB.STEP.assets);
   await assert.rejects(OB.topicsDone(USER, row, [], {}, db.options), (e) => e.statusCode === 400);
 });
 
@@ -1082,7 +1082,7 @@ test("Brainstorm gathers material, activity, and inquiry signals without repeate
   }
 });
 
-test("sessions saved in the swapped order resume without losing interest or repeating completed Topics", async () => {
+test("migrated sessions keep their current step, interest, and calibration answers", async () => {
   for (const [step, assessment, expected] of [[7, null, OB.STEP.topics], [6, { areas: [] }, OB.STEP.brainstorm]]) {
     const db = fake();
     const row = await ready(db, { step, assessment, interest: "Compare repeated failed runs" });
@@ -1094,7 +1094,7 @@ test("sessions saved in the swapped order resume without losing interest or repe
     assert.deepEqual(out.onboarding.assessment, assessment);
     assert.equal(out.calibrations.length, count);
     assert.equal(out.turns[0].card.ready, true);
-    assert.equal((await OB.open(USER, {}, db.options)).onboarding.step, expected, "resume adjustment is idempotent");
+    assert.equal((await OB.open(USER, {}, db.options)).onboarding.step, expected, "reopening never remaps an already-migrated step");
   }
 });
 
