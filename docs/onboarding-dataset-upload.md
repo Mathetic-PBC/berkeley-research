@@ -33,3 +33,9 @@ Starting main: Berkeley `5f1391e` (merged #104), installed `acb504a` (merged #95
 Backend tests cover completion, reload/handoff, owner-isolated signing, incomplete/failed replacement, stale sessions, traversal/duplicate/size rejection, immutable upload signatures, HEAD verification, and final-creation gating. Browser tests cover file/folder/link attachment and reload in Chromium, Firefox and WebKit. Installed tests prove a signed private collection is acquired, activated once, and persists without tokens.
 
 The native round trip uses the real installer, vendored runtime, installed hook and production Dataset pane. Its hosted-upload fixture verifies automatic presence without another local upload. Private cloud download is deliberately unavailable in that isolated fixture; successful acquisition is separately verified at the production importer with a controlled network transport. Live Supabase upload is not claimed by these tests.
+
+## Troubleshooting attachment errors
+
+Merging/deploying the web PR does not run Supabase migrations. If attaching files or links fails with a database error, confirm that `engelbart_onboardings.dataset_upload` and `dataset_resource` exist and the private `engelbart-datasets` bucket exists. Apply `20260908160000_onboarding_dataset_upload.sql` if missing. Missing columns/bucket now return a specific deployment-configuration error; other Supabase failures retain their actual status without exposing backend details.
+
+Provider collection listings have a separate 20-second per-read timeout, one retry for interrupted network reads, and a shared 60-second listing budget (also bounded by the hosting request deadline). Persistent timeouts ask the user to retry or supply the folder; authentication and rate-limit failures are not automatically retried. This does not change data-file sampling limits or treat failed verification as ready.

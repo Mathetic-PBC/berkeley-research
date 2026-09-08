@@ -84,9 +84,10 @@ async function boundedResponse(url, options, max = PROBE_BYTES) {
     url = PageFetch.safeHttpUrl(url);
     const parsed = new URL(url);
     if (parsed.username || parsed.password) throw Error('Credential URL');
-    const remaining = (options.deadline || Date.now() + 6000) - Date.now();
+    const requestMs = options.metadata ? 20000 : 6000;
+    const remaining = (options.deadline || Date.now() + requestMs) - Date.now();
     if (remaining <= 0) throw Error('Probe budget exceeded');
-    response = await fetchImpl(url, { redirect: 'manual', signal: Budget.signal(options, Math.max(1, Math.min(6000, remaining))),
+    response = await fetchImpl(url, { redirect: 'manual', signal: Budget.signal(options, Math.max(1, Math.min(requestMs, remaining))),
       headers: { Range: `bytes=0-${max - 1}`, Accept: '*/*' } });
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel?.();

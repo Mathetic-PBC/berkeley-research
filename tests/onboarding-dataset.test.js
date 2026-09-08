@@ -79,3 +79,12 @@ test('the additive migration preserves existing onboardings and keeps the datase
   assert.equal((await db.query('select public from storage.buckets')).rows[0].public,false);
  } finally {await db.close();}
 });
+
+test('missing deployed dataset columns and bucket produce actionable configuration errors',async()=>{
+ const f=fixture();
+ const missing={env,trace:false,fetchImpl:async()=>Response.json({message:"Could not find the 'dataset_upload' column in the schema cache"},{status:400})};
+ await assert.rejects(D.handle(user,f.row,{op:'begin',files:[{path:'a.csv',size:10}]},missing),e=>e.statusCode===503 && /migration/.test(e.message));
+ assert.equal(f.row.dataset_resource.id,'prior');assert.equal(f.row.dataset_upload,null);
+ await assert.rejects(S.upload('path',{env,trace:false,fetchImpl:async()=>Response.json({message:'Bucket not found'},{status:400})}),e=>e.statusCode===503 && /migration/.test(e.message));
+ await assert.rejects(S.upload('path',{env,trace:false,fetchImpl:async()=>Response.json({message:'Invalid credentials'},{status:403})}),e=>e.statusCode===403 && !/migration/.test(e.message));
+});

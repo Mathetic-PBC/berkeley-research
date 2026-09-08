@@ -6,7 +6,13 @@ const Budget = require('./request-budget');
 const BUCKET = 'engelbart-datasets';
 const base = options => supabaseConfig(options.env).url + '/storage/v1';
 async function upload(path, options={}) {
-  const result = await serviceRequest(`/storage/v1/object/upload/sign/${BUCKET}/${path}`, {...options,method:'POST',body:{},headers:{'x-upsert':'false'},trace:false});
+  let result;
+  try { result = await serviceRequest(`/storage/v1/object/upload/sign/${BUCKET}/${path}`, {...options,method:'POST',body:{},headers:{'x-upsert':'false'},trace:false}); }
+  catch (error) {
+    if (/bucket.*(?:not found|does not exist)/i.test(error.detail || ''))
+      throw Object.assign(Error('Dataset storage is not configured on this deployment. Apply the onboarding dataset upload migration in Supabase.'),{statusCode:503});
+    throw error;
+  }
   if (!result?.url) throw Error('Dataset storage did not offer an upload');
   return {uploadUrl:base(options)+result.url,anonKey:supabaseConfig(options.env).anonKey};
 }
