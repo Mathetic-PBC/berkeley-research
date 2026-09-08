@@ -60,3 +60,48 @@ test("navigation collapses, remembers its width, and expands with the keyboard",
     await expect(page.getByRole("button", { name: "Collapse navigation", exact: true })).toBeVisible();
   } finally { await stack.stop(); }
 });
+
+
+test("Paper step accepts dataset files, folders and links and retains the attachment on reload", async ({page}) => {
+  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'onboarding-dataset-'));
+  const folder=path.join(root,'Research dataset');fs.mkdirSync(path.join(folder,'nested'),{recursive:true});
+  fs.writeFileSync(path.join(folder,'nested','測定.csv'),'metric,value\nlatency,1\n');
+  fs.writeFileSync(path.join(folder,'labels.json'),'[{"label":"yes"}]');
+  const stack=new SimulationStack();await stack.start();
+  try {
+    await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
+    await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    const dataset=page.getByRole('region',{name:'Project dataset'});
+    await expect(dataset).toBeVisible();
+    let release;const paused=new Promise(resolve=>{release=resolve;});
+    await page.route('**/fixture/dataset-upload?*',async route=>{await paused;await route.continue();},{times:1});
+    await page.getByLabel('Choose project dataset folder',{exact:true}).setInputFiles(folder);
+    await expect(page.getByRole('button',{name:/^Continue/})).toBeEnabled();
+    release();
+    await expect(dataset).toContainText('Attached to project');
+    expect(stack.row.dataset_resource.manifest.fileCount).toBe(2);
+    expect(stack.row.dataset_resource.manifest.files.map(f=>f.path)).toContain('nested/測定.csv');
+    expect(stack.datasetFiles.size).toBe(2);
+    await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    await expect(dataset).toContainText('Research dataset');
+    await page.evaluate(()=>{
+      const file={name:'metrics.csv',isFile:true,file:ok=>ok(new File(['x,y\n1,2\n'],'metrics.csv'))};
+      const folder={name:'Dropped data',isDirectory:true,createReader:()=>{let read=false;return {readEntries:ok=>{ok(read?[]:[file]);read=true;}}}};
+      const event=new Event('drop',{bubbles:true,cancelable:true});
+      Object.defineProperty(event,'dataTransfer',{value:{items:[{webkitGetAsEntry:()=>folder}]}});
+      document.querySelector('.ob-dataset-drop').dispatchEvent(event);
+    });
+    await expect(dataset).toContainText('Dropped data');
+    await expect(dataset).toContainText('Attached to project');
+    await page.getByLabel('Choose project dataset file',{exact:true}).setInputFiles({name:'single.csv',mimeType:'text/csv',buffer:Buffer.from('x,y\n1,2\n')});
+    await expect(dataset).toContainText('single.csv');
+    await expect(dataset).toContainText('Attached to project');
+    await page.getByRole('button',{name:'Remove dataset',exact:true}).click();
+    await expect(dataset).not.toContainText('Attached to project');
+    await page.getByLabel('Dataset or repository URL',{exact:true}).fill('https://data.example/metrics.csv');
+    await page.getByRole('button',{name:'Attach link',exact:true}).click();
+    await expect(dataset).toContainText('Attached to project');
+    expect(stack.row.dataset_resource.source.url).toBe('https://data.example/metrics.csv');
+  } finally {await stack.stop();fs.rmSync(root,{recursive:true,force:true});}
+});

@@ -1,0 +1,35 @@
+# Dataset upload beneath Paper
+
+The hosted Paper step has an optional Dataset section immediately beneath the PDF uploader. It accepts a file, a folder (picker or recursive directory drop), or a public dataset/repository URL. Completed attachments survive reloads. They are included automatically alongside the paper and independently of any discovered resource selected later.
+
+Dataset transfer can continue while the reader proceeds through onboarding. Analysis and Asset Hunt remain independent. An unfinished dataset upload prevents final project creation until it is completed or removed, with a link back via the Paper step. The separate 20 MiB Paper policy is unchanged.
+
+## Persistence and storage
+
+Migration `20260908160000_onboarding_dataset_upload.sql` adds nullable `dataset_resource` and `dataset_upload` JSONB columns and the private `engelbart-datasets` Storage bucket. Existing rows remain valid. Dataset bytes go directly from the browser to Storage using immutable signed PUT URLs; they never pass through the Vercel function. The public anon key may accompany an upload; the service-role key never reaches the browser.
+
+The authenticated `dataset` action supports begin/sign/confirm/finish/link/remove. Begin validates paths, file count and declared sizes. Confirm checks each stored object's length with HEAD, without reading its bytes. Finish attaches the manifest only when every file is confirmed. A failed replacement preserves the previous attached dataset. Upload ID/revision checks reject stale writes and superseded tabs. Upload sessions expire after 24 hours; a browser reload retains their state, but unfinished file transfers require reselection.
+
+Defaults: 8 GiB total, 1 GiB per file, 5,000 files. Configure with `HC_ONBOARDING_DATASET_MAX_BYTES`, `HC_ONBOARDING_DATASET_MAX_FILE_BYTES`, `HC_ONBOARDING_DATASET_MAX_FILES`. Supabase's global/project Storage limits must also permit the configured sizes. The migration does not upgrade a plan or override the global limit. This hosted copy is private and retained for handoff/retry; automatic garbage collection of abandoned/replaced cloud objects is not included. Operators must include this bucket in their retention/storage-budget policy.
+
+Repository links reuse the GitHub/Anonymous GitHub collection resolver. Restricted links remain attached with their accurate needs-user state; they are not represented as downloaded files.
+
+## Installed handoff
+
+The existing project resource payload carries the attachment last, so successful preparation makes the supplied dataset active. At authenticated claim time the backend verifies every Storage path belongs to the claiming user and signs file downloads in batches. Signed URLs are short-lived, never saved on the onboarding row. The installed importer uses the existing collection staging, bounded inspection, and atomic activation path. Relative folders are preserved, failed preparation keeps the previous active dataset, and signed download URLs are stripped from project persistence. Dataset acquisition allows up to 30 minutes per file with a 15-second socket timeout; Paper's existing timeout remains unchanged. Build receives the existing bounded relevant-file context.
+
+Runtime/CLI 0.20.1 is required for automatic acquisition of these private uploaded collections. URLs expire after 24 hours; a delayed/failed acquisition may require retrying setup or supplying the folder locally.
+
+## Deployment
+
+1. Apply the additive migration and verify the private bucket and project upload limit.
+2. Release/install Engelbart 0.20.1 with its rebuilt vendored wheel.
+3. Deploy Berkeley's new Paper-step uploader and claim signing.
+
+Starting main: Berkeley `5f1391e` (merged #104), installed `acb504a` (merged #95). No existing onboarding order, grounding logic, or resource-fitting behavior changes.
+
+## Verification
+
+Backend tests cover completion, reload/handoff, owner-isolated signing, incomplete/failed replacement, stale sessions, traversal/duplicate/size rejection, immutable upload signatures, HEAD verification, and final-creation gating. Browser tests cover file/folder/link attachment and reload in Chromium, Firefox and WebKit. Installed tests prove a signed private collection is acquired, activated once, and persists without tokens.
+
+The native round trip uses the real installer, vendored runtime, installed hook and production Dataset pane. Its hosted-upload fixture verifies automatic presence without another local upload. Private cloud download is deliberately unavailable in that isolated fixture; successful acquisition is separately verified at the production importer with a controlled network transport. Live Supabase upload is not claimed by these tests.

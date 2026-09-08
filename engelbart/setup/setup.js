@@ -232,7 +232,7 @@
   function forgetUi() {
     st.ui.fam = {}; st.ui.fAnswers = {}; st.ui.fIdx = 0; st.ui.qIdx = 0;
     st.ui.goalPick = ""; st.ui.goalOther = ""; st.ui.goalOtherOn = false; st.ui.todos = []; st.ui.newTodo = ""; st.ui.projName = "";
-    st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.draft = "";
+    st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.dataset = null; st.ui.draft = "";
     st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false };
     st.ui.as = { open: {}, picked: "", threads: {}, drafts: {}, chatOpen: {}, thinking: {} };
     st.ui.change = { open: false, text: "", thinking: false, log: [] };
@@ -789,6 +789,117 @@
     }).catch(function (e) { st.ui.pfile = null; fail(e); });
   }
 
+  function datasetState() { return st.ui.dataset || (st.ui.dataset = {busy:false, text:"", error:"", url:""}); }
+  function rememberDataset(out) {
+    if (out && out.onboarding) {
+      st.row.dataset_resource = out.onboarding.dataset_resource;
+      st.row.dataset_upload = out.onboarding.dataset_upload;
+    }
+  }
+  function datasetChange(body) {
+    var state = datasetState(); state.busy = true; state.error = ""; draw();
+    return api(Object.assign({action:"dataset"}, body)).then(function (out) {
+      rememberDataset(out); state.busy = false; state.text = ""; draw(); return out;
+    }).catch(function (error) {state.busy = false; state.error = error.message; draw();});
+  }
+  function selectedDatasetFiles(list) {
+    return Array.from(list || []).filter(function (f) {return f.name !== ".DS_Store" && f.name !== "Thumbs.db";})
+      .map(function (file) {return {file:file, path:file.webkitRelativePath || file.name};});
+  }
+  async function droppedDatasetFiles(transfer) {
+    var entries = Array.from(transfer.items || []).map(function (item) {return item.webkitGetAsEntry && item.webkitGetAsEntry();}).filter(Boolean), files = [];
+    if (!entries.length) {
+      if (!transfer.files.length) throw new Error("This browser cannot read dropped folders. Use Choose folder.");
+      return selectedDatasetFiles(transfer.files);
+    }
+    async function walk(entry, prefix) {
+      if (entry.name === ".DS_Store" || entry.name === "Thumbs.db") return;
+      var path = prefix + entry.name;
+      if (entry.isFile) {
+        var file = await new Promise(function (resolve, reject) {entry.file(resolve, reject);});
+        files.push({file:file, path:path});
+        if (files.length > 5000) throw new Error("Choose a folder with no more than 5,000 files.");
+      } else if (entry.isDirectory) {
+        var reader = entry.createReader(), batch;
+        do {
+          batch = await new Promise(function (resolve, reject) {reader.readEntries(resolve, reject);});
+          for (var child of batch) await walk(child, path + "/");
+        } while (batch.length);
+      } else throw new Error("Unsupported folder entry. Use Choose folder.");
+    }
+    for (var entry of entries) await walk(entry, "");
+    return files;
+  }
+  async function uploadDataset(entries) {
+    var state = datasetState();
+    if (state.busy || !entries.length) return;
+    var root = entries[0].path.split("/")[0], folder = entries.every(function (e) {return e.path.indexOf(root + "/") === 0;});
+    var files = entries.map(function (e) {return {file:e.file, path:folder ? e.path.slice(root.length + 1) : e.path};});
+    state.busy = true; state.error = ""; state.text = "Starting dataset upload…"; draw();
+    try {
+      var out = await api({action:"dataset", op:"begin", name:folder ? root : files[0].file.name,
+        files:files.map(function (e) {return {path:e.path, size:e.file.size};})});
+      rememberDataset(out);
+      var pending = out.onboarding.dataset_upload;
+      // The server filters OS junk and normalizes paths; use its canonical order.
+      for (var i = 0; i < pending.manifest.files.length; i++) {
+        var expected = pending.manifest.files[i], entry = files.find(function (e) {return e.path.normalize("NFC") === expected.path;});
+        if (!entry) throw new Error("The selected folder changed. Choose it again.");
+        state.text = "Uploading dataset file " + (i + 1) + " of " + pending.manifest.fileCount + "…"; draw();
+        var signed = await api({action:"dataset", op:"sign", id:pending.id, index:i});
+        var response = await fetch(signed.uploadUrl, {method:"PUT", headers:Object.assign({"Content-Type":"application/octet-stream"}, signed.anonKey ? {apikey:signed.anonKey,Authorization:"Bearer " + signed.anonKey} : {}), body:entry.file});
+        if (!response.ok) throw new Error("Dataset upload failed. Your previously attached dataset is unchanged. Choose the files again to retry.");
+        out = await api({action:"dataset", op:"confirm", id:pending.id, index:i}); rememberDataset(out);
+      }
+      out = await api({action:"dataset", op:"finish", id:pending.id}); rememberDataset(out);
+      state.text = "";
+    } catch (error) {state.error = error.message;}
+    finally {state.busy = false; draw();}
+  }
+  function datasetUploadView() {
+    var state = datasetState(), resource = st.row.dataset_resource, pending = st.row.dataset_upload;
+    var section = el("section", "ob-dataset"); attr(section, "aria-label", "Project dataset");
+    section.appendChild(el("div", "ob-dataset-title", "Dataset (optional)"));
+    section.appendChild(el("div", "ob-hint", "Add a file, folder, or dataset link. It will appear in your project’s Dataset tab automatically."));
+    if (resource) {
+      section.appendChild(el("div", "ob-file-name", resource.name));
+      var manifest = resource.manifest;
+      section.appendChild(el("div", "ob-hint", manifest ? manifest.fileCount + " files · " + ((manifest.totalBytes || 0) / 1024 / 1024).toFixed(1) + " MB · Attached to project" : "Attached to project"));
+      if (resource.error) section.appendChild(el("div", "ob-hint", resource.error));
+    }
+    var drop = el("div", "ob-dataset-drop", "Drop a dataset file or folder here");
+    on(drop, "dragover", function (e) {e.preventDefault();});
+    on(drop, "drop", function (e) {
+      e.preventDefault(); if (state.busy) return;
+      droppedDatasetFiles(e.dataTransfer).then(uploadDataset).catch(function (error) {state.error = error.message; draw();});
+    }); section.appendChild(drop);
+    var controls = el("div", "ob-dataset-controls");
+    [{label:"Choose file", folder:false}, {label:"Choose folder", folder:true}].forEach(function (choice) {
+      var label = el("span"), button = el("button", "ob-seed", choice.label), input = el("input", "ob-hide"); input.type = "file"; input.disabled = state.busy;
+      button.type = "button"; button.disabled = state.busy; on(button, "click", function () {input.click();}); label.appendChild(button);
+      attr(input, "aria-label", choice.folder ? "Choose project dataset folder" : "Choose project dataset file");
+      if (choice.folder) {attr(input, "webkitdirectory", ""); input.multiple = true;}
+      else input.accept = ".csv,.tsv,.parquet,.xlsx,.json,.jsonl,.ndjson";
+      on(input, "change", function () {uploadDataset(selectedDatasetFiles(input.files)); input.value = "";});
+      label.appendChild(input); controls.appendChild(label);
+    });
+    if (resource || pending) {
+      var remove = el("button", "ob-tiny", "Remove dataset"); remove.type = "button"; remove.disabled = state.busy;
+      controls.appendChild(on(remove, "click", function () {datasetChange({op:"remove"});}));
+    }
+    section.appendChild(controls);
+    var link = el("div", "ob-dataset-controls"), input = el("input"); input.type = "url"; input.placeholder = "Dataset or repository URL"; input.value = state.url; input.disabled = state.busy;
+    attr(input, "aria-label", "Dataset or repository URL"); on(input, "input", function () {state.url = input.value;});
+    var attach = el("button", "ob-seed", "Attach link"); attach.type = "button"; attach.disabled = state.busy;
+    on(attach, "click", function () {datasetChange({op:"link", url:state.url});});
+    link.appendChild(input); link.appendChild(attach); section.appendChild(link);
+    if (state.busy || state.error || pending) {
+      var message = el("div", "ob-hint", state.error || state.text || "Dataset upload is incomplete and is not attached yet. Choose the files again to retry.");
+      attr(message, "role", state.error ? "alert" : "status"); section.appendChild(message);
+    }
+    return section;
+  }
+
   function drawPaper(content) {
     var box = stepBox(content, count(4), "Which paper are you building on?");
     var card = el("div", "ob-card"), stack = el("div", "ob-stack"), p = st.ui.pfile;
@@ -815,6 +926,7 @@
       row.appendChild(on(replace, "click", function () { st.ui.pfile = null; draw(); }));
       stack.appendChild(row);
     }
+    stack.appendChild(datasetUploadView());
     [{ key: "plink", label: "Project page" }, { key: "prepo", label: "GitHub" }].forEach(function (r) {
       var wrap = el("div", "ob-urlrow"), open_ = st.ui.popen === r.key, val = st.ui[r.key];
       var btn = attr(el("button", "ob-urlbtn"), "data-open", open_ ? "1" : "0"); btn.type = "button";
@@ -1932,7 +2044,8 @@
     box.appendChild(rows);
     if (n < 2 || n >= 4) box.appendChild(el("div", "ob-hint", n < 2 ? "At least two todos." : "Four is the cap — keep the first piece small."));
     function clean() { return todos.map(function (t) { return str(t).trim(); }).filter(Boolean); }
-    function off() { var c = clean(); return c.length < 2 || c.length > 4 || !str(st.ui.projName).trim(); }
+    function off() { var c = clean(); return c.length < 2 || c.length > 4 || !str(st.ui.projName).trim() || !!r.dataset_upload || datasetState().busy; }
+    if (r.dataset_upload || datasetState().busy) box.appendChild(el("div", "ob-hint", "Finish or remove the dataset upload on Paper before creating this project."));
     var name = el("div", "ob-namerow");
     var input = el("input"); input.value = st.ui.projName || ""; input.placeholder = "project name…"; input.spellcheck = false;
     on(input, "input", function () { st.ui.projName = input.value; create.disabled = off(); }); name.appendChild(input);

@@ -142,6 +142,7 @@ async function route(user, body, d, action) {
   const credentials = needsModel ? await memberCredentials(user, d) : null;
   const { onboarding: row, calibrations } = await OB.open(user, {}, options);
   named(row);
+  if (action === "dataset") return require("./_lib/onboarding-dataset").handle(user, row, body, options);
   if (action === "step") return OB.step(user, row, body, options);
   if (action === "sources") return OB.sources(user, row, body, credentials, options);
   if (action === "analysis") return OB.analysis(user, row, body, credentials, options);
@@ -206,7 +207,7 @@ async function handler(req, res) {
   let traceId = "";
   const options = Budget.start();
   try {
-    const body = await readJson(req);
+    const body = await readJson(req, 2 * 1024 * 1024);
     // Authentication is bookkeeping, not onboarding; it stays out of the graph.
     const user = await telemetry.untraced(() => verifyUser(bearerToken(req), options));
     payload = await dispatch(user, body, { options, testRunId: String(req.headers[TEST_RUN_HEADER] || ""), onTrace: (id) => { traceId = id; } });

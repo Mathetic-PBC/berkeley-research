@@ -191,6 +191,12 @@ class SimulationStack {
   async handle(request, response) {
     const target = new URL(request.url, this.url || "http://127.0.0.1");
     this.requests.push({ method: request.method, path: target.pathname });
+    this.datasetFiles ||= new Map();
+    if (target.pathname === '/fixture/dataset-upload' && request.method === 'PUT') {
+      const chunks=[];for await(const chunk of request)chunks.push(chunk);
+      this.datasetFiles.set(target.searchParams.get('path'),Buffer.concat(chunks));
+      return send(response,200,{ok:true});
+    }
 
     if (target.pathname === "/api/engelbart-config" && request.method === "GET") {
       return send(response, 200, {
@@ -252,6 +258,20 @@ class SimulationStack {
         this.row.step = Math.max(Number(this.row.step) || 0, Number(body.step) || 0);
         return send(response, 200, { onboarding: clone(this.row) });
       }
+      if (body.action === 'dataset') {
+        try {
+          const result=await require('../../api/_lib/onboarding-dataset').handle(USER,this.row,body,{
+            trace:false,env:{SUPABASE_URL:'https://simulation.supabase.invalid',SUPABASE_ANON_KEY:'fixture-anon',SUPABASE_SERVICE_ROLE_KEY:'fixture-service'},
+            datasetStorage:{upload:async path=>({uploadUrl:this.url+'/fixture/dataset-upload?path='+encodeURIComponent(path)}),size:async path=>this.datasetFiles.get(path)?.length},
+            fetchImpl:async(url,init)=>{
+              if(url.includes('/rest/v1/engelbart_onboardings')) {Object.assign(this.row,JSON.parse(init.body));return Response.json([this.row]);}
+              if(url==='https://data.example/metrics.csv')return new Response('metric,value\nlatency,1\n');
+              throw Error('Unexpected dataset fixture request');
+            },
+          });
+          return send(response,200,result);
+        } catch(error) {return send(response,error.statusCode || 500,{error:error.message});}
+      }
       if (body.action === "create") {
         this.row.project_name = String(body.project_name || this.row.project_name).trim();
         this.row.todos = Array.isArray(body.todos) ? body.todos.slice() : this.row.todos;
@@ -274,6 +294,11 @@ class SimulationStack {
       if (body.action === "pending") {
         if (!machineAuthorized(request)) return send(response, 401, { error: "invalid machine token" });
         const payload = this.pendingSetup;
+        // Private cloud downloads are unavailable in the isolated native fixture.
+        // The production acquisition path is tested against a controlled fetch in Python.
+        for(const resource of payload?.resources || []) if(resource.source?.provider==='supabase') {
+          resource.status='needs_user';resource.error='Uploaded dataset is attached; cloud download is unavailable in this offline fixture.';
+        }
         this.pendingSetup = null;
         this.pendingClaims += 1;
         return send(response, 200, { payload });
