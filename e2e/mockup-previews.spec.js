@@ -32,12 +32,12 @@ test("mock-up desktop previews fit and stay mounted across analysis completion a
   try {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(stack.url + "/engelbart/setup/?test=true");
-    await expect(page.locator(".ob-mk-frame")).toHaveCount(2);
-    await expect.poll(() => htmlLoads).toBe(2);
+    await expect(page.locator(".ob-mk-frame")).toHaveCount(4);
+    await expect.poll(() => htmlLoads).toBe(4);
     const original = await page.locator(".ob-mk-frame").first().elementHandle();
     for (const width of [1440, 1024, 768, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      await expect.poll(async () => page.locator(".ob-mk-fit").evaluateAll(boxes => boxes.every(box => {
+      await expect.poll(async () => page.locator('.ob-mk-pane:not([data-preview="warm"]) .ob-mk-fit').evaluateAll(boxes => boxes.every(box => {
         const f = box.firstElementChild, r = f.getBoundingClientRect(), b = box.getBoundingClientRect();
         const main = document.querySelector(".ob-main").getBoundingClientRect();
         return b.left >= main.left && b.right <= main.right + 1 && f.clientWidth === 1280 && f.clientHeight === 820 && r.width <= b.width + 1 && r.height <= b.height + 1 && r.left >= b.left - 1 && r.right <= b.right + 1;
@@ -48,17 +48,28 @@ test("mock-up desktop previews fit and stay mounted across analysis completion a
     complete = true;
     await expect(page.locator(".ob-mk-reading")).toHaveText("");
     expect(await original.evaluate(el => el.isConnected)).toBe(true);
-    expect(htmlLoads).toBe(2);
+    expect(htmlLoads).toBe(4);
     await page.getByRole("button", { name: "Collapse navigation", exact: true }).click();
     await expect(page.locator(".ob-rail")).toHaveCSS("width", "64px");
     await expect.poll(async () => page.locator(".ob-mk-fit").first().evaluate(box => Math.abs(box.firstElementChild.getBoundingClientRect().width - box.clientWidth) < 2)).toBe(true);
     await page.getByRole("button", { name: "Expand navigation", exact: true }).click();
     expect(await original.evaluate(el => el.isConnected)).toBe(true);
-    expect(htmlLoads).toBe(2);
+    expect(htmlLoads).toBe(4);
     expect(violations).toEqual([]);
     await page.screenshot({ path: test.info().outputPath("mockup-previews.png") });
-    await page.locator(".ob-mk-pick").first().click();
-    await expect.poll(() => htmlLoads).toBe(4);
-    expect(await original.evaluate(el => el.isConnected)).toBe(false);
+    const warmed = await page.locator('[data-preview="warm"] iframe').elementHandles();
+    expect(warmed).toHaveLength(2);
+    await page.locator('[data-preview="left"] .ob-mk-pick').click();
+    await expect(page.locator(".ob-sub")).toContainText("pick 2 of 4");
+    for (const frame of warmed) {
+      expect(await frame.evaluate(el => el.isConnected && el.closest(".ob-mk-pane").getAttribute("data-preview") !== "warm")).toBe(true);
+    }
+    expect(htmlLoads).toBe(4);
+    expect(await original.evaluate(el => el.isConnected)).toBe(true);
+    await expect(page.locator('.ob-mk-pane:not([data-preview="warm"])')).toHaveCount(2);
+    for (let pick = 0; pick < 3; pick++) await page.locator('[data-preview="left"] .ob-mk-pick').click();
+    await expect(page.getByText("Your top four", { exact: true })).toBeVisible();
+    expect(htmlLoads).toBe(4); // All four rounds reuse the four initial documents.
+    await expect(page.locator(".ob-mk-frame")).toHaveCount(0);
   } finally { await stack.stop(); }
 });

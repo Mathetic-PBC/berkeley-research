@@ -25,6 +25,7 @@ function makeEl(tag) {
   const node = {
     tagName: tag, children: [], attrs: {}, listeners: {}, style: {}, _text: null, parentNode: null,
     appendChild(child) { node._text = null; node.children.push(child); child.parentNode = node; return child; },
+    removeChild(child) { node.children = node.children.filter(c => c !== child); child.parentNode = null; return child; },
     setAttribute(key, value) { node.attrs[key] = String(value); },
     getAttribute(key) { return key in node.attrs ? node.attrs[key] : null; },
     removeAttribute(key) { delete node.attrs[key]; },
@@ -1034,8 +1035,12 @@ const MOCKUPS = [
   { id: "m3", name: "03 Dark side" }, { id: "m4", name: "04 Terminal" },
 ];
 const AT_MOCKUPS = { row: fullRow({ step: 6 }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] };
-const picks = (page) => byClass(page.app, "ob-mk-pick");
-const frames = (page) => find(page.app, (n) => n.tagName === "iframe");
+const visibleMockNodes = (page, cls) => byClass(page.app, "ob-mk-pane")
+  .filter(p => p.attrs["data-preview"] !== "warm")
+  .sort((a,b) => a.attrs["data-side"] === "left" ? -1 : 1)
+  .flatMap(p => cls === "iframe" ? find(p, n => n.tagName === "iframe") : byClass(p, cls));
+const picks = (page) => visibleMockNodes(page, "ob-mk-pick");
+const frames = (page) => visibleMockNodes(page, "iframe");
 
 test("Mock-ups is the sixth step in the rail, and each pick is between two of the bucket's mock-ups", async () => {
   const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS });
@@ -1053,7 +1058,7 @@ test("Mock-ups is the sixth step in the rail, and each pick is between two of th
     assert.equal(f.attrs.sandbox, "allow-scripts allow-popups allow-forms");
     assert.doesNotMatch(f.attrs.sandbox, /allow-same-origin/);
   }
-  const names = byClass(page.app, "ob-mk-name").map(textOf);
+  const names = visibleMockNodes(page, "ob-mk-name").map(textOf);
   assert.equal(new Set(names).size, 2, "a pick is never a mock-up against itself");
   for (const n of names) assert.ok(MOCKUPS.some((m) => m.name === n), `${n} is one of the bucket's, named by the server`);
 
@@ -1071,7 +1076,7 @@ test("picking through the bracket saves the placing the member chose, then goes 
   const chosen = [];
   for (let i = 0; i < 4; i += 1) {
     assert.equal(page.title(), "Which of these two is better?", `pick ${i + 1} is still the comparison`);
-    chosen.push(textOf(byClass(page.app, "ob-mk-name")[0]));
+    chosen.push(textOf(visibleMockNodes(page, "ob-mk-name")[0]));
     picks(page)[0].fire("click");           // always the left one
     await settle();
   }
@@ -1149,22 +1154,22 @@ test("the step fills the wait while the paper is still being read", async () => 
 test("the arrow keys pick the mock-up on that side, and are left alone once the comparison is done", async () => {
   const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS });
   await settle();
-  const left = textOf(byClass(page.app, "ob-mk-name")[0]);
-  const right = textOf(byClass(page.app, "ob-mk-name")[1]);
+  const left = textOf(visibleMockNodes(page, "ob-mk-name")[0]);
+  const right = textOf(visibleMockNodes(page, "ob-mk-name")[1]);
 
   page.doc.fire("keydown", { key: "ArrowRight", target: page.app });
   await settle();
-  assert.notEqual(textOf(byClass(page.app, "ob-mk-name")[0]), left, "→ picked the right one and moved on");
+  assert.notEqual(textOf(visibleMockNodes(page, "ob-mk-name")[0]), left, "→ picked the right one and moved on");
 
   page.doc.fire("keydown", { key: "ArrowLeft", target: page.app });
   await settle();
   assert.equal(picks(page).length, 2, "← picked the left one and the bracket went on");
 
   // A modifier is a chord, not a pick.
-  const before = textOf(byClass(page.app, "ob-mk-name")[0]);
+  const before = textOf(visibleMockNodes(page, "ob-mk-name")[0]);
   page.doc.fire("keydown", { key: "ArrowLeft", metaKey: true, target: page.app });
   await settle();
-  assert.equal(textOf(byClass(page.app, "ob-mk-name")[0]), before, "⌘← is left to the browser");
+  assert.equal(textOf(visibleMockNodes(page, "ob-mk-name")[0]), before, "⌘← is left to the browser");
   assert.ok(right, "both sides were named");
 });
 
@@ -1185,4 +1190,26 @@ test("a placing the server refused is offered again, and can be left behind", as
   byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Continue anyway").fire("click");
   await settle();
   assert.equal(page.title(), "What do you want to build?", "a refused placing never traps the member");
+});
+
+
+test("preview lookahead stays bounded through a sixteen-design bracket", async () => {
+  const mockups = Array.from({ length: 16 }, (_, i) => ({ id: "design" + i, name: "Design " + i }));
+  const page = mount({ ...AT_MOCKUPS, mockups });
+  await settle();
+  let rounds = 0;
+  while (picks(page).length) {
+    const panes = byClass(page.app, "ob-mk-pane");
+    assert.ok(panes.length <= 6, "at most six live previews");
+    assert.equal(frames(page).length, 2, "exactly two visible choices");
+    for (const pane of panes.filter(p => p.attrs["data-preview"] === "warm")) {
+      assert.equal(pane.attrs["aria-hidden"], "true");
+      assert.ok(pane.hasAttribute("inert"), "preloads are not interactive");
+    }
+    picks(page)[rounds % 2].fire("click");
+    rounds++; await settle();
+    assert.ok(rounds <= 16);
+  }
+  assert.equal(rounds, 16);
+  assert.equal(page.title(), "Your top four");
 });
