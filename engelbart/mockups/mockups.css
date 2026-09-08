@@ -1,0 +1,121 @@
+/* Mock-ups, head to head. The same ink-on-white monospace as the setup
+ * pages; the palette hangs on .mk with the [data-dark] override the
+ * hc-setup-theme toggle sets. The page is one viewport tall: a strip on
+ * top, two frames filling the rest. */
+
+.mk {
+  --page: #fff; --ink: #111213; --body: #575757; --muted: #9b9b9b;
+  --faint: #c6c6c6; --hair: #e6e6e6; --fill: #f7f6f3;
+  --pill: #1a1b1e; --pill-ink: #f4f4f4; --acc: #0000ee; --danger: #aa3333;
+}
+.mk[data-dark="true"] {
+  --page: #0e0f11; --ink: #f2f2f2; --body: #b7b7b7; --muted: #7e7e7e;
+  --faint: #4a4a4a; --hair: #26282c; --fill: #17181b;
+  --pill: #e9e9e9; --pill-ink: #17181b; --acc: #8ab4ff; --danger: #e08585;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: #fff; font-family: "Source Code Pro", ui-monospace, Menlo, monospace; }
+.mk {
+  height: 100vh; display: flex; flex-direction: column;
+  background: var(--page); color: var(--ink);
+  font-family: "Source Code Pro", ui-monospace, Menlo, monospace; font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+.mk a { color: var(--acc); }
+.mk button { font: inherit; cursor: pointer; }
+
+@keyframes mk-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.in { animation: mk-in 400ms cubic-bezier(.25,.1,.25,1) both; }
+
+/* --- the strip ----------------------------------------------------------- */
+.mk-top {
+  flex: none; display: flex; align-items: center; gap: 16px;
+  height: 52px; padding: 0 18px; border-bottom: 1px solid var(--hair);
+}
+.mk-brand {
+  font-size: 11px; font-weight: 600; letter-spacing: 1.8px; text-transform: uppercase;
+  color: var(--ink); text-decoration: none;
+}
+.mk-brand span { color: var(--muted); font-weight: 400; letter-spacing: 1.2px; }
+.mk-round { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+.mk-round-name { font-weight: 600; }
+.mk-round-of { color: var(--muted); font-size: 12px; }
+.mk-bar { flex: 1; height: 2px; background: var(--hair); border-radius: 1px; overflow: hidden; }
+.mk-bar i { display: block; height: 100%; background: var(--ink); transition: width 200ms; }
+.mk-count { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.mk-ghost {
+  background: none; border: 1px solid var(--hair); color: var(--body);
+  padding: 5px 10px; border-radius: 999px; font-size: 12px;
+}
+.mk-ghost:hover { color: var(--ink); border-color: var(--faint); }
+.mk-ghost[data-arm="1"] { color: var(--danger); border-color: var(--danger); }
+.mk-acct { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.mk-acct button { background: none; border: 0; color: var(--muted); padding: 0; text-decoration: underline; text-underline-offset: 3px; }
+.mk-acct button:hover { color: var(--ink); }
+
+/* --- the arena ----------------------------------------------------------- */
+.mk-arena {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr;
+  gap: 1px; background: var(--hair);
+}
+.mk-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--page); }
+.mk-pane-head {
+  flex: none; display: flex; align-items: center; gap: 12px;
+  padding: 9px 14px; border-bottom: 1px solid var(--hair);
+}
+.mk-side { color: var(--muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+.mk-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mk-open { font-size: 11px; color: var(--muted); text-decoration: none; white-space: nowrap; }
+.mk-open:hover { color: var(--ink); }
+.mk-pick {
+  margin-left: auto; flex: none; padding: 8px 16px; border: 0; border-radius: 999px;
+  background: var(--pill); color: var(--pill-ink); font-size: 12px; font-weight: 500;
+  transition: transform 80ms;
+}
+.mk-pick:hover { transform: translateY(-1px); }
+.mk-pick:active { transform: none; }
+.mk-frame { flex: 1; width: 100%; min-height: 0; border: 0; background: #fff; }
+.mk-hint {
+  flex: none; padding: 6px 18px; text-align: center; color: var(--muted);
+  font-size: 11px; border-top: 1px solid var(--hair);
+}
+.mk-hint kbd {
+  font: inherit; padding: 1px 5px; border: 1px solid var(--hair); border-radius: 3px; color: var(--body);
+}
+@media (max-width: 860px) {
+  .mk-arena { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .mk-round-of, .mk-count, .mk-hint { display: none; }
+}
+
+/* --- the middle: loading, sign in, saving, the placing ------------------- */
+.mk-mid { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 24px; overflow: auto; }
+.mk-box { width: 100%; max-width: 520px; }
+.mk-title { font-size: 20px; font-weight: 600; letter-spacing: -.2px; margin: 0 0 8px; }
+.mk-lede { color: var(--body); line-height: 1.65; margin: 0 0 22px; }
+.mk-note { color: var(--muted); font-size: 12px; margin-top: 16px; }
+.mk-error { color: var(--danger); margin-top: 12px; }
+.mk-cta {
+  display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border: 0;
+  border-radius: 999px; background: var(--pill); color: var(--pill-ink); text-decoration: none;
+  font-size: 13px; font-weight: 500;
+}
+.mk-cta:hover { transform: translateY(-1px); }
+.mk-places { list-style: none; margin: 0 0 22px; padding: 0; border-top: 1px solid var(--hair); }
+.mk-place {
+  display: flex; align-items: center; gap: 14px; padding: 13px 4px;
+  border-bottom: 1px solid var(--hair);
+}
+.mk-rank {
+  width: 28px; height: 28px; flex: none; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--fill); color: var(--body); font-size: 12px; font-weight: 600;
+}
+.mk-place:first-child .mk-rank { background: var(--pill); color: var(--pill-ink); }
+.mk-place-name { flex: 1; font-weight: 500; }
+.mk-actions { display: flex; align-items: center; gap: 14px; }
+.mk-dots { display: inline-block; letter-spacing: 3px; }
+@keyframes mk-pulse { 0%, 70%, 100% { opacity: .18; } 35% { opacity: 1; } }
+.mk-dots i { font-style: normal; animation: mk-pulse 1.2s infinite; }
+.mk-dots i:nth-child(2) { animation-delay: .2s; }
+.mk-dots i:nth-child(3) { animation-delay: .4s; }

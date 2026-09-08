@@ -8,6 +8,9 @@ Static site with no build step:
 - `/engelbart` — Engelbart landing page and product demo
 - `/engelbart/signin` — Supabase login and invite-only signup; the URL `bart auth` opens
 - `/engelbart/admin` — password/TOTP-protected invite and credit administration
+- `/engelbart/mockups` — the design mock-ups in the `mock-us` storage bucket, two at a
+  time in a single-elimination bracket; each member's top four are kept in
+  `engelbart_mockup_rankings` through `/api/engelbart-mockups`
 - `/api/engelbart-config` — browser-safe runtime configuration only
 - `/api/engelbart-credentials` — authenticated, invite-entitled LiteLLM provisioning
 - `/api/engelbart-device` — CLI device-authorization pairing (`start`, `approve`,
