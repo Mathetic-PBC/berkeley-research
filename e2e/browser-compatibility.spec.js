@@ -74,13 +74,26 @@ test("Paper step accepts dataset files, folders and links and retains the attach
     await page.locator('.ob-row').filter({hasText:'Paper'}).click();
     const dataset=page.getByRole('region',{name:'Project dataset'});
     await expect(dataset).toBeVisible();
+    let release;const paused=new Promise(resolve=>{release=resolve;});
+    await page.route('**/fixture/dataset-upload?*',async route=>{await paused;await route.continue();},{times:1});
     await page.getByLabel('Choose project dataset folder',{exact:true}).setInputFiles(folder);
+    await expect(page.getByRole('button',{name:/^Continue/})).toBeEnabled();
+    release();
     await expect(dataset).toContainText('Attached to project');
     expect(stack.row.dataset_resource.manifest.fileCount).toBe(2);
     expect(stack.row.dataset_resource.manifest.files.map(f=>f.path)).toContain('nested/測定.csv');
     expect(stack.datasetFiles.size).toBe(2);
     await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
     await expect(dataset).toContainText('Research dataset');
+    await page.evaluate(()=>{
+      const file={name:'metrics.csv',isFile:true,file:ok=>ok(new File(['x,y\n1,2\n'],'metrics.csv'))};
+      const folder={name:'Dropped data',isDirectory:true,createReader:()=>{let read=false;return {readEntries:ok=>{ok(read?[]:[file]);read=true;}}}};
+      const event=new Event('drop',{bubbles:true,cancelable:true});
+      Object.defineProperty(event,'dataTransfer',{value:{items:[{webkitGetAsEntry:()=>folder}]}});
+      document.querySelector('.ob-dataset-drop').dispatchEvent(event);
+    });
+    await expect(dataset).toContainText('Dropped data');
+    await expect(dataset).toContainText('Attached to project');
     await page.getByLabel('Choose project dataset file',{exact:true}).setInputFiles({name:'single.csv',mimeType:'text/csv',buffer:Buffer.from('x,y\n1,2\n')});
     await expect(dataset).toContainText('single.csv');
     await expect(dataset).toContainText('Attached to project');
