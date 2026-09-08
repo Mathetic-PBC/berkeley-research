@@ -47,6 +47,17 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
     const body = init.body ? JSON.parse(init.body) : null;
     const json = (value, status = 200) => ({ ok: status < 300, status, async text() { return JSON.stringify(value); }, async json() { return value; },
       async arrayBuffer() { return pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength); } });
+    if (u.pathname.endsWith("/rpc/engelbart_grounding_transition")) {
+      const row=tables.engelbart_onboardings.find(r=>r.id===body.p_id);
+      if (!row || row.paper_id!==body.p_paper) return json({status:"superseded"});
+      if (require("../api/_lib/paper-grounding").normalize(row.analysis?.grounding)) return json({status:"done",grounding:row.analysis.grounding});
+      row.planning ||= {};
+      if (!body.p_run) return json({status:row.planning.paper_grounding?.status || "none"});
+      if (!body.p_save) { row.planning.paper_grounding={status:"running"}; return json({status:"claimed"}); }
+      row.planning.paper_grounding=body.p_save;
+      if(body.p_save.grounding) row.analysis={...row.analysis,grounding:body.p_save.grounding};
+      return json({...body.p_save,job:row.planning.paper_grounding});
+    }
     if (u.pathname.endsWith("/rpc/engelbart_brainstorm_opening")) {
       const row = tables.engelbart_onboardings.find(r => r.id === body.p_id);
       const turns = tables.engelbart_onboarding_turns;
@@ -1119,7 +1130,7 @@ test("migrated sessions keep their current step, interest, and calibration answe
 test("the deferred grounding endpoint caches its full-paper extraction", async () => {
   const db = fake();
   const row = await ready(db, { analysis: { ...ANALYSIS }, direction: null });
-  const first = await OB.paperGrounding(USER, row, {}, CREDS, db.options);
+  const first = await OB.paperGrounding(USER, row, {run:true}, CREDS, db.options);
   assert.ok(first.grounding.contribution);
   assert.equal(modelCalls(db), 1);
   assert.deepEqual(await OB.paperGrounding(USER, row, {}, CREDS, db.options), first);

@@ -470,7 +470,7 @@ function paperPrefix(input) {
 }
 
 async function paperGrounding(input, credentials, options = {}) {
-  const raw = await callModel({content:[...paperPrefix(input),text(Grounding.EXTRACTION + " Return only {grounding: ...} as JSON.")],family:"sonnet",purpose:"paper_grounding",maxTokens:4000},credentials,options);
+  const raw = await callModel({content:[...paperPrefix(input),text(Grounding.EXTRACTION + " Return only {grounding: ...} as JSON.")],family:"sonnet",purpose:"paper_grounding",maxTokens:4000,timeoutMs:75000},credentials,options);
   const result=Grounding.normalize(raw?.grounding);
   if (!result) {const error=new Error("Could not identify a supported runnable contribution in this paper");error.statusCode=502;throw error;}
   return result;

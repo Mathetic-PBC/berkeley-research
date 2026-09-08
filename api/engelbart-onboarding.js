@@ -25,7 +25,7 @@ const MODEL_ACTIONS = new Set(["plan", "sources", "analysis", "paper_grounding",
   "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"]);
 // The three background readers are polled for free; only starting or
 // retrying one bills the key.
-const POLLED = new Set(["analysis", "assets", "leveled"]);
+const POLLED = new Set(["paper_grounding", "analysis", "assets", "leveled"]);
 const TEST_RUN_HEADER = "x-engelbart-test-run";
 // The reply names the trace it produced, so a page that made the request can
 // ask /api/engelbart-telemetry?trace= for exactly what the server did to

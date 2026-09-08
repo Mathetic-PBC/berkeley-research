@@ -26,7 +26,7 @@
   var SEARCH_PRICE = 0.01;
   var LAT = { auth: 140, db: 70, dbw: 95, rpc: 120, storage: 260, storageDl: 420, web: 190, proc: 4, haiku: 900, sonnet: 2100, analyze: 5200, hunt: 6400, level: 3600, litellm: 160 };
   var MODEL_ACTIONS = ["plan", "sources", "analysis", "paper_grounding", "assets", "leveled", "answer", "brainstorm", "asset_ask", "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"];
-  var POLLED = ["analysis", "assets", "leveled"];
+  var POLLED = ["analysis", "assets", "leveled", "paper_grounding"];
   var RUNNING_STALE_MS = 180000;
   var P_FAM = ["I'm completely lost", "I wouldn't know where to start", "I can get oriented", "I can get started", "I can extend it"];
   var DEFAULT_KNOBS = { gradeModel: "haiku", followUpGap: 25, linkChecks: true, readyGate: "model", depthShift: true, cachePaper: true, reconcileBlock: true };
@@ -184,8 +184,8 @@
       var ctx = { id: "st-" + (++stageSeq) + "-" + hash(req.path + stageSeq).toString(16).slice(0, 4), simMs: 0, ops: 0 };
       var action = req.body && req.body.action ? String(req.body.action) : (req.method === "PUT" ? "upload" : req.path.split("/").pop());
       var surface = /onboarding/.test(req.path) ? "onboarding" : /device/.test(req.path) ? "device" : /setup/.test(req.path) ? "setup" : /storage/.test(req.path) ? "storage" : /config/.test(req.path) ? "config" : "client";
-      var bg = ["analysis", "assets", "leveled"].indexOf(action) >= 0 && req.body && (req.body.run || req.body.retry);
-      var poll = ["analysis", "assets", "leveled"].indexOf(action) >= 0 && !bg;
+      var bg = ["analysis", "assets", "leveled", "paper_grounding"].indexOf(action) >= 0 && req.body && (req.body.run || req.body.retry);
+      var poll = ["analysis", "assets", "leveled", "paper_grounding"].indexOf(action) >= 0 && !bg;
       emit({ type: "stage", id: ctx.id, seq: stageSeq, at: Date.now(), path: req.path, method: req.method, surface: surface, action: action,
         label: surface + " · " + action + (bg ? " (run)" : poll ? " (poll)" : ""), bg: !!bg, poll: !!poll, direct: surface === "storage",
         request: redact(req.body === undefined ? (req.bytes != null ? { bytes: req.bytes } : null) : req.body), status: "running",
@@ -396,7 +396,7 @@
           if (row.paper_id !== body.paper_id) {
             db.turns = db.turns.filter(function(t) { return t.onboarding_id !== row.id || t.stage !== "brainstorm"; });
             db.calibrations = db.calibrations.filter(function(c) { return c.onboarding_id !== row.id; });
-            if (row.planning) delete row.planning.brainstorm_initial;
+            if (row.planning) { delete row.planning.brainstorm_initial; delete row.planning.paper_grounding; }
           }
           return patchRow(ctx, row, { paper_id: body.paper_id, project_url: one(body.project_url, 500), repo_url: one(body.repo_url, 500), paper_familiarity: Number(body.paper_familiarity),
             analysis: null, paper_title: "", analysis_status: "none", analysis_error: "", analysis_started_at: null,
@@ -724,15 +724,30 @@
         .then(function () { return { asset_chosen: chosen }; });
     };
 
-    A.paper_grounding = function (ctx, row) {
+    A.paper_grounding = function (ctx, row, cals, body) {
       requireOpen(row);
-      if (row.analysis && row.analysis.grounding) return Promise.resolve({ grounding: row.analysis.grounding });
+      if (row.analysis && row.analysis.grounding) return Promise.resolve({ grounding_status:"done", grounding: row.analysis.grounding });
+      body = body || {};
+      var job = row.planning && row.planning.paper_grounding || {}, paper = row.paper_id;
+      if (job.status === "running" && job.lease_until > Date.now()) return Promise.resolve({grounding_status:"running"});
+      if (job.status === "error" && !body.retry) return Promise.resolve({grounding_status:"error",grounding_error:job.error});
+      if (!body.run && !body.retry) return Promise.resolve({grounding_status:"none"});
+      row.planning = row.planning || {};
+      var claim = {status:"running",lease_until:Date.now()+130000,started_at:now()};
+      row.planning.paper_grounding = claim; save();
       return ctx.op("model", "ground the paper", "sonnet · contribution, methods, experiments, evidence, limitations",
-        modelRequest("sonnet", paperPrefix().concat([{ type: "text", text: "Extract paper grounding for project planning from the full paper." }]), 4000),
+        modelRequest("sonnet", paperPrefix().concat([{ type: "text", text: "Extract paper grounding for project planning from the full paper." }]), 4000, {timeoutMs:75000}),
         function () { return { version: 1, contribution: "Infer an editable goal tree from conversation turns.",
           evidence: [{ id: "p1", kind: "method", claim: "Infer goals from conversation turns.", quote: "Authored simulation fixture", location: "Simulator" }],
           limits: "Authored fixture; no empirical results are supplied." }; }, modelMeta("sonnet", io({ input: 200, output: 650 }, paperIO(false))))
-        .then(function (grounding) { return patchRow(ctx, row, { analysis: Object.assign({}, row.analysis, { grounding: grounding }) }, "store paper grounding").then(function () { return { grounding: grounding }; }); });
+        .then(function (grounding) {
+          if (row.paper_id !== paper || row.planning.paper_grounding !== claim) return {grounding_status:"superseded"};
+          row.planning.paper_grounding = {status:"done",started_at:claim.started_at};
+          return patchRow(ctx, row, { analysis: Object.assign({}, row.analysis, { grounding: grounding }) }, "store paper grounding").then(function () { return { grounding_status:"done", grounding: grounding }; }); }).catch(function(e) {
+          if (row.paper_id !== paper || row.planning.paper_grounding !== claim) return {grounding_status:"superseded"};
+          row.planning.paper_grounding = {status:"error",error:{type:"request",message:e.message}}; save();
+          return {grounding_status:"error",grounding_error:row.planning.paper_grounding.error};
+        });
     };
 
     A.plan = function (ctx, row, cals, body) {
@@ -742,7 +757,7 @@
       if (!row.asset_chosen || !row.analysis) throw fail("Choose a paper and resource first", 409);
       if (kind !== "direction" && !row.direction) throw fail("Settle the direction first", 409);
       var fields = ["paper_id", "analysis", "asset_chosen", "direction", "subgoals", "todos"];
-      function context() { var out = {}; fields.forEach(function (key) { out[key] = row[key] == null ? null : row[key]; }); return clone(out); }
+      function context() { var out = {}; fields.forEach(function (key) { out[key] = row[key] == null ? null : row[key]; }); if(out.analysis) {out.analysis=Object.assign({},out.analysis);delete out.analysis.grounding;} return clone(out); }
       var current = context(), job = row.planning && row.planning[kind], revision = body.revise || body.regenerate;
       if (!revision && row[kind] && (!job || job.status === "complete")) return Promise.resolve(Object.assign({status: "complete", name: row.project_name, asset_chosen: row.asset_chosen}, kind === "direction" ? {direction: row.direction} : kind === "subgoals" ? {subgoals: row.subgoals} : {todos: row.todos}));
       if (!job || JSON.stringify(job.context) !== JSON.stringify(current) || (revision && job.request_id !== body.request_id)) {
@@ -753,7 +768,11 @@
       job.status = "running"; row.planning = Object.assign({}, row.planning); row.planning[kind] = job; save();
       var work;
       if (job.stage === "grounding") {
-        work = A.paper_grounding(ctx, row).then(function () { job.stage = "draft"; mine = JSON.stringify(context()); });
+        work = A.paper_grounding(ctx, row, cals, {run:true,retry:body.grounding_retry === true || (body.grounding_retry == null && body.retry && prior.status==="error")}).then(function (out) {
+          if(out.grounding_status==="done") job.stage="draft";
+          else if(out.grounding_status==="error") throw fail(out.grounding_error.message,409);
+          else job.waitingGrounding=true;
+        });
       } else if (job.stage === "draft") {
         var input = {reader: readerOf(row,cals), paper: paperOf(row), asset: row.asset_chosen, interest: row.interest || "", assessment: latestAssessment(row, cals),
           turns: turnsOf(row,"brainstorm"), leveled: row.leveled, direction: row.direction, subgoal: (row.subgoals || [])[0], resources: [row.asset_chosen],
@@ -775,7 +794,7 @@
         if (JSON.stringify(context()) !== mine) throw fail("The planning inputs changed",409);
         if (job.status !== "complete") job.status = "pending";
         job.context = context(); save();
-        return Object.assign({status:job.status,stage:job.stage,message:stageNames[job.stage]},job.result || {});
+        return Object.assign({status:job.waitingGrounding && job.stage==="grounding" && job.status==="pending" ? "running" : job.status,stage:job.stage,message:stageNames[job.stage]},job.result || {});
       }).catch(function (error) {
         row.planning[kind] = Object.assign(prior,{status:"error",error:{type:"request",message:error.message}}); save();
         return {status:"error",stage:prior.stage,error:{type:"request",message:error.message}};
