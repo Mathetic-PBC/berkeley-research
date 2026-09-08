@@ -23,6 +23,12 @@ function fromOnboarding(row) {
         licenseRequired: Boolean(a.licenseRequired) || /accept.{0,30}licen[cs]e|request access/i.test(a.description || '') },
       metadata: { description: a.description || '', generatedStructure:a.generatedStructure || null, accessCheck: a.access ? {...a.access, collection:undefined} : {}, fallbackOf: a.fallbackOf || null }, provenance: { onboardingId: row.id || '', assetKey: a.key || '', selectedBy: 'direction', fallbackOf: a.fallbackOf || null } });
   }
+  if (row.dataset_resource?.kind === 'dataset') {
+    const supplied=row.dataset_resource;
+    const index=out.findIndex(r=>r.id===supplied.id);
+    if(index>=0)out.splice(index,1);
+    out.push(supplied);
+  }
   return out;
 }
 async function forClaim(payload, options = {}) {
@@ -32,6 +38,20 @@ async function forClaim(payload, options = {}) {
   if (!resources.length && payload.paper?.paper_id) resources.push(...fromOnboarding({ paper_id: payload.paper.paper_id, paper_title: payload.paper.title }));
   const signed = [];
   for (const r of resources) {
+    if (r.kind === 'dataset' && r.source?.provider === 'supabase') {
+      try {
+        const files=r.manifest?.files || [], uploadId=r.source.uploadId;
+        if(!files.length || files.length>5000 || !/^[0-9a-f-]{36}$/i.test(uploadId || ''))throw Error('Invalid dataset manifest');
+        const owner=String(options.userId || ''), onboarding=String(r.provenance?.onboardingId || '');
+        if(![owner,onboarding].every(id=>/^[0-9a-f-]{36}$/i.test(id)))throw Error('Dataset owner is required');
+        const prefix=owner+'/'+onboarding+'/'+uploadId+'/';
+        if(files.some(f=>!f.objectPath?.startsWith(prefix) || !/^[0-9]+$/.test(f.objectPath.slice(prefix.length))))throw Error('Invalid dataset object reference');
+        const urls=await require('./dataset-storage').views(files.map(f=>f.objectPath),options);
+        if(files.some(f=>!urls.has(f.objectPath)))throw Error('Dataset files are unavailable');
+        signed.push({...r,manifest:{...r.manifest,files:files.map(f=>({...f,downloadUrl:urls.get(f.objectPath)}))}});
+      } catch {signed.push({...r,status:'needs_user',error:'The uploaded dataset could not be downloaded. Supply it in Dataset or retry setup.'});}
+      continue;
+    }
     if (r.kind !== 'paper') { signed.push(r); continue; }
     try {
       const pid = String(r.source?.paperId || '');

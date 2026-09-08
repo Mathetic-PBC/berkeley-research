@@ -1117,6 +1117,7 @@ async function create(user, row, calibrations, body, options = {}) {
   // Nothing left to write on a repeat, so nothing left to fail -- and nothing
   // written means nothing claimed: no `profile_saved` verdict on this branch.
   if (row.status === "created") return { ok: true, pending_setup_id: row.pending_setup_id };
+  if (row.dataset_upload) throw fail("Finish or remove the dataset upload on Paper before creating this project", 409);
   const values = {};
   if (body && "project_name" in body) values.project_name = one(body.project_name, 80);
   if (body && Array.isArray(body.todos)) values.todos = body.todos.map((t) => one(t, 300)).filter(Boolean).slice(0, 4);

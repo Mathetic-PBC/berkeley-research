@@ -199,3 +199,30 @@ test("GitHub folder handoff is one collection satisfied by a local folder in the
     expect(context.length).toBeLessThan(12000);
   } finally {await machine.stop();await stack.stop();}
 });
+
+
+test("a dataset uploaded beneath Paper is automatically present in the installed Dataset pane",async({page})=>{
+  test.setTimeout(240000);
+  const stack=new SimulationStack();await stack.start();
+  stack.row.asset_chosen={type:'code',title:'Existing code'};
+  const machine=new SimulatedMachine(stack.url);
+  try {
+    stack.codeIssued=true;await machine.install(SETUP_CODE);
+    await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
+    await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    await page.getByLabel('Choose project dataset file',{exact:true}).setInputFiles({name:'uploaded-with-paper.csv',mimeType:'text/csv',buffer:Buffer.from('metric,value\nlatency,1\n')});
+    await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Attached to project');
+    await page.locator('.ob-row').filter({hasText:'Todos'}).click();
+    await page.getByRole('button',{name:/Create project/}).click();
+    await expect(page.getByText('Browser CLI Round Trip is saved',{exact:true})).toBeVisible();
+    expect(stack.pendingSetup.resources.map(r=>r.kind)).toEqual(['paper','dataset']);
+    const opened=await machine.openBart('paper-dataset-upload');await page.goto(opened.url);
+    await page.getByRole('tab',{name:'Dataset',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'uploaded-with-paper.csv',exact:true})).toBeVisible();
+    const resource=await page.evaluate(()=>window.engelbart.store.get().project.resources.find(r=>r.kind==='dataset'));
+    expect(resource.manifest.files[0].path).toBe('uploaded-with-paper.csv');
+    expect(resource.source.provider).toBe('supabase');
+    await page.reload();await page.getByRole('tab',{name:'Dataset',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'uploaded-with-paper.csv',exact:true})).toBeVisible();
+  } finally {await machine.stop();await stack.stop();}
+});
