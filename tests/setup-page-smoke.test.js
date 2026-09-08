@@ -684,7 +684,8 @@ test("direction and subgoals are one proposal each; a change request revises in 
   const page = mount({ row: fullRow({ step: 9, direction: null, subgoals: null, todos: null, project_name: "" }) });
   await settle();
   assert.equal(page.title(), "Pose to angles");
-  assert.match(textOf(page.app), /First thing you'd see · one labelled skeleton/);
+  assert.match(textOf(page.app), /A page that turns a pose into angles\./, "the direction is its title and what they would make");
+  assert.doesNotMatch(textOf(page.app), /First thing you|Why this one/, "and nothing after them");
   byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Change something").fire("click");
   const box = find(page.app, (n) => n.tagName === "input" && /smaller, closer/.test(n.placeholder))[0];
   box.value = "make it live"; box.fire("input");
