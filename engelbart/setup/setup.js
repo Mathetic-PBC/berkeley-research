@@ -830,6 +830,21 @@
     for (var entry of entries) await walk(entry, "");
     return files;
   }
+  async function datasetStorageError(response, file) {
+    var detail = {};
+    try { detail = await response.json(); } catch (_) {}
+    var code = String(detail.code || detail.error || ""), message = String(detail.message || "");
+    var reason = "Storage rejected the upload (HTTP " + response.status + ").";
+    if (response.status === 413 || /EntityTooLarge|PayloadTooLarge/i.test(code) || /(?:exceed|maximum|too large|size limit)/i.test(message))
+      reason = "This file exceeds Supabase’s upload-size limit. Check Storage settings → Global file size limit and the engelbart-datasets bucket limit. The migration does not raise the global limit.";
+    else if (response.status === 401 || response.status === 403)
+      reason = "Storage authorization failed or the upload link expired. Choose the folder again to get a fresh upload link.";
+    else if (response.status === 429)
+      reason = "Storage is rate-limiting uploads. Wait briefly, then choose the folder again.";
+    else if (response.status >= 500)
+      reason = "Storage is temporarily unavailable. Choose the folder again to retry.";
+    return new Error('Could not upload "' + file.path + '" (' + (file.size / 1048576).toFixed(2) + ' MiB). ' + reason + " Your previously attached dataset is unchanged.");
+  }
   async function uploadDataset(entries) {
     var state = datasetState();
     if (state.busy || !entries.length) return;
@@ -848,7 +863,7 @@
         state.text = "Uploading dataset file " + (i + 1) + " of " + pending.manifest.fileCount + "…"; draw();
         var signed = await api({action:"dataset", op:"sign", id:pending.id, index:i});
         var response = await fetch(signed.uploadUrl, {method:"PUT", headers:Object.assign({"Content-Type":"application/octet-stream"}, signed.anonKey ? {apikey:signed.anonKey,Authorization:"Bearer " + signed.anonKey} : {}), body:entry.file});
-        if (!response.ok) throw new Error("Dataset upload failed. Your previously attached dataset is unchanged. Choose the files again to retry.");
+        if (!response.ok) throw await datasetStorageError(response, expected);
         out = await api({action:"dataset", op:"confirm", id:pending.id, index:i}); rememberDataset(out);
       }
       out = await api({action:"dataset", op:"finish", id:pending.id}); rememberDataset(out);

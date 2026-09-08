@@ -105,3 +105,24 @@ test("Paper step accepts dataset files, folders and links and retains the attach
     expect(stack.row.dataset_resource.source.url).toBe('https://data.example/metrics.csv');
   } finally {await stack.stop();fs.rmSync(root,{recursive:true,force:true});}
 });
+
+
+test("dataset storage rejection identifies the file and limit while preserving the active dataset", async ({page}) => {
+  const stack=new SimulationStack();await stack.start();
+  try {
+    await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
+    await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    const dataset=page.getByRole('region',{name:'Project dataset'});
+    await page.getByLabel('Choose project dataset file',{exact:true}).setInputFiles({name:'prior.csv',mimeType:'text/csv',buffer:Buffer.from('x,y\n1,2\n')});
+    await expect(dataset).toContainText('Attached to project');
+    const active=stack.row.dataset_resource.id;
+    await page.route('**/fixture/dataset-upload?*',route=>route.fulfill({status:413,contentType:'application/json',body:JSON.stringify({error:'EntityTooLarge',message:'The object exceeded the maximum allowed size'})}));
+    await page.getByLabel('Choose project dataset file',{exact:true}).setInputFiles({name:'deployment_1.json',mimeType:'application/json',buffer:Buffer.from('[1,2,3]')});
+    await expect(dataset).toContainText('deployment_1.json');
+    await expect(dataset).toContainText('Global file size limit');
+    await expect(dataset).toContainText('previously attached dataset is unchanged');
+    expect(stack.row.dataset_resource.id).toBe(active);
+    await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    await expect(dataset).toContainText('prior.csv');
+  } finally {await stack.stop();}
+});
