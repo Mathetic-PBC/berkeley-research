@@ -180,3 +180,19 @@ test("simulated Brainstorm uses human readiness while resources load and obeys t
   assert.equal((await call({ action: "brainstorm", again: true })).turn_id, capped.turn_id);
   w.EGB_FIXTURE.BRAINSTORM.ready = readyFixture;
 });
+
+test("the simulated planner persists a draft and reviews it on the next request", async () => {
+  const w = browserish();
+  let sim = w.EngelbartSim.create({emit() {},speed:0});
+  await sim.handle('/api/engelbart-onboarding',{method:'POST',body:JSON.stringify({action:'open'})});
+  const seed = sim.state();
+  Object.assign(seed.onboardings[0],{paper_id:'paper',analysis:w.EGB_FIXTURE.PAPER,asset_chosen:{title:'Code',type:'code'},step:9});
+  sim = w.EngelbartSim.create({emit() {},speed:0,seed});
+  async function advance(){return (await sim.handle('/api/engelbart-onboarding',{method:'POST',body:JSON.stringify({action:'plan',kind:'direction'})})).json();}
+  assert.equal((await advance()).stage,'draft');
+  assert.equal((await advance()).stage,'review');
+  assert.equal(sim.state().onboardings[0].direction,undefined);
+  sim = w.EngelbartSim.create({emit() {},speed:0,seed:sim.state()});
+  assert.equal((await advance()).status,'complete');
+  assert.ok(sim.state().onboardings[0].direction.title);
+});

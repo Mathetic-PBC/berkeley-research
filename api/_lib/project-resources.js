@@ -1,4 +1,5 @@
 "use strict";
+const Budget = require("./request-budget");
 // Claim references, not PDF bytes. Only the explicitly chosen asset is carried.
 const Storage = require('./storage');
 const { createHash } = require('node:crypto');
@@ -62,7 +63,7 @@ async function boundedResponse(url, options, max = PROBE_BYTES) {
     if (parsed.username || parsed.password) throw Error('Credential URL');
     const remaining = (options.deadline || Date.now() + 6000) - Date.now();
     if (remaining <= 0) throw Error('Probe budget exceeded');
-    response = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(Math.max(1, Math.min(6000, remaining))),
+    response = await fetchImpl(url, { redirect: 'manual', signal: Budget.signal(options, Math.max(1, Math.min(6000, remaining))),
       headers: { Range: `bytes=0-${max - 1}`, Accept: '*/*' } });
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel?.();
@@ -274,7 +275,7 @@ async function resolveChosen(chosen, assets, options = {}) {
   if (!options.discoverFallback) return original;
   let discovered;
   try { discovered = await options.discoverFallback({original, children, paper:options.paper || {}, tested:[...tested]}); }
-  catch { return original; }
+  catch (error) { if (options.propagateDiscoveryErrors) throw error; return original; }
   const candidates = (discovered?.candidates || []).filter(c => FALLBACK_KINDS.includes(c.fallbackKind) && c.compatible === true && c.compatibilityReason)
     .sort((a,b) => FALLBACK_KINDS.indexOf(a.fallbackKind) - FALLBACK_KINDS.indexOf(b.fallbackKind)).slice(0,4);
   // A fresh, bounded verification budget after the bounded search call.

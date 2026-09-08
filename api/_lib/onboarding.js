@@ -6,6 +6,7 @@
 // bounded in onboarding-model. The row is the truth the page mirrors.
 
 const crypto = require("node:crypto");
+const Budget = require("./request-budget");
 const OM = require("./onboarding-model");
 const P = require("./onboarding-prompts");
 const Storage = require("./storage");
@@ -242,18 +243,10 @@ function analysisRunning(row, now = Date.now()) {
 }
 
 async function pageTexts(row, options) {
-  // Only the transport: a request-wide `signal` here would put both pages and
-  // the model call under one budget, so a slow first page would abort the
-  // analysis instead of being dropped. Each fetch keeps its own 15 s bound.
-  const at = { env: options && options.env, fetchImpl: options && options.fetchImpl };
-  const out = [];
-  for (const [url, traceName] of [[row.project_url, "project-page.fetch"], [row.repo_url, "repo-page.fetch"]]) {
-    if (!url) continue;
-    let text = "";
-    try { text = await PageFetch.fetchPageText(url, { ...at, traceName, reads: ["links"] }); } catch { text = "(could not be fetched)"; }
-    out.push({ url, text });
-  }
-  return out;
+  return Promise.all([[row.project_url, "project-page.fetch"], [row.repo_url, "repo-page.fetch"]].filter(([url]) => url).map(async ([url, traceName]) => {
+    try { return { url, text: await PageFetch.fetchPageText(url, { ...options, timeoutMs: 5000, traceName, reads: ["links"] }) }; }
+    catch { return { url, text: "(could not be fetched)" }; }
+  }));
 }
 
 // A minute is long enough for the reader to go back and attach a different
@@ -278,6 +271,7 @@ async function supersededBy(row, paperId, options, name = "check-superseded") {
 // boundaries trace themselves, and the semantic database names come from
 // `traced` so the graph reads "analysis.persist" where the code says patch.
 async function runAnalysis(user, row, credentials, options) {
+  options = Budget.start(options);
   const mine = row.paper_id;
   await patch(row, { analysis_status: "running", analysis_started_at: new Date().toISOString(), analysis_error: "" },
     traced(options, "analysis.mark-running"));
@@ -305,7 +299,7 @@ async function runAnalysis(user, row, credentials, options) {
     return { analysis_status: outcome("done"), analysis };
   } catch (error) {
     if (await supersededBy(row, mine, options, "analysis.check-superseded")) return { analysis_status: outcome("superseded") };
-    await patch(row, { analysis_status: "error", analysis_error: one(error.message, 300) || "analysis failed" },
+    await patch(row, { analysis_status: "error", analysis_error: one(Budget.isTimeout(error) ? Budget.expired().message : error.message, 300) || "analysis failed" },
       traced(options, "analysis.persist-error"));
     outcome("error");
     if (error.statusCode === 409) throw error;
@@ -711,6 +705,23 @@ async function chooseAsset(user, row, body, options = {}) {
 }
 
 // --- direction, subgoals -------------------------------------------------------
+
+async function plan(user, row, calibrations, body, credentials, options = {}) {
+  requireOpen(row);
+  const kind = body.kind;
+  if (!row.paper_id || !row.analysis) throw fail("Read the paper first", 409);
+  if (!row.asset_chosen) throw fail("Pick what to build on first", 409);
+  if (kind !== "direction" && !row.direction) throw fail("Settle the direction first", 409);
+  if (kind === "todos" && !row.subgoals?.length) throw fail("Settle the subgoals first", 409);
+  const feedback = long(body.revise, 1000);
+  const turns = kind === "direction" ? await turnsOf(row, "brainstorm", "", options) : [];
+  const input = { reader: readerOf(row, calibrations), paper: paperOf(row), interest: row.interest || "",
+    assessment: row.assessment, turns: turns.map(t => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
+    leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
+    direction: row.direction, subgoal: row.subgoals?.[0], resources: [row.asset_chosen],
+    previous: feedback ? (kind === "subgoals" ? { subgoals: row.subgoals } : row.direction) : null, feedback };
+  return require("./resumable-plan").advance(user, row, { ...body, revise: feedback }, input, credentials, options);
+}
 
 async function directionAction(user, row, calibrations, body, credentials, options = {}) {
   requireOpen(row);
@@ -1121,7 +1132,7 @@ async function create(user, row, calibrations, body, options = {}) {
 
 module.exports = {
   STEP, STEP_FIELDS, RUNNING_STALE_MS, MAX_PDF_BYTES,
-  paperGrounding, open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
+  plan, paperGrounding, open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
   assets: assetsAction, topicsDone, leveled: leveledAction, brainstorm: brainstormAction, assetAsk, chooseAsset,
   direction: directionAction, subgoals: subgoalsAction,
   areaLevels, knowledgeOf, assessedDepth, readerOf, toPayload, analysisRunning, publicRow,

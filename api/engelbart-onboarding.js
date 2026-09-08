@@ -20,7 +20,8 @@ const { allowMethods, bearerToken, publicError, readJson, sendJson } = require("
 const { verifyUser } = require("./_lib/supabase");
 const { telemetry, userHash } = require("./_lib/telemetry");
 
-const MODEL_ACTIONS = new Set(["sources", "analysis", "paper_grounding", "assets", "leveled", "answer", "brainstorm", "asset_ask",
+const Budget = require("./_lib/request-budget");
+const MODEL_ACTIONS = new Set(["plan", "sources", "analysis", "paper_grounding", "assets", "leveled", "answer", "brainstorm", "asset_ask",
   "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"]);
 // The three background readers are polled for free; only starting or
 // retrying one bills the key.
@@ -108,7 +109,7 @@ function named(row) {
 async function route(user, body, d, action) {
   const OB = d.OB || OnboardingRecord;
   const overrides = overridesOf(body);
-  const options = overrides ? { ...(d.options || {}), promptOverrides: overrides } : (d.options || {});
+  const options = Budget.start(overrides ? { ...(d.options || {}), promptOverrides: overrides } : (d.options || {}));
 
   if (action === "reset") {
     // Test mode clearing the record. No model, no credit: the row is gone and
@@ -152,6 +153,7 @@ async function route(user, body, d, action) {
   if (action === "asset_ask") return OB.assetAsk(user, row, calibrations, body, credentials, options);
   if (action === "choose_asset") return OB.chooseAsset(user, row, body, options);
   if (action === "paper_grounding") return OB.paperGrounding(user, row, body, credentials, options);
+  if (action === "plan") return OB.plan(user, row, calibrations, body, credentials, options);
   if (action === "direction") return OB.direction(user, row, calibrations, body, credentials, options);
   if (action === "subgoals") return OB.subgoals(user, row, calibrations, body, credentials, options);
   if (action === "details") return OB.details(user, row, calibrations, body, credentials, options);
@@ -172,6 +174,7 @@ async function route(user, body, d, action) {
 // One action, one trace. A routine poll runs untraced unless polls are
 // switched on, in which case it is its own clearly-marked `.poll` workflow.
 async function dispatch(user, body, d = {}) {
+  d = { ...d, options: Budget.start(d.options) };
   const action = String((body && body.action) || "");
   const poll = isPoll(action, body);
   if (poll && !telemetry.settings.tracePolls) return telemetry.untraced(() => route(user, body, d, action));
@@ -201,13 +204,15 @@ async function handler(req, res) {
   let status = 200;
   let payload;
   let traceId = "";
+  const options = Budget.start();
   try {
     const body = await readJson(req);
     // Authentication is bookkeeping, not onboarding; it stays out of the graph.
-    const user = await telemetry.untraced(() => verifyUser(bearerToken(req)));
-    payload = await dispatch(user, body, { testRunId: String(req.headers[TEST_RUN_HEADER] || ""), onTrace: (id) => { traceId = id; } });
+    const user = await telemetry.untraced(() => verifyUser(bearerToken(req), options));
+    payload = await dispatch(user, body, { options, testRunId: String(req.headers[TEST_RUN_HEADER] || ""), onTrace: (id) => { traceId = id; } });
   } catch (error) {
-    const failure = publicError(error);
+    const failure = Budget.isTimeout(error) || error.statusCode === 504
+      ? { status: 504, message: Budget.expired().message } : publicError(error);
     status = failure.status;
     payload = { error: failure.message };
   }

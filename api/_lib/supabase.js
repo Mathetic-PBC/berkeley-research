@@ -1,4 +1,5 @@
 "use strict";
+const Budget = require("./request-budget");
 
 const { supabaseConfig } = require("./config");
 const { telemetry } = require("./telemetry");
@@ -42,7 +43,7 @@ async function rawServiceRequest(path, options = {}) {
     method: options.method || "GET",
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    signal: options.signal,
+    signal: options.deadlineAt ? Budget.signal(options, 8000, 0) : options.signal,
   });
   return { value: await parseResponse(response), status: response.status };
 }
