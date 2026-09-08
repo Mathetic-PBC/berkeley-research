@@ -1390,7 +1390,7 @@
     var head = el("div", "ob-as-header");
     head.appendChild(el("div", "ob-count", count(8, "Assets")));
     head.appendChild(el("h1", "ob-as-h1", "Select which resource to start with"));
-    head.appendChild(el("div", "ob-as-sub", "Choose the dataset, code, or demo you’ll use for your first project. Open a resource to see what it offers and any smaller examples you can start with."));
+    head.appendChild(el("div", "ob-as-sub", "Choose the dataset, code, or demo you’ll use for your first project."));
     box.appendChild(head);
     var group = el("div", "ob-as-list");
     list.forEach(function (a, i) {
