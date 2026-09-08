@@ -25,7 +25,7 @@
   var PRICE = { sonnet: { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 }, haiku: { input: 0.8, output: 4, cache_read: 0.08, cache_write: 1 } };
   var SEARCH_PRICE = 0.01;
   var LAT = { auth: 140, db: 70, dbw: 95, rpc: 120, storage: 260, storageDl: 420, web: 190, proc: 4, haiku: 900, sonnet: 2100, analyze: 5200, hunt: 6400, level: 3600, litellm: 160 };
-  var MODEL_ACTIONS = ["sources", "analysis", "paper_grounding", "assets", "leveled", "answer", "brainstorm", "asset_ask", "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"];
+  var MODEL_ACTIONS = ["plan", "sources", "analysis", "paper_grounding", "assets", "leveled", "answer", "brainstorm", "asset_ask", "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"];
   var POLLED = ["analysis", "assets", "leveled"];
   var RUNNING_STALE_MS = 180000;
   var P_FAM = ["I'm completely lost", "I wouldn't know where to start", "I can get oriented", "I can get started", "I can extend it"];
@@ -690,6 +690,53 @@
           evidence: [{ id: "p1", kind: "method", claim: "Infer goals from conversation turns.", quote: "Authored simulation fixture", location: "Simulator" }],
           limits: "Authored fixture; no empirical results are supplied." }; }, modelMeta("sonnet", io({ input: 200, output: 650 }, paperIO(false))))
         .then(function (grounding) { return patchRow(ctx, row, { analysis: Object.assign({}, row.analysis, { grounding: grounding }) }, "store paper grounding").then(function () { return { grounding: grounding }; }); });
+    };
+
+    A.plan = function (ctx, row, cals, body) {
+      requireOpen(row);
+      var kind = body.kind, stageNames = {grounding: "Reading the paper", draft: "Drafting the proposal", review: "Checking the proposal", ready: "Ready"};
+      if (["direction", "subgoals", "todos"].indexOf(kind) < 0) throw fail("Unknown planning step", 400);
+      if (!row.asset_chosen || !row.analysis) throw fail("Choose a paper and resource first", 409);
+      if (kind !== "direction" && !row.direction) throw fail("Settle the direction first", 409);
+      var fields = ["paper_id", "analysis", "asset_chosen", "direction", "subgoals", "todos"];
+      function context() { var out = {}; fields.forEach(function (key) { out[key] = row[key] == null ? null : row[key]; }); return clone(out); }
+      var current = context(), job = row.planning && row.planning[kind], revision = body.revise || body.regenerate;
+      if (!revision && row[kind] && (!job || job.status === "complete")) return Promise.resolve(Object.assign({status: "complete", name: row.project_name, asset_chosen: row.asset_chosen}, kind === "direction" ? {direction: row.direction} : kind === "subgoals" ? {subgoals: row.subgoals} : {todos: row.todos}));
+      if (!job || JSON.stringify(job.context) !== JSON.stringify(current) || (revision && job.request_id !== body.request_id)) {
+        job = {status: "pending", stage: "grounding", context: current, request_id: body.request_id || "", feedback: body.revise || ""};
+      }
+      if (job.status === "running") return Promise.resolve({status: "running", stage: job.stage, message: stageNames[job.stage]});
+      var prior = clone(job), mine = JSON.stringify(current);
+      job.status = "running"; row.planning = Object.assign({}, row.planning); row.planning[kind] = job; save();
+      var work;
+      if (job.stage === "grounding") {
+        work = A.paper_grounding(ctx, row).then(function () { job.stage = "draft"; mine = JSON.stringify(context()); });
+      } else if (job.stage === "draft") {
+        var input = {reader: readerOf(row,cals), paper: paperOf(row), asset: row.asset_chosen, interest: row.interest || "", assessment: row.assessment,
+          turns: turnsOf(row,"brainstorm"), leveled: row.leveled, direction: row.direction, subgoal: (row.subgoals || [])[0], resources: [row.asset_chosen],
+          previous: job.feedback ? (kind === "direction" ? row.direction : {subgoals: row.subgoals}) : null, feedback: job.feedback};
+        work = ctx.op("model", "draft " + kind, "sonnet · one resumable call", modelRequest("sonnet", [{type:"text",text:promptText(kind + "Prompt",input,knobs)}],4096,{key:kind + "Prompt"}), function () {
+          job.draft = kind === "direction" ? clone(job.feedback ? FX.REVISED_DIRECTION : FX.DIRECTION) : kind === "subgoals" ? {subgoals:clone(job.feedback ? FX.REVISED_SUBGOALS : FX.SUBGOALS)} : clone(FX.TODOS);
+          job.stage = "review"; return job.draft;
+        }, modelMeta("sonnet",{input:3300,output:400}));
+      } else {
+        work = ctx.op("model", "review " + kind, "sonnet · inspect the saved proposal", modelRequest("sonnet", [{type:"text",text:"Validate this " + kind + " against the paper evidence.\n" + JSON.stringify({paper:paperOf(row),draft:job.draft})}],1200), function () { return {grounded:true,actionable:true,mechanismFirst:true,resourceHonest:true,progression:true}; }, modelMeta("sonnet",{input:2300,output:200})).then(function () {
+          if (JSON.stringify(context()) !== mine) throw fail("The planning inputs changed",409);
+          var values = kind === "direction" ? {direction:job.draft,subgoals:null,todos:null,step:9} : kind === "subgoals" ? {subgoals:job.draft.subgoals,todos:null,step:10} : {todos:job.draft.todos,project_name:row.project_name || job.draft.name,step:11};
+          job.status = "complete"; job.stage = "ready";
+          job.result = Object.assign({},values,{name:values.project_name || row.project_name,asset_chosen:row.asset_chosen});
+          return patchRow(ctx,row,values,"store the checked proposal").then(function () { mine = JSON.stringify(context()); });
+        });
+      }
+      return work.then(function () {
+        if (JSON.stringify(context()) !== mine) throw fail("The planning inputs changed",409);
+        if (job.status !== "complete") job.status = "pending";
+        job.context = context(); save();
+        return Object.assign({status:job.status,stage:job.stage,message:stageNames[job.stage]},job.result || {});
+      }).catch(function (error) {
+        row.planning[kind] = Object.assign(prior,{status:"error",error:{type:"request",message:error.message}}); save();
+        return {status:"error",stage:prior.stage,error:{type:"request",message:error.message}};
+      });
     };
 
     A.direction = function (ctx, row, cals, body) {

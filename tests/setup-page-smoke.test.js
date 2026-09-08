@@ -124,6 +124,11 @@ function mount(options = {}) {
     const isJson = headers["Content-Type"] === "application/json";
     const body = isJson && init.body ? JSON.parse(init.body) : null;
     if (url === "/api/engelbart-config") return answer({ supabaseUrl: "https://x.supabase.co", supabaseAnonKey: "anon" });
+    if (body && body.action === "plan") {
+      const planned = { ...body, action: body.kind };
+      const response = replies.plan ? replies.plan(body) : fetchStub(url, { ...init, body: JSON.stringify(planned) });
+      return Promise.resolve(response).then(async r => ({ ...r, json: async () => ({ status: "complete", ...await r.json() }) }));
+    }
     if (body) { actions.push(body.action); bodies.push(body); }
     if (body && refuse[body.action]) {
       const no = refuse[body.action];
@@ -870,10 +875,20 @@ test('Assets shows access fallbacks separately from the restricted original and 
 
 test("Direction waits for paper grounding and offers a retry when grounding fails", async () => {
   const page = mount({ row: fullRow({ step: 9, direction: null, asset_chosen: LEVELED.assets[0] }),
-    refuse: { paper_grounding: { status: 502, error: "Paper grounding failed" } } });
+    refuse: { direction: { status: 502, error: "Paper grounding failed" } } });
   await settle(); await settle();
-  assert.equal(page.actions.filter(a => a === "paper_grounding").length, 1);
-  assert.equal(page.actions.filter(a => a === "direction").length, 0);
+  assert.equal(page.actions.filter(a => a === "direction").length, 1);
   assert.match(textOf(page.app), /Paper grounding failed/);
   assert.match(textOf(page.app), /Try again/);
+});
+
+test("the browser advances a saved draft through review before showing Direction", async () => {
+  let count=0;
+  const page=mount({row:fullRow({step:9,direction:null,asset_chosen:LEVELED.assets[0]}),replies:{plan:body=>{
+    assert.equal(body.kind,'direction');count++;
+    const result=count===1?{status:'pending',stage:'review',message:'Checking the proposal'}:{status:'complete',direction:DIRECTION};
+    return Promise.resolve({ok:true,status:200,json:async()=>result});
+  }}});
+  await settle();await settle();
+  assert.equal(count,2);assert.match(textOf(page.app),/Pose to angles/);
 });

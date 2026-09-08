@@ -1,4 +1,5 @@
 "use strict";
+const Budget = require("./request-budget");
 
 // The onboarding's model calls: one client that speaks Anthropic content
 // blocks (the paper travels as a `document`), and one normalizer per reply
@@ -85,7 +86,7 @@ async function callModel(request, credentials, options = {}) {
   if (request.tools) body.tools = request.tools;
   const upstream = resolveUpstream(credentials, options.env);
   const url = `${upstream.baseUrl}/v1/messages`;
-  const timeoutMs = request.timeoutMs || MODEL_TIMEOUT_MS;
+  const timeoutMs = Budget.timeout(options, request.timeoutMs || MODEL_TIMEOUT_MS);
   telemetry.protect(credentials.apiKey);
   telemetry.protect(upstream.apiKey);
   return telemetry.runOperation({
@@ -114,9 +115,9 @@ async function callModel(request, credentials, options = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json", ...upstream.headers },
       body: JSON.stringify(body),
-      signal: options.signal || AbortSignal.timeout(timeoutMs),
+      signal: Budget.signal(options, timeoutMs),
     });
-    const value = await response.json().catch(() => ({}));
+    const value = await response.json().catch(error => { if (Budget.isTimeout(error)) throw Budget.expired(); return {}; });
     const usage = value && value.usage && typeof value.usage === "object" ? value.usage : {};
     op.setAttributes({
       "http.response.status_code": response.status,
@@ -407,6 +408,29 @@ async function generate(key, input, normalize, credentials, options, what, purpo
   throw error;
 }
 
+// One planning stage only: the caller persists the draft/review between requests.
+async function planStage(kind, stage, input, draft, correction, credentials, options) {
+  if (stage === "review") {
+    const review = await callModel({ content: [text(Grounding.reviewPrompt(draft, input, kind))],
+      family: "sonnet", purpose: "paper_plan_check", maxTokens: 1200 }, credentials, options);
+    return { passed: Grounding.reviewPass(review), reason: one(review?.reason, 600) || "The proposal needs a better-supported runnable progression." };
+  }
+  const key = { direction: "directionPrompt", subgoals: "subgoalsPrompt", todos: "todosPrompt" }[kind];
+  const normalize = { direction: normalizeDirection, subgoals: normalizeSubgoals, todos: normalizeTodos }[kind];
+  const pr = promptFor(key, input, options);
+  const raw = await callModel({ content: [text([pr.text, Grounding.rules(input, kind), correction].filter(Boolean).join("\n\n"))],
+    family: "sonnet", purpose: kind, template: key, templateEdited: pr.edited }, credentials, options);
+  const made = await normalized(kind, raw, normalize);
+  if (!made) return { draft: null, reason: "The reply did not match the requested JSON shape." };
+  made.paperBasis = Grounding.basis(raw, input);
+  let reason = Grounding.structuralIssue(made, kind, input);
+  if (!reason && kind === "direction") {
+    try { require("./project-resources").assertUsable(made, input.asset, []); }
+    catch (error) { reason = error.message; }
+  }
+  return { draft: made, reason };
+}
+
 const details = (input, c, o) => generate("detailsPrompt", input, normalizeDetails, c, o, "questions", "details");
 const goals = (input, c, o) => generate("goalsPrompt", input, normalizeGoals, c, o, "goals", "goals");
 const todos = (input, c, o) => generate("todosPrompt", input, normalizeTodos, c, o, "todos", "todos");
@@ -516,9 +540,15 @@ function normalizeLeveled(raw) {
 // The model's own web search, when the gateway forwards it; the same call
 // without it when the gateway refuses, and the reply says which.
 async function searched(request, credentials, options, tool) {
+  if (options.withoutSearch) return { raw: await callModel(request, credentials, options), searched: false };
   try {
     return { raw: await callModel({ ...request, tools: [tool] }, credentials, options), searched: true };
   } catch (error) {
+    if (options.singleModelCall) {
+      if (!Budget.isTimeout(error) && /tool|search|unsupported|not supported/i.test(error.message || "")) error.retryWithoutSearch = true;
+      throw error;
+    }
+
     if (error.statusCode === 409) throw error;
     // The retry is an event inside the workflow, not a node of its own: the
     // second model call that follows is the node.
@@ -649,7 +679,7 @@ const direction = (input, c, o) => generate("directionPrompt", input, normalizeD
 const subgoals = (input, c, o) => generate("subgoalsPrompt", input, normalizeSubgoals, c, o, "subgoals", "subgoals", input.previous ? ["subgoals"] : []);
 
 module.exports = {
-  LEVELS, LINEAGE, MAX_PAGE_TEXT,
+  planStage, LEVELS, LINEAGE, MAX_PAGE_TEXT,
   callModel, pickModel, extractJson, promptFor,
   analyze, grade, followUp, rewrite, details, goals, todos, ask, assets, levelAssets, resourceFallback, brainstorm, assetAsk, direction, subgoals,
   paperPrefix, paperGrounding, briefOf,

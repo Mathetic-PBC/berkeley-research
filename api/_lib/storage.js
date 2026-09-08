@@ -1,4 +1,5 @@
 "use strict";
+const Budget = require("./request-budget");
 
 // Canonical paper PDFs live in the private Supabase Storage bucket
 // `berkeley-papers`. The record stores only the stable object PATH; every read
@@ -96,7 +97,7 @@ async function downloadObject(path, options = {}) {
   return traced("paper.download", path, { "http.request.method": "GET", "engelbart.storage.max_bytes": maxBytes || undefined }, async (op) => {
     const response = await fetchImpl(`${config.url}/storage/v1/object/${PAPERS_BUCKET}/${encodeURI(path)}`, {
       headers: { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` },
-      signal: options.signal,
+      signal: Budget.signal(options, 15000),
     });
     op.setAttribute("http.response.status_code", response.status);
     if (!response.ok) {

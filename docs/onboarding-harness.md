@@ -78,3 +78,38 @@ limitations using the existing quoted-evidence schema. Direction, Subgoals, and 
 reuse `analysis.grounding` and retain the existing plan validation. Separate requests
 give grounding and Direction their own execution budgets. Extraction failures offer
 a retry; changing the paper clears the cached analysis and rejects superseded results.
+
+### Resumable proposal requests
+
+The setup page uses `plan {kind: "direction" | "subgoals" | "todos"}` to advance
+one saved stage. Direction checks its resource first; each plan then grounds the
+paper if necessary, drafts, and reviews. A rejected first draft gets one correction
+and review. Every response names `status`, `stage`, and a display message. Only a
+`complete` response contains an approved proposal; a draft is never published early.
+
+State lives in `engelbart_onboardings.planning`. The server-only
+`engelbart_plan_transition` RPC locks the row briefly to acquire a 115-second lease,
+then releases the lock before model work. Concurrent calls return `running`;
+an expired lease can be reclaimed, and only its newest token can save a result.
+The same transaction checks the exact paper/resource/planning inputs and commits
+the result and conversation history. Replacing an input discards old work. Completed
+stages survive browser reloads, request failures, and function termination.
+
+Revisions use a stable `request_id`; retries reuse it, while a new revision gets a
+new ID. Timeout/transport failures retry the saved stage. Two rejected proposals
+produce a distinct evidence-check error and require a new proposal. The browser
+shows reading, drafting, checking, and revising messages. The simulator uses saved
+stages with authored model replies; PostgreSQL regression tests execute the real
+migration and RPC with test model responses.
+
+Onboarding requests have a 110-second shared deadline within the host's 120-second
+limit. External work reserves the final 10 seconds for persistence. Paper downloads
+are bounded to 15 seconds, optional pages run in parallel with 5-second limits,
+and model calls use the smaller of their own limit and the remaining request budget.
+Legacy single-response planning actions remain compatible and share this deadline;
+the setup page uses the resumable action to avoid repeating completed model calls.
+
+Deployment order: apply `20260908050000_resumable_planning.sql` before deploying the
+server and setup page. It adds one JSONB column and a service-role-only RPC; existing
+completed onboarding records remain readable. The migration is additive, so rolling
+back application code does not require dropping saved planning state.

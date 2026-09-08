@@ -15,6 +15,7 @@
     "verify:telemetry": "node scripts/verify-telemetry.mjs"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@playwright/test": "^1.62.0"
   },
   "dependencies": {

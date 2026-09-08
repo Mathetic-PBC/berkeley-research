@@ -1,4 +1,5 @@
 "use strict";
+const Budget = require("./request-budget");
 
 // Fetch a public web page's text for grounding a model call ("add a lab by
 // link"). The URL is member-supplied, so the guard only accepts a plain public
@@ -76,7 +77,7 @@ async function fetchPageText(url, options = {}) {
       response = await fetchImpl(url, {
         redirect: "follow",
         headers: { Accept: "text/html,*/*" },
-        signal: options.signal || AbortSignal.timeout(options.timeoutMs || FETCH_TIMEOUT_MS),
+        signal: Budget.signal(options, options.timeoutMs || FETCH_TIMEOUT_MS),
       });
     } catch {
       const error = new Error("That page could not be reached");

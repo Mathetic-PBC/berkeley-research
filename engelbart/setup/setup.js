@@ -103,7 +103,7 @@
       body: JSON.stringify(payload)
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (value) {
-        if (!r.ok) { var e = new Error(value.error || "the request failed"); e.status = r.status; throw e; }
+        if (!r.ok) { var e = new Error(value.error || (r.status === 504 ? "This step timed out. Retry to continue from saved progress." : "The request failed. Retry to continue from saved progress.")); e.status = r.status; throw e; }
         return value;
       });
     });
@@ -112,7 +112,50 @@
   // api("step", { … }) is the form every step uses; api({ action: "sources", … })
   // is the same call written out when the body is the whole request.
   function api(action, body) {
+    if (["direction", "subgoals", "todos"].indexOf(action) >= 0) return advancePlan(action, body || {});
     return post(API, typeof action === "string" ? Object.assign({ action: action }, body || {}) : action);
+  }
+
+  function activePlan(kind) {
+    var job = st.row.planning && st.row.planning[kind];
+    return job && job.status !== "complete" && Object.keys(job.context || {}).every(function (key) {
+      return JSON.stringify(job.context[key]) === JSON.stringify(st.row[key] == null ? null : st.row[key]);
+    });
+  }
+
+  function advancePlan(kind, body) {
+    var paper = st.row.paper_id, chosen = JSON.stringify(st.row.asset_chosen), generation = st.row.id;
+    var request = Object.assign({ action: "plan", kind: kind, retry: true }, body);
+    st.ui.planRequests = st.ui.planRequests || {};
+    if (body.revise || body.regenerate) {
+      var key = JSON.stringify(body), saved = st.ui.planRequests[kind];
+      request.request_id = saved && saved.key === key ? saved.id : Date.now().toString(36) + Math.random().toString(36).slice(2);
+      st.ui.planRequests[kind] = { key: key, id: request.request_id };
+    }
+    function next() {
+      if (st.row.id !== generation || st.row.paper_id !== paper || JSON.stringify(st.row.asset_chosen) !== chosen) {
+        var obsolete = new Error("The planning inputs changed."); obsolete.obsolete = true; return Promise.reject(obsolete);
+      }
+      return post(API, request).then(function (out) {
+        if (st.row.id !== generation || st.row.paper_id !== paper || JSON.stringify(st.row.asset_chosen) !== chosen) {
+          var obsolete = new Error("The planning inputs changed."); obsolete.obsolete = true; throw obsolete;
+        }
+        if (out.status === "complete") {
+          st.ui.planMessage = ""; st.ui.planRejected = false; delete st.ui.planRequests[kind];
+          if (st.row.planning) delete st.row.planning[kind];
+          return out;
+        }
+        if (out.status === "error") {
+          var error = new Error(out.error && out.error.message || "This step failed.");
+          error.planRejected = out.error && out.error.type === "rejected"; if (error.planRejected) delete st.ui.planRequests[kind]; throw error;
+        }
+        if (out.status !== "pending" && out.status !== "running") throw new Error("The planning response was incomplete. Retry to continue from saved progress.");
+        st.ui.planMessage = out.message || "Preparing your proposal";
+        draw();
+        return out.status === "running" ? new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(next) : next();
+      });
+    }
+    return next();
   }
 
   function setupApi(payload) { return post(SETUP_API, payload); }
@@ -643,6 +686,8 @@
   // is safe on the server, and signing in again comes back to this step.
   function fail(error) {
     st.busy = "";
+    if (error && error.obsolete) return;
+    st.ui.planRejected = Boolean(error && error.planRejected);
     if (error && error.status === 401) { st.screen = "signin"; st.error = ""; draw(); return; }
     st.error = (error && error.message) || "something went wrong";
     draw();
@@ -1428,7 +1473,7 @@
         if (out.direction) { st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } st.row.subgoals = null; st.row.todos = null; ch.log.push({ role: "assistant", content: "Revised: " + out.direction.title }); }
         if (out.subgoals) { st.row.subgoals = out.subgoals; st.row.todos = null; ch.log.push({ role: "assistant", content: "Revised the three pieces." }); }
         draw();
-      }).catch(function (e) { ch.thinking = false; ch.log.push({ role: "assistant", content: e.message }); draw(); });
+      }).catch(function (e) { ch.thinking = false; if (e.obsolete) return; ch.text = text; ch.log.push({ role: "assistant", content: e.message }); draw(); });
     }
     on(input, "input", function () { ch.text = input.value; send.disabled = !input.value.trim() || ch.thinking; });
     on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); go_(); } if (e.key === "Escape") { ch.open = false; draw(); } });
@@ -1437,13 +1482,18 @@
     box.appendChild(panel);
   }
 
+  function planRetry(content, step) {
+    var box = stepBox(content, count(step), "Couldn’t prepare the proposal");
+    box.appendChild(cta(st.ui.planRejected ? "Try a new proposal" : "Try again", false, function () { st.error = ""; st.busy = ""; draw(); }));
+  }
+
   function drawDirection(content) {
     var r = st.row;
     if (!r.asset_chosen) { stepBox(content, count(9), "Pick what to build on first"); return; }
-    if (!r.direction) {
+    if (!r.direction || activePlan("direction")) {
       if (st.error) { var blocked = stepBox(content, count(9), "Couldn’t prepare the direction"); blocked.appendChild(cta("Try again", false, function () { st.error = ""; st.busy = ""; draw(); })); blocked.appendChild(cta("Back to Assets", false, function () { go(8); })); return; }
-      if (st.busy !== "direction") { st.busy = "direction"; api("paper_grounding").then(function () { return api("direction"); }).then(function (out) { st.busy = ""; st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } draw(); }).catch(fail); }
-      generating(content, "Choosing a direction"); return;
+      if (st.busy !== "direction") { st.busy = "direction"; api("direction", st.ui.planRejected ? { regenerate: true } : {}).then(function (out) { st.busy = ""; st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } draw(); }).catch(fail); }
+      generating(content, st.ui.planMessage || "Drafting your direction"); return;
     }
     var d = r.direction, box = el("div", "ob-step");
     var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(9, "Direction"))); head.appendChild(el("span", "ob-count", "one direction")); box.appendChild(head);
@@ -1459,9 +1509,10 @@
   function drawSubgoals(content) {
     var r = st.row;
     if (!r.direction) { stepBox(content, count(10), "Settle the direction first"); return; }
-    if (!r.subgoals) {
-      if (st.busy !== "subgoals") { st.busy = "subgoals"; api("subgoals").then(function (out) { st.busy = ""; st.row.subgoals = out.subgoals; draw(); }).catch(fail); }
-      generating(content, "Breaking it into three pieces"); return;
+    if (!r.subgoals || activePlan("subgoals")) {
+      if (st.error) { planRetry(content, 10); return; }
+      if (st.busy !== "subgoals") { st.busy = "subgoals"; api("subgoals", st.ui.planRejected ? { regenerate: true } : {}).then(function (out) { st.busy = ""; st.row.subgoals = out.subgoals; draw(); }).catch(fail); }
+      generating(content, st.ui.planMessage || "Drafting three subgoals"); return;
     }
     var box = el("div", "ob-step");
     var head = el("div", "ob-head"); head.appendChild(el("span", "ob-count", count(10, "Subgoals"))); head.appendChild(el("span", "ob-count", "three pieces")); box.appendChild(head);
@@ -1494,12 +1545,13 @@
     var r = st.row;
     if (!r.direction || !r.subgoals) { stepBox(content, count(11), "Settle the pieces first"); return; }
     if (st.busy === "create") { generating(content, "Making " + (st.ui.projName || "your project")); return; }
-    if (!r.todos || !r.todos.length) {
+    if (!r.todos || !r.todos.length || activePlan("todos")) {
+      if (st.error) { planRetry(content, 11); return; }
       if (st.busy !== "todos") {
         st.busy = "todos";
-        api("todos").then(function (out) { st.busy = ""; st.row.todos = out.todos; st.ui.todos = out.todos.slice(); st.ui.projName = st.ui.projName || out.name || ""; draw(); }).catch(fail);
+        api("todos", st.ui.planRejected ? { regenerate: true } : {}).then(function (out) { st.busy = ""; st.row.todos = out.todos; st.ui.todos = out.todos.slice(); st.ui.projName = st.ui.projName || out.name || ""; draw(); }).catch(fail);
       }
-      generating(content, "Writing todos for “" + r.subgoals[0].label + "”"); return;
+      generating(content, st.ui.planMessage || "Writing todos for “" + r.subgoals[0].label + "”"); return;
     }
     if (!st.ui.todos.length) st.ui.todos = r.todos.slice();
     var todos = st.ui.todos, n = todos.length, canAdd = n < 4;
