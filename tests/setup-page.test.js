@@ -54,3 +54,14 @@ test("the rail offers the member's own Anthropic key, typed into a password fiel
   assert.match(js, /input\.type = "password"/);
   assert.match(css, /\.ob-key-input\{/);
 });
+
+test("Ask modal uses external CSS, reserves count headroom, and removes register/gutter controls", () => {
+  assert.doesNotMatch(css, /\.ob-reg|\.ob-askbtn/);
+  assert.doesNotMatch(js, /function (registerView|regenerate|applyRewrites|proseNodes)\(|var PROSE|st\.ui\.reg|api\("rewrite"/);
+  assert.match(css, /\.ob-ask-open\{position:absolute;top:14px;right:24px/);
+  assert.match(css, /data-askable="1"\] \.ob-body\{padding-top:34px/);
+  assert.match(css, /max-height:80vh;overflow-y:auto/);
+  const askCode = js.slice(js.indexOf("function askable()"),js.indexOf("// --- boot"));
+  assert.doesNotMatch(askCode, /\.style\.|setAttribute\("style"/);
+  assert.match(askCode, /data-askbtn/);
+});

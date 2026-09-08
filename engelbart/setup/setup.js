@@ -69,10 +69,9 @@
       draft: "",
       fIdx: 0, fam: {}, fAnswers: {},
       qIdx: 0, goalPick: "", goalOther: "", goalOtherOn: false, todos: [], newTodo: "", projName: "",
-      askBtn: null, askOpen: false, askQuote: "", askText: "", asks: [], made: null,
+      askBtn: null, askThinking: false, askOpen: false, askQuote: "", askText: "", asks: [], made: null,
       bs: { answers: {}, pick: "", note: "", text: "", thinking: false },   // brainstorm
       as: { open: {}, picked: "" },     // assets
-      reg: { open: false, pos: null, busy: false, rewrites: {} },   // the register control: unfolded, pending slider position, in-flight, rewritten text by step
       key: { open: false, text: "", busy: false, err: "" },         // the own-key control: unfolded, what is typed, in-flight, what went wrong
       todoConfirm: -1,                  // the todo row whose × was pressed once
       change: { open: false, text: "", thinking: false, log: [] }                             // direction / subgoals
@@ -184,7 +183,7 @@
   function go(n) {
     st.step = n;
     st.error = "";
-    st.ui.todoConfirm = -1; st.ui.reg.pos = null; st.ui.reg.open = false;
+    st.ui.todoConfirm = -1;
     if (st.ui.askOpen) st.ui.askOpen = false;
     st.ui.askBtn = null;
     draw();
@@ -500,6 +499,8 @@
   var lastContent = null;
 
   function draw() {
+    var oldModal = app.querySelector(".ob-modal"), modalScroll = oldModal ? oldModal.scrollTop : 0;
+    app.setAttribute("data-askable", askable() ? "1" : "0");
     var still = drawn.screen === st.screen && drawn.step === st.step;
     drawn = { screen: st.screen, step: st.step }; draws += 1;
     // The main column is the scroll container and it is rebuilt on every
@@ -521,13 +522,14 @@
       drawDirection, drawSubgoals, drawTodos, drawDone];
     drawers[Math.min(st.step, drawers.length - 1)](content);
     if (st.error) content.appendChild(el("div", "ob-err", st.error));
-    applyRewrites(content);
     body.appendChild(content);
     if (typeof askPanel === "function") askPanel(body);
     main.appendChild(body); app.appendChild(main);
-    // From the paper on: the steps before it ask about the reader and have
-    // nothing generated to rewrite, and the Explanations step is the slider.
-    if (st.step >= 4 && st.step <= 11) app.appendChild(registerView());
+    if (askable()) app.appendChild(askOpenView());
+    if (st.ui.askOpen) {
+      app.appendChild(askModalView());
+      app.querySelector(".ob-modal").scrollTop = modalScroll;
+    }
     lastMain = main; main.scrollTop = keep;
     // Something on the page asked to be brought into view: shown a little
     // below the top of the pane, with the lines before it still readable,
@@ -540,7 +542,7 @@
         if (d > 0) main.scrollTop = keep + d;
       }
     }
-    var focus = content.querySelector("[autofocus]"); if (focus) focus.focus();
+    var focus = (st.ui.askOpen ? app.querySelector(".ob-modal") : content).querySelector("[autofocus]"); if (focus) focus.focus({ preventScroll: !!st.ui.askOpen });
     // A redraw rebuilds the text the reader highlighted, which drops the
     // browser's selection. While they are asking about it, select it again so
     // the highlight stays on what the question is about.
@@ -561,92 +563,6 @@
       var range = document.createRange(); range.setStart(hit, offset); range.setEnd(hit, offset + want.length);
       var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
     } catch (e) { /* a selection is a nicety */ }
-  }
-
-  // --- the register control ---------------------------------------------------
-  //
-  // Top right on every step: the same four-stop slider as the Explanations
-  // step. Move it and press Regenerate, and what is on the screen is rewritten
-  // at that register -- one Haiku call with the passages as they stand -- and
-  // the profile's depth follows, so what comes next is written there too.
-
-  var PROSE = ["ob-title", "ob-sub", "ob-q", "ob-question", "ob-area-role", "ob-area-name", "ob-paper-sum", "ob-goal-label", "ob-goal-why",
-    "ob-goal-title", "ob-dir-body", "ob-dir-why", "ob-dir-first", "ob-sg-label", "ob-sg-desc", "ob-sg-why", "ob-as-h1", "ob-as-sub", "ob-as-title",
-    "ob-as-desc", "ob-as-why", "ob-bs-said", "ob-slider-name", "ob-slider-desc", "ob-cap", "ob-q-label", "ob-wait-t", "ob-done-t", "ob-done-s", "ob-hint"];
-  function proseNodes(root) {
-    var out = [];
-    (function walk(n) {
-      if (!n || !n.children) return;
-      var cs = String(n.className || "").split(/\s+/);
-      var hit = PROSE.some(function (k) { return cs.indexOf(k) >= 0; });
-      if (cs.indexOf("ob-bs-text") >= 0) { for (var i = 0; i < n.children.length; i++) if (String(n.children[i].tagName).toLowerCase() === "p") out.push(n.children[i]); return; }
-      if (hit) {
-        // A prose node with children (a "Why · " label and its text) yields
-        // its text leaves; the label itself is furniture and stays.
-        if (n.children.length === 0) { out.push(n); return; }
-        (function leaves(m) {
-          for (var i = 0; i < m.children.length; i++) {
-            var c = m.children[i], cc = String(c.className || "").split(/\s+/), tag = String(c.tagName || "").toLowerCase();
-            if (tag === "button" || tag === "input" || tag === "textarea" || cc.indexOf("ob-as-lead") >= 0 || cc.indexOf("ob-tiny") >= 0) continue;
-            if (c.children && c.children.length) leaves(c); else out.push(c);
-          }
-        })(n);
-        return;
-      }
-      for (var j = 0; j < n.children.length; j++) walk(n.children[j]);
-    })(root);
-    return out.filter(function (n) { return str(n.textContent).trim().length >= 12; });
-  }
-  function regDepth() { return st.row && st.row.depth ? st.row.depth : "everyday"; }
-  function regIndex(key) { var i = DEPTHS.map(function (d) { return d.key; }).indexOf(key); return i < 0 ? 0 : i; }
-  function registerView() {
-    var reg = st.ui.reg, cur = regDepth(), pos = reg.pos != null ? reg.pos : (regIndex(cur) + 1) / DEPTHS.length;
-    var next = DEPTHS[snap(pos, DEPTHS.length)].key, changed = next !== cur;
-    // Folded, it is one word: the current register. That word opens it.
-    var box = attr(attr(el("div", "ob-reg"), "data-busy", reg.busy ? "1" : "0"), "data-open", reg.open || reg.busy ? "1" : "0");
-    var word = el("button", "ob-reg-word", DEPTHS[regIndex(cur)].label); word.type = "button";
-    word.setAttribute("aria-label", reg.open ? "hide the explanations slider" : "change how technical the page is");
-    function fold() { reg.open = !reg.open; if (!reg.open) reg.pos = null; draw(); }
-    on(word, "click", fold);
-    if (!reg.open && !reg.busy) { box.appendChild(word); return box; }
-    // Open: the word as the cap on the left, an × on the right; either folds it.
-    var head = el("div", "ob-reg-head"); head.appendChild(word);
-    var x = el("button", "ob-reg-x", "×"); x.type = "button"; x.setAttribute("aria-label", "close");
-    head.appendChild(on(x, "click", fold)); box.appendChild(head);
-    box.appendChild(slider({ stops: DEPTHS, pos: pos, grid: true, onCommit: function (p) { reg.pos = p; draw(); } }));
-    var acts = el("div", "ob-reg-acts");
-    if (reg.busy) { acts.appendChild(dots()); acts.appendChild(el("span", "ob-hint", "Rewriting")); }
-    else if (changed) {
-      var go_ = el("button", "ob-pill ob-reg-go", "Regenerate"); go_.type = "button";
-      on(go_, "click", regenerate); acts.appendChild(go_);
-    }
-    box.appendChild(acts);
-    return box;
-  }
-  function regenerate() {
-    var reg = st.ui.reg, cur = regDepth(), to = DEPTHS[snap(reg.pos, DEPTHS.length)].key;
-    if (reg.busy || to === cur) return;
-    var content = document.getElementById("content"); if (!content) return;
-    var nodes = proseNodes(content), texts = [], seen = {};
-    nodes.forEach(function (n) { var t = str(n.textContent).replace(/\s+/g, " ").trim(); if (!seen[t]) { seen[t] = true; texts.push(t); } });
-    texts = texts.slice(0, 40);
-    reg.busy = true; st.error = ""; draw();
-    api("rewrite", { from: cur, to: to, texts: texts }).then(function (out) {
-      reg.busy = false; reg.pos = null; reg.open = false;
-      var map = reg.rewrites[st.step] || (reg.rewrites[st.step] = {});
-      texts.forEach(function (t, i) { var r = str(out.texts && out.texts[i]).trim(); if (r && r !== t) map[t] = r; });
-      st.row.depth = out.level || to;
-      draw();
-    }).catch(function (e) { reg.busy = false; fail(e); });
-  }
-  // After each draw the screen is rebuilt from the record, which is still at
-  // the register it was written in; the rewrites are laid back over it.
-  function applyRewrites(content) {
-    var map = st.ui.reg.rewrites[st.step]; if (!map) return;
-    proseNodes(content).forEach(function (n) {
-      var t = str(n.textContent).replace(/\s+/g, " ").trim();
-      if (map[t]) n.textContent = map[t];
-    });
   }
 
   function stepBox(content, count, title) {
@@ -1695,15 +1611,15 @@
 
   // --- Ask about this ----------------------------------------------------------
   //
-  // From Topics on, selecting text in the content column offers a question
-  // about it; the answer comes back at the reader's register and can be
-  // re-asked one stop simpler or deeper.
+  // The corner button opens a modal about the last highlighted passage.
+  // Answers stay in that modal and can be re-asked one stop simpler or deeper.
 
   // ⏎ anywhere that is not a text box presses the step's own button: the
   // last enabled primary in the content column, which is the one the
   // reader would click. Inputs keep their own ⏎ handling (above), buttons
   // keep the browser's, and a modifier means the key was meant for a chord.
   if (document.addEventListener) document.addEventListener("keydown", function (e) {
+    if (st.ui.askOpen) return;
     if (e.key !== "Enter" || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
     var t = e.target, tag = t && t.tagName ? String(t.tagName).toLowerCase() : "";
     if (tag === "input" || tag === "textarea" || tag === "select" || tag === "button" || tag === "a" || (t && t.isContentEditable)) return;
@@ -1715,130 +1631,125 @@
   });
 
   var QUICK = ["What does this mean?", "Why does this matter?", "Give me an example", "Is this too much for a first project?"];
-  function askable() { return st.screen === "flow" && st.step <= 11; }
+  function askable() { return st.screen === "flow" && st.step >= 6 && st.step <= 11; }
+  function asksFor(quote) { return (st.ui.asks || []).filter(function (a) { return a.quote === quote; }); }
+
+  if (document.addEventListener) document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && st.ui.askOpen) { e.preventDefault(); closeAsk(); }
+  });
   if (document.addEventListener) document.addEventListener("mouseup", function (e) {
     if (e.target && e.target.closest && e.target.closest("[data-askbtn]")) return;
+    if (st.ui.askOpen) return;
     setTimeout(function () {
-      var sel = window.getSelection ? window.getSelection() : null, t = sel ? sel.toString().trim() : "", c = document.getElementById("content");
-      if (!t || t.length < 3 || !c || !sel.rangeCount || !c.contains(sel.anchorNode) || !askable()) { if (st.ui.askBtn && !st.ui.askBtn.gutter) { st.ui.askBtn = null; draw(); } return; }
-      var r = sel.getRangeAt(0).getBoundingClientRect(), cr = c.getBoundingClientRect();
-      st.ui.askBtn = { text: t.slice(0, 240), gutter: true, y: r.top - cr.top + r.height / 2 }; draw();
+      if (st.ui.askOpen) return;
+      var sel = window.getSelection ? window.getSelection() : null, text = sel ? sel.toString().trim() : "", c = document.getElementById("content");
+      if (!text || text.length < 3 || !c || !sel.rangeCount || !c.contains(sel.anchorNode) || !c.contains(sel.focusNode || sel.anchorNode) || !askable()) {
+        st.ui.askBtn = null; return;
+      }
+      // Remember without redrawing: rebuilding #content would erase the selection.
+      st.ui.askBtn = { text: text.slice(0, 240) };
     }, 0);
   });
 
-  // Anything clicked can be asked about: the nearest block of text under the
-  // click gets an "Ask about this" button in the left margin, aligned to it.
-  // Captured before the click reaches the element, because the element's own
-  // handler redraws the page and the node would be gone by the bubble.
-  var ASK_BLOCKS = ["ob-goal", "ob-opt", "ob-question", "ob-q", "ob-bs-text", "ob-title", "ob-sub", "ob-as-row", "ob-goal-title", "ob-dir-body", "ob-sg-row", "ob-todo", "ob-area-role", "ob-paper-sum", "ob-bs-said", "ob-ask-item"];
-  function classes(node) { return String((node && node.className) || "").split(/\s+/); }
-  function askBlock(node) {
-    var c = document.getElementById("content");
-    for (var n = node; n && n !== c; n = n.parentNode) {
-      var tag = String(n.tagName || "").toLowerCase();
-      if (tag === "button" || tag === "input" || tag === "textarea" || tag === "a") return null;
-      var cs = classes(n); if (cs.indexOf("ob-askbtn") >= 0 || cs.indexOf("ob-ask") >= 0) return null;
-      if (ASK_BLOCKS.some(function (k) { return cs.indexOf(k) >= 0; })) return n;
-    }
-    return null;
+  function askOpenView() {
+    var b = el("button", "ob-ask-open", "Ask about this"); b.type = "button";
+    attr(b, "data-askbtn", "1"); attr(b, "aria-haspopup", "dialog");
+    return on(b, "click", function () {
+      st.ui.askOpen = true; st.ui.askQuote = st.ui.askBtn ? st.ui.askBtn.text : "";
+      st.ui.askText = ""; draw();
+    });
   }
-  // The words of a block, one space between its parts, without the glyphs
-  // that are furniture (a caret, a check) rather than something to ask about.
-  function blockText(node) {
-    var parts = [];
-    (function walk(n) {
-      if (!n) return;
-      var tag = String(n.tagName || "").toLowerCase();
-      if (tag === "button" || tag === "input" || tag === "textarea") return;
-      var kids = n.childNodes && n.childNodes.length ? n.childNodes : n.children;
-      if (!kids || !kids.length) { var t = str(n.textContent).trim(); if (t) parts.push(t); return; }
-      for (var i = 0; i < kids.length; i++) walk(kids[i]);
-    })(node);
-    return parts.join(" ").replace(/[›‹✓·]/g, " ").replace(/\s+/g, " ").trim();
+  function closeAsk() {
+    if (st.ui.askThinking) return;
+    st.ui.askOpen = false; st.ui.askText = ""; draw();
+    var button = app.querySelector(".ob-ask-open"); if (button) button.focus();
   }
-  if (document.addEventListener) document.addEventListener("click", function (e) {
-    var c = document.getElementById("content"), t = e.target;
-    if (!c || !askable() || st.ui.askOpen) return;
-    var inside = false; for (var n = t; n; n = n.parentNode) if (n === c) { inside = true; break; }
-    var block = inside ? askBlock(t) : null;
-    if (!block) {
-      if (st.ui.askBtn && st.ui.askBtn.gutter && !(t && classes(t).indexOf("ob-askbtn") >= 0)) { st.ui.askBtn = null; var w0 = draws; setTimeout(function () { if (draws === w0) draw(); }, 0); }
-      return;
+  function askModalView() {
+    var quote = str(st.ui.askQuote), answered = asksFor(quote);
+    var scrim = el("div", "ob-scrim");
+    attr(scrim, "role", "dialog"); attr(scrim, "aria-modal", "true"); attr(scrim, "aria-label", "Ask about this");
+    on(scrim, "click", closeAsk);
+    var card = el("div", "ob-modal");
+    on(card, "click", function (e) { e.stopPropagation(); });
+    card.appendChild(el("div", "ob-ask-cap", "Ask about this"));
+    if (!quote) card.appendChild(el("div", "ob-ask-empty",
+      "Highlight a sentence in the step first — the question is asked about what you highlighted."));
+    else card.appendChild(el("div", "ob-ask-quote", "“" + quote + "”"));
+    answered.forEach(function (a) { card.appendChild(askTurnView(a)); });
+    if (quote) {
+      var quick = el("div", "ob-ask-quick");
+      QUICK.forEach(function (q) {
+        var seed = el("button", "ob-seed", q); seed.type = "button"; seed.disabled = !!st.ui.askThinking;
+        quick.appendChild(on(seed, "click", function () { sendAsk(q); }));
+      });
+      card.appendChild(quick); card.appendChild(askComposer());
     }
-    var text = blockText(block); if (text.length < 3) return;
-    var r = block.getBoundingClientRect(), cr = c.getBoundingClientRect();
-    st.ui.askBtn = { text: text.slice(0, 240), gutter: true, y: r.top - cr.top + r.height / 2 };
-    // The element's own handler usually redraws; when nothing does, draw here.
-    var was = draws; setTimeout(function () { if (draws === was) draw(); }, 0);
-  }, true);
-
+    if (st.ui.askThinking) {
+      var think = el("div", "ob-ask-think"); think.appendChild(dots());
+      think.appendChild(el("span", "ob-hint", "Reading it back")); card.appendChild(think);
+    }
+    var foot = el("div", "ob-ask-cancel");
+    var close = el("button", "ob-tiny", answered.length ? "Done" : "Cancel"); close.type = "button";
+    close.disabled = !!st.ui.askThinking;
+    if (!quote) close.setAttribute("autofocus", "");
+    foot.appendChild(on(close, "click", closeAsk)); card.appendChild(foot);
+    scrim.appendChild(card); return scrim;
+  }
+  function askComposer() {
+    var row = el("div", "ob-ask-row"), input = el("input");
+    input.value = st.ui.askText || ""; input.placeholder = "or ask your own question…";
+    input.setAttribute("aria-label", "Question about the highlighted passage");
+    input.setAttribute("autofocus", ""); input.disabled = !!st.ui.askThinking;
+    var send = el("button", "ob-pill", "Ask"); send.type = "button";
+    send.disabled = !!st.ui.askThinking || !(st.ui.askText || "").trim();
+    on(input, "input", function () { st.ui.askText = input.value; send.disabled = !!st.ui.askThinking || !input.value.trim(); });
+    on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); sendAsk(); } });
+    on(send, "click", function () { sendAsk(); });
+    row.appendChild(input); row.appendChild(send); return row;
+  }
+  function askTurnView(k, record) {
+    var item = el("div", record ? "ob-ask-item" : "ob-ask-turn");
+    if (record) item.appendChild(el("div", "quote", "“" + k.quote + "”"));
+    item.appendChild(el("div", "q", k.question));
+    item.appendChild(el("div", "a", k.answer));
+    if (record && k.thinking) { var think = el("div", "ob-ask-think"); think.appendChild(dots()); item.appendChild(think); }
+    var tools = el("div", "ob-ask-tools"), keys = DEPTHS.map(function (x) { return x.key; }), di = Math.max(0, keys.indexOf(k.level));
+    tools.appendChild(el("span", "ob-tiny", DEPTHS[di].label));
+    var simpler = el("button", "ob-tiny", "simpler"); simpler.type = "button";
+    simpler.disabled = di === 0 || !!st.ui.askThinking;
+    on(simpler, "click", function () { reask(k, DEPTHS[di - 1].key); });
+    var deeper = el("button", "ob-tiny", "deeper"); deeper.type = "button";
+    deeper.disabled = di === DEPTHS.length - 1 || !!st.ui.askThinking;
+    on(deeper, "click", function () { reask(k, DEPTHS[di + 1].key); });
+    tools.appendChild(simpler); tools.appendChild(deeper);
+    var rm = el("button", "ob-tiny ob-ask-rm", "remove"); rm.type = "button"; rm.disabled = !!st.ui.askThinking;
+    on(rm, "click", function () { if (st.ui.askThinking) return; st.ui.asks = st.ui.asks.filter(function (x) { return x !== k; }); draw(); });
+    tools.appendChild(rm); item.appendChild(tools); return item;
+  }
   function askPanel(body) {
-    var content = body.children[0];
-    if (st.ui.askBtn && !st.ui.askOpen && content) {
-      var b = attr(el("button", "ob-askbtn", "Ask about this"), "data-askbtn", "1"); b.type = "button";
-      attr(b, "data-gutter", "1"); b.style.top = st.ui.askBtn.y + "px";
-      on(b, "click", function () {
-        // The highlight stays: it is what the question is about, and the
-        // redraw puts it back (see draw).
-        st.ui.askQuote = st.ui.askBtn.text; st.ui.askOpen = true; st.ui.askBtn = null; st.ui.askText = ""; draw();
-      });
-      content.appendChild(b);
-    }
-    if (st.ui.askOpen) {
-      var panel = el("div", "ob-ask"); panel.appendChild(el("div", "ob-ask-cap", "Asking about"));
-      panel.appendChild(el("div", "ob-ask-quote", "“" + st.ui.askQuote + "”"));
-      var quick = el("div", "ob-seeds");
-      QUICK.forEach(function (q) { var bt = el("button", "ob-seed", q); bt.type = "button"; quick.appendChild(on(bt, "click", function () { sendAsk(q); })); });
-      panel.appendChild(quick);
-      var row = el("div", "ob-ask-row"), input = el("input");
-      input.value = st.ui.askText || ""; input.placeholder = "or ask your own question…"; input.setAttribute("autofocus", "");
-      var send = el("button", "ob-pill", "Ask"); send.type = "button";
-      if (!(st.ui.askText || "").trim()) send.setAttribute("disabled", "disabled");
-      on(input, "input", function () { st.ui.askText = input.value; send.disabled = !input.value.trim(); });
-      on(input, "keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); sendAsk(); } if (e.key === "Escape") { st.ui.askOpen = false; draw(); } });
-      on(send, "click", function () { sendAsk(); });
-      row.appendChild(input); row.appendChild(send); panel.appendChild(row);
-      var cancelRow = el("div", "ob-ask-cancel"), cancel = el("button", "ob-tiny", "cancel"); cancel.type = "button";
-      cancelRow.appendChild(on(cancel, "click", function () { st.ui.askOpen = false; draw(); })); panel.appendChild(cancelRow);
-      body.appendChild(panel);
-    }
     var asks = st.ui.asks || [];
-    if (asks.length) {
-      var list = el("div", "ob-asked"); list.appendChild(el("div", "ob-asked-cap", "Asked"));
-      asks.forEach(function (k) {
-        var item = el("div", "ob-ask-item"); item.appendChild(el("div", "quote", "“" + k.quote + "”")); item.appendChild(el("div", "q", k.question));
-        if (k.thinking) { var th = el("div", "ob-ask-think"); th.appendChild(dots()); item.appendChild(th); }
-        else {
-          item.appendChild(el("div", "a", k.answer));
-          var tools = el("div", "ob-ask-tools"), keys = DEPTHS.map(function (x) { return x.key; }), di = Math.max(0, keys.indexOf(k.level));
-          tools.appendChild(el("span", "ob-tiny", DEPTHS[di].label));
-          var simpler = el("button", "ob-tiny", "simpler"); simpler.type = "button";
-          if (di === 0) simpler.setAttribute("disabled", "disabled"); else on(simpler, "click", function () { reask(k, DEPTHS[di - 1].key); });
-          var deeper = el("button", "ob-tiny", "more detail"); deeper.type = "button";
-          if (di === DEPTHS.length - 1) deeper.setAttribute("disabled", "disabled"); else on(deeper, "click", function () { reask(k, DEPTHS[di + 1].key); });
-          tools.appendChild(simpler); tools.appendChild(deeper);
-          var rm = el("button", "ob-tiny ob-ask-rm", "×"); rm.type = "button";
-          on(rm, "click", function () { st.ui.asks = st.ui.asks.filter(function (x) { return x !== k; }); draw(); }); tools.appendChild(rm);
-          item.appendChild(tools);
-        }
-        list.appendChild(item);
-      });
-      body.appendChild(list);
-    }
+    if (!asks.length) return;
+    var list = el("div", "ob-asked"); list.appendChild(el("div", "ob-asked-cap", "Asked"));
+    asks.forEach(function (k) { list.appendChild(askTurnView(k, true)); });
+    body.appendChild(list);
   }
-
   function sendAsk(text) {
-    var question = str(text || st.ui.askText).trim(); if (!question) return;
-    var k = { quote: st.ui.askQuote, question: question, thinking: true, level: st.row.depth || "everyday" };
-    st.ui.asks = [k].concat(st.ui.asks || []); st.ui.askOpen = false; st.ui.askText = ""; draw();
-    api("ask", { step: st.step, quote: k.quote, question: question }).then(function (out) { k.thinking = false; k.answer = out.answer; k.level = out.level || k.level; draw(); })
-      .catch(function (e) { k.thinking = false; k.answer = e.message; draw(); });
+    var question = str(text || st.ui.askText).trim();
+    if (!question || !st.ui.askQuote || st.ui.askThinking) return;
+    var k = { quote: st.ui.askQuote, question: question, level: st.row.depth || "everyday" };
+    st.ui.askThinking = true; st.ui.askText = ""; draw();
+    api("ask", { step: st.step, quote: k.quote, question: question }).then(function (out) {
+      k.answer = out.answer; k.level = out.level || k.level;
+    }).catch(function (e) { k.answer = e.message; }).then(function () {
+      st.ui.asks.push(k); st.ui.askThinking = false; draw();
+    });
   }
-
   function reask(k, level) {
-    k.thinking = true; draw();
-    api("ask", { step: st.step, quote: k.quote, question: k.question, level: level }).then(function (out) { k.thinking = false; k.answer = out.answer; k.level = out.level || level; draw(); })
-      .catch(function (e) { k.thinking = false; k.answer = e.message; draw(); });
+    if (st.ui.askThinking) return;
+    k.thinking = true; st.ui.askThinking = true; draw();
+    api("ask", { step: st.step, quote: k.quote, question: k.question, level: level }).then(function (out) {
+      k.answer = out.answer; k.level = out.level || level;
+    }).catch(function (e) { k.answer = e.message; }).then(function () { k.thinking = false; st.ui.askThinking = false; draw(); });
   }
 
   // --- boot --------------------------------------------------------------------

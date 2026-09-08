@@ -28,7 +28,7 @@ function makeEl(tag) {
     hasAttribute(key) { return key in node.attrs; },
     addEventListener(name, fn) { (node.listeners[name] = node.listeners[name] || []).push(fn); },
     removeEventListener(name, fn) { node.listeners[name] = (node.listeners[name] || []).filter((f) => f !== fn); },
-    fire(name, event) { (node.listeners[name] || []).slice().forEach((fn) => fn({ preventDefault() {}, ...event })); },
+    fire(name, event) { (node.listeners[name] || []).slice().forEach((fn) => fn({ preventDefault() {}, stopPropagation() {}, ...event })); },
     focus() { node.focused = true; },
     getBoundingClientRect() { return { left: 0, top: 0, width: 400, height: 56 }; },
     click() { node.fire("click", { target: node }); },
@@ -36,7 +36,10 @@ function makeEl(tag) {
       assert.equal(selector, ".ob-cta", "the stub only knows the primary-button lookup");
       return byClass(node, "ob-cta");
     },
+    contains(other) { for (let n=other;n;n=n.parentNode) if(n===node) return true; return false; },
+    closest(selector) { for(let n=node;n;n=n.parentNode) if(selector === "[data-askbtn]" && n.hasAttribute("data-askbtn")) return n; return null; },
     querySelector(selector) {
+      if (selector.startsWith(".")) return one(node, selector.slice(1)) || null;
       // The stub knows one attribute-presence lookup, "[name]".
       const m = /^\[([a-z-]+)\]$/.exec(selector);
       assert.ok(m, `the stub only knows [attribute] lookups, not ${selector}`);
@@ -301,43 +304,16 @@ test("Enter presses the step's button unless a text box has it", async () => {
   assert.equal(major.actions.length, before, "a disabled Continue stays unpressed");
 });
 
-// The register control: on every step from the paper on, the same slider as
-// the Explanations step; move it, Regenerate, and the screen is rewritten.
-test("the register control rewrites what is on the screen and moves the profile's depth", async () => {
-  const early = mount({ row: fullRow({ step: 1 }) });
-  await settle();
-  assert.equal(one(early.app, "ob-reg"), undefined, "not before the paper");
-  const page = mount({ row: fullRow({ step: 7, depth: "some" }) });
-  await settle();
-  let reg = one(page.app, "ob-reg");
-  assert.ok(reg, "the control is on the topics step");
-  assert.equal(textOf(one(reg, "ob-reg-word")), "Some detail", "folded, it is the one word: the current register");
-  assert.equal(byClass(reg, "ob-slider").length, 0, "and nothing else");
-  one(reg, "ob-reg-word").fire("click");
-  reg = one(page.app, "ob-reg");
-  assert.ok(one(reg, "ob-slider"), "the word opens the slider");
-  one(reg, "ob-reg-x").fire("click");
-  assert.equal(byClass(one(page.app, "ob-reg"), "ob-slider").length, 0, "the × closes it");
-  one(one(page.app, "ob-reg"), "ob-reg-word").fire("click");
-  reg = one(page.app, "ob-reg");
-  assert.equal(byClass(reg, "ob-reg-go").length, 0, "no Regenerate until the slider moves");
-  const question = textOf(one(page.app, "ob-q"));
-  byClass(reg, "ob-stop")[3].fire("click");                    // Expert
-  const go = one(one(page.app, "ob-reg"), "ob-reg-go");
-  assert.ok(go, "Regenerate appears once the register differs");
-  go.fire("click");
-  await settle();
-  const sent = page.bodies.find((b) => b.action === "rewrite");
-  assert.equal(sent.from, "some");
-  assert.equal(sent.to, "expert");
-  assert.ok(sent.texts.includes(question), "the question on the screen was among the passages");
-  assert.equal(textOf(one(page.app, "ob-q")), "★ " + question, "and it is shown rewritten");
-  assert.equal(page.row().depth, "expert");
-  assert.equal(byClass(one(page.app, "ob-reg"), "ob-slider").length, 0, "it folds again once done");
-  assert.equal(textOf(one(one(page.app, "ob-reg"), "ob-reg-word")), "Expert");
-  byClass(page.app, "ob-pdot")[1].fire("click");
-  byClass(page.app, "ob-pdot")[0].fire("click");
-  assert.equal(textOf(one(page.app, "ob-q")), "★ " + question, "the rewrite survives redraws on the step");
+test("Ask about this is persistent only on steps 6 through 11; Explanations keeps its slider", async () => {
+  for (const step of [3,4,5,6,7,8,9,10,11,12]) {
+    const page=mount({row:fullRow({step,status:step===12 ? "created" : "open"}),turns:[{role:"assistant",content:"Ready",card:{card:"none",ready:true}}]});
+    await settle();
+    assert.equal(!!one(page.app,"ob-ask-open"),step>=6 && step<=11);
+    assert.equal(page.app.attrs["data-askable"],step>=6 && step<=11 ? "1" : "0");
+    assert.equal(one(page.app,"ob-reg"),undefined);
+    if(step===3) assert.ok(one(page.app,"ob-slider"));
+    assert.equal(page.actions.includes("rewrite"),false);
+  }
 });
 
 // The two halves of the paper step: accepting it is awaited, reading it is not.
@@ -564,37 +540,77 @@ test("the main column keeps its scroll across redraws, a sent turn scrolls to th
   assert.equal(early.bodies.filter((b) => b.action === "brainstorm").length, 1, "skipping never asks filler questions");
 });
 
-test("clicking a block offers Ask about this in the gutter, and the button opens the ask panel on that text", async () => {
-  const page = mount({ row: fullRow({ step: 6, leveled_status: "done", leveled: LEVELED }) });
+async function highlight(page, text) {
+  const content=page.doc.getElementById("content");
+  page.win.getSelection=()=>({toString:()=>text,rangeCount:1,anchorNode:content.children[0],focusNode:content.children[0]});
+  page.doc.fire("mouseup",{target:content.children[0]});
   await settle();
-  const option = byClass(page.app, "ob-goal")[1];
-  page.doc.fire("click", { target: option });                          // capture: the document sees it first
-  option.fire("click", { target: option });                            // then the option's own handler redraws
-  await settle();
-  const btn = one(page.app, "ob-askbtn");
-  assert.ok(btn, "a gutter button appeared");
-  assert.equal(btn.attrs["data-gutter"], "1");
-  assert.equal(byClass(page.app, "ob-goal")[1].attrs["data-on"], "1", "the click still picked the option");
-  btn.fire("click");
-  page.doc.fire("click", { target: btn });
-  await settle();
-  assert.ok(one(page.app, "ob-ask"), "the ask panel opened");
-  assert.equal(textOf(one(page.app, "ob-ask-quote")), "“The math w”", "the block's words, spaced, not its glyphs");
-  // Any step of the flow can be asked about, the name step included.
-  const early = mount({ row: fullRow({ step: 0, name: "" }) });
-  await settle();
-  early.doc.fire("click", { target: one(early.app, "ob-title") });
-  await settle();
-  assert.ok(one(early.app, "ob-askbtn"), "the first step offers Ask about this too");
-  // A click on empty space puts the button away.
-  const fresh = mount({ row: fullRow({ step: 6, leveled_status: "done", leveled: LEVELED }) });
-  await settle();
-  fresh.doc.fire("click", { target: byClass(fresh.app, "ob-goal")[0] });
-  await settle();
-  assert.ok(one(fresh.app, "ob-askbtn"));
-  fresh.doc.fire("click", { target: one(fresh.app, "ob-main") });
-  await settle();
-  assert.equal(one(fresh.app, "ob-askbtn"), undefined);
+}
+function openRemembered(page) {
+  const button=one(page.app,"ob-ask-open");
+  page.win.getSelection=()=>({toString:()=>"",rangeCount:0});
+  page.doc.fire("mouseup",{target:button});
+  button.fire("click");
+}
+test("the empty modal has only Cancel and dismisses by Escape or scrim, not the card",async()=>{
+  const page=mount({row:fullRow({step:7})}); await settle();
+  one(page.app,"ob-ask-open").fire("click");
+  assert.match(textOf(one(page.app,"ob-modal")),/Highlight a sentence in the step first/);
+  assert.equal(one(page.app,"ob-ask-row"),undefined);
+  assert.equal(one(page.app,"ob-ask-quick"),undefined);
+  assert.equal(textOf(one(one(page.app,"ob-modal"),"ob-tiny")),"Cancel");
+  let stopped=false;
+  one(page.app,"ob-modal").fire("click",{stopPropagation(){stopped=true;}});
+  assert.equal(stopped,true); assert.ok(one(page.app,"ob-modal"));
+  page.doc.fire("keydown",{key:"Escape"});
+  assert.equal(one(page.app,"ob-modal"),undefined);
+  one(page.app,"ob-ask-open").fire("click");
+  page.doc.fire("keydown",{key:"Enter",target:page.app});
+  assert.ok(one(page.app,"ob-modal"),"Enter must not advance the underlying step");
+  one(page.app,"ob-scrim").fire("click");
+  assert.equal(one(page.app,"ob-modal"),undefined);
+});
+test("the remembered quote survives button mouseup; answers and follow-ups stay in the modal",async()=>{
+  let release;
+  const page=mount({row:fullRow({step:7,depth:"some"}),replies:{ask:()=>new Promise(resolve=>{release=resolve;})}});
+  await settle(); await highlight(page,"A highlighted mechanism");
+  openRemembered(page); await settle();
+  assert.equal(textOf(one(page.app,"ob-ask-quote")),"“A highlighted mechanism”");
+  assert.equal(one(page.app,"ob-askbtn"),undefined);
+  one(page.app,"ob-seed").fire("click");
+  assert.ok(one(one(page.app,"ob-modal"),"ob-ask-think"));
+  page.doc.fire("keydown",{key:"Escape"});
+  assert.ok(one(page.app,"ob-modal"),"do not discard a pending exchange");
+  release({ok:true,json:async()=>({answer:"It transforms the input.",level:"some"})}); await settle();
+  assert.match(textOf(one(one(page.app,"ob-modal"),"ob-ask-turn")),/It transforms the input/);
+  assert.ok(one(page.app,"ob-ask-row"));
+  assert.equal(textOf(one(one(page.app,"ob-ask-cancel"),"ob-tiny")),"Done");
+  assert.match(textOf(one(page.app,"ob-asked")),/It transforms the input/);
+  const input=find(one(page.app,"ob-modal"),n=>n.tagName==="input")[0];
+  input.value="Why that input?";input.fire("input");one(one(page.app,"ob-modal"),"ob-pill").fire("click");
+  release({ok:true,json:async()=>({answer:"It isolates one variable.",level:"some"})}); await settle();
+  assert.equal(byClass(one(page.app,"ob-modal"),"ob-ask-turn").length,2);
+  const simpler=byClass(one(page.app,"ob-ask-turn"),"ob-tiny").find(n=>textOf(n)==="simpler");
+  simpler.fire("click");
+  assert.equal(page.bodies.filter(b=>b.action==="ask").pop().level,"everyday");
+  release({ok:true,json:async()=>({answer:"One thing changes.",level:"everyday"})}); await settle();
+  assert.match(textOf(one(page.app,"ob-ask-turn")),/One thing changes/);
+  one(one(page.app,"ob-ask-turn"),"ob-ask-rm").fire("click");
+  assert.equal(byClass(one(page.app,"ob-modal"),"ob-ask-turn").length,1);
+  one(one(page.app,"ob-ask-cancel"),"ob-tiny").fire("click");
+  assert.equal(one(page.app,"ob-modal"),undefined);
+  assert.ok(one(page.app,"ob-asked"));
+  assert.equal(page.row().depth,"some","re-asking does not change the Explanations preference");
+});
+test("plain clicks and short or outside selections do not supply a quote",async()=>{
+  const page=mount({row:fullRow({step:7})});await settle();
+  await highlight(page,"ok");openRemembered(page);
+  assert.ok(one(page.app,"ob-ask-empty"));
+  one(page.app,"ob-scrim").fire("click");
+  page.win.getSelection=()=>({toString:()=>"Outside the step",rangeCount:1,anchorNode:page.app});
+  page.doc.fire("mouseup",{target:page.app});await settle();
+  one(page.app,"ob-ask-open").fire("click");
+  assert.ok(one(page.app,"ob-ask-empty"));
 });
 
 test("a reloaded brainstorm redraws every answered card with its answers, from the stored user turns", async () => {
