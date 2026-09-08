@@ -512,10 +512,32 @@
 
   var lastContent = null;
 
+  var drawnMockKey = "", mockResize = null;
+  function mockViewKey() {
+    var m = st.ui.mock, T = window.EngelbartTournament;
+    var cur = st.screen === "flow" && st.step === 6 && m.loaded && !m.busy && !m.placed && T && m.t && T.current(m.t);
+    return cur ? JSON.stringify([st.row.id, cur.a, cur.b, m.t.picks, m.saveError, st.error]) : "";
+  }
+
   function draw() {
     var oldModal = app.querySelector(".ob-modal"), modalScroll = oldModal ? oldModal.scrollTop : 0;
     app.setAttribute("data-askable", askable() ? "1" : "0");
     var still = drawn.screen === st.screen && drawn.step === st.step;
+    var mockKey = mockViewKey();
+    // Keep the browsing contexts connected when only background state changed.
+    // Detaching/reinserting an iframe also reloads it, even if its node is reused.
+    if (still && mockKey && mockKey === drawnMockKey) {
+      var rail = app.querySelector(".ob-rail"), nextRail = railView();
+      if (rail) {
+        rail.textContent = "";
+        Array.prototype.slice.call(nextRail.children).forEach(function (child) { rail.appendChild(child); });
+      }
+      var reading = app.querySelector(".ob-mk-reading");
+      if (reading) reading.textContent = st.row.analysis_status === "done" ? "" : "reading your paper";
+      return;
+    }
+    drawnMockKey = mockKey;
+    if (mockResize) { mockResize.disconnect(); mockResize = null; }
     drawn = { screen: st.screen, step: st.step }; draws += 1;
     // The main column is the scroll container and it is rebuilt on every
     // redraw, so its position has to be carried over by hand.
@@ -530,6 +552,7 @@
     if (st.row && st.row.status === "open") { warmBrainstorm(); maybeWarmGrounding(); if (st.row.analysis_status === "running") pollAnalysis(); }
     app.appendChild(railView());
     var main = el("div", "ob-main"), body = el("div", "ob-body"), content = el("div", "ob-content");
+    attr(main, "data-mockups", st.step === 6 ? "1" : "0");
     content.id = "content";
     lastContent = content;
     var drawers = [drawName, drawYear, drawMajor, drawDepth, drawPaper, drawInstall, drawMockups, drawBrainstorm, drawTopics,
@@ -545,6 +568,13 @@
       app.querySelector(".ob-modal").scrollTop = modalScroll;
     }
     lastMain = main; main.scrollTop = keep;
+    if (mockKey) {
+      fitMocks();
+      if (window.ResizeObserver) {
+        mockResize = new window.ResizeObserver(fitMocks);
+        (st.ui.mock.fits || []).forEach(function (box) { mockResize.observe(box); });
+      }
+    }
     // Something on the page asked to be brought into view: shown a little
     // below the top of the pane, with the lines before it still readable,
     // rather than at the bottom edge where a new turn would otherwise land.
@@ -1235,9 +1265,12 @@
       if (!box || !frame || !frame.style || !box.style) continue;
       var w = box.clientWidth || (box.getBoundingClientRect ? box.getBoundingClientRect().width : 0);
       if (!w) continue;
-      var s = w / MOCK_W;
+      // Fit a desktop viewport in both dimensions, with room for the choices.
+      var h = Math.max(180, (window.innerHeight || 900) - 330);
+      var s = Math.min(w / MOCK_W, h / MOCK_H, 1);
       frame.style.transform = "scale(" + s + ")";
-      box.style.height = Math.round(MOCK_H * s) + "px";
+      frame.style.left = Math.max(0, (w - MOCK_W * s) / 2) + "px";
+      box.style.height = Math.ceil(MOCK_H * s) + "px";
     }
   }
   if (window.addEventListener) window.addEventListener("resize", fitMocks);
@@ -1345,7 +1378,7 @@
     var box = el("div", "ob-step ob-mk-step");
     var head = el("div", "ob-head");
     head.appendChild(el("span", "ob-count", count(6, "Mock-ups")));
-    if (st.row.analysis_status !== "done") head.appendChild(el("span", "ob-count", "reading your paper"));
+    head.appendChild(el("span", "ob-count ob-mk-reading", st.row.analysis_status === "done" ? "" : "reading your paper"));
     box.appendChild(head);
     if (!m.loaded || (m.busy && !m.placed)) {
       box.appendChild(el("div", "ob-title", m.busy && m.t && T.done(m.t) ? "Saving your top four" : "Two mock-ups at a time"));
@@ -1378,8 +1411,7 @@
     arena.appendChild(mockPane("left", cur.a));
     arena.appendChild(mockPane("right", cur.b));
     box.appendChild(arena);
-    // The panes have no width until the step is in the document.
-    setTimeout(fitMocks, 0);
+    // draw() fits the panes synchronously once attached, before the next paint.
     if (m.saveError) box.appendChild(el("div", "ob-err", m.saveError));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
     var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
