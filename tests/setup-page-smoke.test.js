@@ -15,6 +15,9 @@ const ROOT = path.join(__dirname, "..");
 const SRC = fs.readFileSync(path.join(ROOT, "engelbart", "setup", "setup.js"), "utf8");
 // The install module ships beside the page and draws two of its steps.
 const INSTALL = fs.readFileSync(path.join(ROOT, "engelbart", "setup", "install.js"), "utf8");
+// The bracket behind the mock-up comparison ships beside the page, and
+// index.html loads it the same way.
+const TOURNAMENT = fs.readFileSync(path.join(ROOT, "engelbart", "mockups", "tournament.js"), "utf8");
 
 // --- the smallest document setup.js can be drawn on ---------------------------
 
@@ -112,6 +115,7 @@ function fullRow(extra) {
 function mount(options = {}) {
   const app = makeEl("div");
   const actions = [];
+  const mockSaves = [];
   const bodies = [];
   let row = { step: 0, status: "open", analysis_status: "none", assets_status: "none", leveled_status: "none", ...options.row };
   const turns = options.turns || [];
@@ -127,6 +131,17 @@ function mount(options = {}) {
     const isJson = headers["Content-Type"] === "application/json";
     const body = isJson && init.body ? JSON.parse(init.body) : null;
     if (url === "/api/engelbart-config") return answer({ supabaseUrl: "https://x.supabase.co", supabaseAnonKey: "anon" });
+    if (String(url).indexOf("/api/engelbart-mockups") === 0) {
+      if (options.mockupsFail) return answer({ error: "the mock-ups are not available" }, 503);
+      const have = options.mockups || [];
+      if (body) {
+        mockSaves.push(body);
+        if (options.mockupsSaveFail) return answer({ error: "the placing could not be saved" }, 503);
+        return answer({ saved: { entrants: body.entrants, updated_at: "2026-09-08T00:00:00.000Z",
+          top: body.top.map((t, i) => ({ rank: i + 1, id: t.id, name: (have.find((m) => m.id === t.id) || {}).name || t.id })) } });
+      }
+      return answer({ mockups: have, saved: options.mockupSaved || null });
+    }
     if (body && body.action === "plan") {
       const planned = { ...body, action: body.kind };
       const response = replies.plan ? replies.plan(body) : fetchStub(url, { ...init, body: JSON.stringify(planned) });
@@ -194,10 +209,11 @@ function mount(options = {}) {
   const sandbox = { window: win, fetch: fetchStub, setTimeout: (fn, ms) => { const t=setTimeout(fn,ms); if(ms>=1500) t.unref(); return t; }, clearTimeout, setInterval: loose, clearInterval, console, URL,
     navigator: {}, document: doc };
   sandbox.globalThis = sandbox;
+  vm.runInNewContext(TOURNAMENT, sandbox, { filename: "engelbart/mockups/tournament.js" });
   vm.runInNewContext(INSTALL, sandbox, { filename: "engelbart/setup/install.js" });
   vm.runInNewContext(SRC, sandbox, { filename: "engelbart/setup/setup.js" });
 
-  return { app, actions, bodies, win, doc,
+  return { app, actions, bodies, mockSaves, win, doc,
     row: () => row,
     title: () => textOf(one(app, "ob-title")) || textOf(one(app, "ob-as-h1")) || textOf(one(app, "ob-question")) || textOf(one(app, "ob-goal-title"))
       || textOf(one(app, "ob-done-t")) || textOf(one(app, "ob-wait-t")),
@@ -998,4 +1014,146 @@ test("reopening Direction does not implicitly retry failed grounding; Try again 
   byClass(page.app,"ob-cta").find(b=>textOf(b).startsWith("Try again")).fire("click");await settle();
   assert.equal(requests.length,2);assert.equal(requests[1].grounding_retry,true);
   assert.equal(page.title(),DIRECTION.title);
+});
+
+// --- the mock-up comparison, between Install and Brainstorm ------------------
+// Two mock-ups side by side, the better one picked, a bracket to four places.
+// What is pinned here is that it holds the step while it runs, that it saves
+// the placing the member actually chose, and above all that it is never in the
+// way: an empty bucket, a failure, a placing already made, or Skip, and the
+// brainstorm draws exactly as it did before.
+
+const MOCKUPS = [
+  { id: "m1", name: "01 Rail" }, { id: "m2", name: "02 Stepper" },
+  { id: "m3", name: "03 Dark side" }, { id: "m4", name: "04 Terminal" },
+];
+const AT_BRAINSTORM = { row: fullRow({ step: 6 }), turns: [{ role: "assistant", content: "Hello.", card: { card: "none" } }] };
+const picks = (page) => byClass(page.app, "ob-mk-pick");
+const frames = (page) => find(page.app, (n) => n.tagName === "iframe");
+
+test("the comparison holds the step after Install, and each pick is between two of the bucket's mock-ups", async () => {
+  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS });
+  await settle();
+
+  assert.equal(page.title(), "Which of these two is better?", "the comparison comes before the brainstorm");
+  assert.match(textOf(page.app), /Semifinal · pick 1 of 4/, "four entrants: two semifinals, third place, final");
+  assert.equal(picks(page).length, 2, "two mock-ups, one pick each");
+
+  // Each frame is the endpoint's own page, sandboxed onto an opaque origin.
+  const shown = frames(page);
+  assert.equal(shown.length, 2);
+  for (const f of shown) {
+    assert.match(f.attrs.src, /^\/api\/engelbart-mockups\?html=m[1-4]$/);
+    assert.equal(f.attrs.sandbox, "allow-scripts allow-popups allow-forms");
+    assert.doesNotMatch(f.attrs.sandbox, /allow-same-origin/);
+  }
+  const names = byClass(page.app, "ob-mk-name").map(textOf);
+  assert.equal(new Set(names).size, 2, "a pick is never a mock-up against itself");
+  for (const n of names) assert.ok(MOCKUPS.some((m) => m.name === n), `${n} is one of the bucket's, named by the server`);
+});
+
+test("picking through the bracket saves the placing the member chose, then goes on to the brainstorm", async () => {
+  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS });
+  await settle();
+
+  const chosen = [];
+  for (let i = 0; i < 4; i += 1) {
+    assert.equal(page.title(), "Which of these two is better?", `pick ${i + 1} is still the comparison`);
+    chosen.push(textOf(byClass(page.app, "ob-mk-name")[0]));
+    picks(page)[0].fire("click");           // always the left one
+    await settle();
+  }
+
+  assert.equal(page.mockSaves.length, 1, "the placing is written once, at the end");
+  const saved = page.mockSaves[0];
+  assert.equal(saved.picks.length, 4, "every comparison is kept, in order");
+  assert.equal(saved.entrants, 4);
+  assert.equal(saved.top.length, 4, "four places");
+  assert.equal(new Set(saved.top.map((t) => t.id)).size, 4, "no mock-up placed twice");
+  for (const t of saved.top) assert.ok(MOCKUPS.some((m) => m.id === t.id), "a placed mock-up is one of the bucket's");
+  for (const p of saved.picks) assert.ok(p.winner === p.a || p.winner === p.b, "a pick's winner is one of its two");
+
+  assert.equal(page.title(), "Your top four", "the placing is shown before moving on");
+  const named = saved.top.map((t) => MOCKUPS.find((m) => m.id === t.id).name);
+  assert.deepEqual(byClass(page.app, "ob-mk-place-name").map(textOf), named, "the placing is shown in the order it was decided");
+  assert.equal(byClass(page.app, "ob-mk-rank").map(textOf).join(""), "1234");
+
+  page.cta().fire("click");
+  await settle();
+  assert.equal(page.title(), "What do you want to build?", "Continue lands on the brainstorm");
+  assert.equal(page.mockSaves.length, 1, "moving on writes nothing more");
+});
+
+test("Skip goes straight to the brainstorm and writes no placing", async () => {
+  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS });
+  await settle();
+  assert.equal(page.title(), "Which of these two is better?");
+
+  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Skip").fire("click");
+  await settle();
+  assert.equal(page.title(), "What do you want to build?");
+  assert.equal(page.mockSaves.length, 0, "a skipped comparison is not a placing");
+});
+
+test("the comparison is never in the way: no bucket, one mock-up, a failure, or a placing already made", async () => {
+  for (const [why, options] of [
+    ["an empty bucket", {}],
+    ["a single mock-up", { mockups: [MOCKUPS[0]] }],
+    ["a request that failed", { mockups: MOCKUPS, mockupsFail: true }],
+    ["a placing already made", { mockups: MOCKUPS, mockupSaved: { top: [{ rank: 1, id: "m1", name: "01 Rail" }], entrants: 4 } }],
+  ]) {
+    const page = mount({ ...AT_BRAINSTORM, ...options });
+    await settle();
+    assert.equal(page.title(), "What do you want to build?", `${why}: the brainstorm draws as it always did`);
+    assert.equal(frames(page).length, 0, `${why}: nothing is framed`);
+    assert.equal(page.mockSaves.length, 0, `${why}: nothing is written`);
+  }
+});
+
+test("the comparison fills the wait while the paper is still being read", async () => {
+  const page = mount({ row: fullRow({ step: 6, analysis_status: "running" }), turns: [], mockups: MOCKUPS });
+  await settle();
+  assert.equal(page.title(), "Which of these two is better?", "it does not wait on the paper");
+  assert.match(textOf(page.app), /reading your paper/, "and it says the paper is still being read");
+});
+
+test("the arrow keys pick the mock-up on that side, and are left alone once the comparison is done", async () => {
+  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS });
+  await settle();
+  const left = textOf(byClass(page.app, "ob-mk-name")[0]);
+  const right = textOf(byClass(page.app, "ob-mk-name")[1]);
+
+  page.doc.fire("keydown", { key: "ArrowRight", target: page.app });
+  await settle();
+  assert.notEqual(textOf(byClass(page.app, "ob-mk-name")[0]), left, "→ picked the right one and moved on");
+
+  page.doc.fire("keydown", { key: "ArrowLeft", target: page.app });
+  await settle();
+  assert.equal(picks(page).length, 2, "← picked the left one and the bracket went on");
+
+  // A modifier is a chord, not a pick.
+  const before = textOf(byClass(page.app, "ob-mk-name")[0]);
+  page.doc.fire("keydown", { key: "ArrowLeft", metaKey: true, target: page.app });
+  await settle();
+  assert.equal(textOf(byClass(page.app, "ob-mk-name")[0]), before, "⌘← is left to the browser");
+  assert.ok(right, "both sides were named");
+});
+
+test("a placing the server refused is offered again, and can be left behind", async () => {
+  const page = mount({ ...AT_BRAINSTORM, mockups: MOCKUPS, mockupsSaveFail: true });
+  await settle();
+  for (let i = 0; i < 4; i += 1) { picks(page)[0].fire("click"); await settle(); }
+
+  assert.equal(page.mockSaves.length, 1, "the placing was attempted");
+  assert.equal(page.title(), "Your top four could not be saved", "not a blank step");
+  assert.equal(page.error(), "the placing could not be saved", "in the server's own words");
+
+  page.cta().fire("click");                    // Try again
+  await settle();
+  assert.equal(page.mockSaves.length, 2, "the same placing is written again");
+  assert.deepEqual(page.mockSaves[1].top, page.mockSaves[0].top, "and it is the placing they chose");
+
+  byClass(page.app, "ob-ghost").find((b) => textOf(b) === "Continue anyway").fire("click");
+  await settle();
+  assert.equal(page.title(), "What do you want to build?", "a refused placing never traps the member");
 });

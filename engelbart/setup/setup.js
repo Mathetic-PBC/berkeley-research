@@ -17,6 +17,7 @@
   var API = "/api/engelbart-onboarding";
   var SETUP_API = "/api/engelbart-setup";
   var DEVICE_API = "/api/engelbart-device";
+  var MOCKUPS_API = "/api/engelbart-mockups";
 
   var LABELS = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"];
   var DONE = LABELS.length;  // the step after the last label
@@ -73,6 +74,9 @@
       bs: { answers: {}, pick: "", note: "", text: "", thinking: false },   // brainstorm
       as: { open: {}, picked: "" },     // assets
       key: { open: false, text: "", busy: false, err: "" },         // the own-key control: unfolded, what is typed, in-flight, what went wrong
+      // The mock-up comparison, between Install and Brainstorm: what the
+      // bucket holds, the bracket in play, the placing once it is saved.
+      mock: { loaded: false, busy: false, error: "", saveError: "", list: [], names: {}, saved: null, t: null, placed: null, done: false },
       todoConfirm: -1,                  // the todo row whose × was pressed once
       change: { open: false, text: "", thinking: false, log: [] }                             // direction / subgoals
     },
@@ -1182,8 +1186,166 @@
     return null;
   }
 
+  // --- the mock-up comparison, between Install and Brainstorm ---------------
+  //
+  // Two of the design mock-ups from the storage bucket side by side, each in
+  // a sandboxed frame; the better one is picked, and a single-elimination
+  // bracket (engelbart/mockups/tournament.js) runs until four places are
+  // decided. It fills the wait while the paper is read.
+  //
+  // It is never in the way. A browser without the module, an empty bucket, a
+  // request that fails, a placing this member already made, or Skip, and the
+  // brainstorm draws exactly as it did before: onboarding never waits on it.
+
+  function mockPending() {
+    var m = st.ui.mock;
+    if (!window.EngelbartTournament || m.done || m.error) return false;
+    if (!m.loaded) return true;          // the answer decides; the step holds until it lands
+    if (m.placed) return true;           // the four places, read before moving on
+    return m.list.length > 1 && !m.saved;
+  }
+
+  function mockName(id) { return st.ui.mock.names[id] || str(id); }
+  function mockUrl(id) { return MOCKUPS_API + "?html=" + encodeURIComponent(id); }
+
+  function loadMockups() {
+    var m = st.ui.mock, T = window.EngelbartTournament;
+    if (m.loaded || m.busy) return;
+    m.busy = true;
+    fetch(MOCKUPS_API, { headers: { Accept: "application/json", Authorization: "Bearer " + (session && session.access_token) } })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (v) {
+          if (!r.ok) throw new Error(v.error || "The mock-ups are not available.");
+          return v;
+        });
+      })
+      .then(function (out) {
+        m.busy = false; m.loaded = true;
+        m.list = (out.mockups || []).filter(function (x) { return x && x.id; });
+        m.names = {}; m.list.forEach(function (x) { m.names[x.id] = x.name; });
+        m.saved = out.saved || null;
+        if (m.list.length > 1 && !m.saved) {
+          m.t = T.create(T.shuffle(m.list.map(function (x) { return x.id; })));
+          if (T.done(m.t)) { saveMockups(); return; }
+        }
+        if (st.step === 6) draw();
+      })
+      .catch(function (e) {
+        m.busy = false; m.loaded = true; m.error = e.message || "The mock-ups are not available.";
+        if (st.step === 6) draw();
+      });
+  }
+
+  function pickMock(id) {
+    var m = st.ui.mock, T = window.EngelbartTournament;
+    if (m.busy || !m.t || !T.pick(m.t, id)) return;
+    if (T.done(m.t)) saveMockups(); else draw();
+  }
+
+  function saveMockups() {
+    var m = st.ui.mock, T = window.EngelbartTournament;
+    var placing = T.placing(m.t) || [];
+    m.busy = true; m.saveError = ""; draw();
+    post(MOCKUPS_API, { top: placing.map(function (id) { return { id: id }; }), picks: m.t.picks, entrants: m.t.entrants.length })
+      .then(function (out) {
+        m.busy = false; m.saved = (out && out.saved) || null;
+        m.placed = (m.saved && m.saved.top) || placing.map(function (id, i) { return { rank: i + 1, id: id, name: mockName(id) }; });
+        draw();
+      })
+      .catch(function (e) { m.busy = false; m.saveError = e.message; draw(); });
+  }
+
+  function mockPane(side, id) {
+    var pane = attr(el("div", "ob-mk-pane"), "data-side", side);
+    var head = el("div", "ob-mk-head");
+    head.appendChild(el("span", "ob-mk-name", mockName(id)));
+    var open = el("a", "ob-mk-open", "open \u2197");
+    attr(attr(attr(open, "href", mockUrl(id)), "target", "_blank"), "rel", "noopener");
+    head.appendChild(open);
+    pane.appendChild(head);
+    // The mock-up's own scripts run on an opaque origin: it can never read the
+    // page that frames it, nor the member's session.
+    var frame = el("iframe", "ob-mk-frame");
+    attr(frame, "sandbox", "allow-scripts allow-popups allow-forms");
+    attr(frame, "referrerpolicy", "no-referrer");
+    attr(frame, "title", mockName(id));
+    attr(frame, "src", mockUrl(id));
+    pane.appendChild(frame);
+    var pick = el("button", "ob-mk-pick"); pick.type = "button";
+    pick.appendChild(el("span", "", side === "left" ? "\u25c0 This one" : "This one \u25b6"));
+    on(pick, "click", function () { pickMock(id); });
+    pane.appendChild(pick);
+    return pane;
+  }
+
+  function drawMockPlacing(box, content) {
+    var m = st.ui.mock;
+    box.appendChild(el("div", "ob-title", "Your top four"));
+    box.appendChild(el("div", "ob-sub", "Kept with your account. You can rank them again any time at /engelbart/mockups."));
+    var list = el("ol", "ob-mk-places");
+    m.placed.forEach(function (t, i) {
+      var row = el("li", "ob-mk-place");
+      row.appendChild(el("span", "ob-mk-rank", String(t.rank || i + 1)));
+      row.appendChild(el("span", "ob-mk-place-name", t.name || mockName(t.id)));
+      list.appendChild(row);
+    });
+    box.appendChild(list);
+    var acts = el("div", "ob-actions");
+    acts.appendChild(cta("Continue", false, function () { st.ui.mock.done = true; draw(); }));
+    box.appendChild(acts);
+    content.appendChild(box);
+  }
+
+  function drawMockups(content) {
+    var m = st.ui.mock, T = window.EngelbartTournament;
+    var box = el("div", "ob-step ob-mk-step");
+    var head = el("div", "ob-head");
+    head.appendChild(el("span", "ob-count", count(6, "Mock-ups")));
+    if (st.row.analysis_status !== "done") head.appendChild(el("span", "ob-count", "reading your paper"));
+    box.appendChild(head);
+    if (!m.loaded || (m.busy && !m.placed)) {
+      box.appendChild(el("div", "ob-title", m.busy && m.t && T.done(m.t) ? "Saving your top four" : "Two mock-ups at a time"));
+      var w = el("div", "ob-mk-wait"); w.appendChild(dots()); box.appendChild(w);
+      content.appendChild(box); return;
+    }
+    if (m.placed) { drawMockPlacing(box, content); return; }
+    var cur = m.t && T.current(m.t);
+    if (!cur) {
+      // Every pick is made but the placing was refused: the step offers it
+      // again, and a way past it, rather than an empty box.
+      box.appendChild(el("div", "ob-title", "Your top four could not be saved"));
+      box.appendChild(el("div", "ob-err", m.saveError || "The placing was not written."));
+      var again = attr(el("div", "ob-actions"), "data-between", "1");
+      var past = el("button", "ob-ghost", "Continue anyway"); past.type = "button";
+      again.appendChild(on(past, "click", function () { st.ui.mock.done = true; draw(); }));
+      again.appendChild(cta("Try again", false, function () { saveMockups(); }));
+      box.appendChild(again);
+      content.appendChild(box); return;
+    }
+    var p = T.progress(m.t);
+    box.appendChild(el("div", "ob-title", "Which of these two is better?"));
+    box.appendChild(el("div", "ob-sub", T.roundName(m.t, cur) + " \u00b7 pick " + (p.made + 1) + " of " + p.total
+      + ". Your top four are kept with your account."));
+    var bar = el("div", "ob-mk-bar"), fill = el("i");
+    fill.style.width = (p.total ? Math.round(100 * p.made / p.total) : 0) + "%";
+    bar.appendChild(fill); box.appendChild(bar);
+    var arena = el("div", "ob-mk-arena");
+    arena.appendChild(mockPane("left", cur.a));
+    arena.appendChild(mockPane("right", cur.b));
+    box.appendChild(arena);
+    if (m.saveError) box.appendChild(el("div", "ob-err", m.saveError));
+    var acts = attr(el("div", "ob-actions"), "data-between", "1");
+    var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
+    acts.appendChild(on(skip, "click", function () { st.ui.mock.done = true; draw(); }));
+    acts.appendChild(el("span", "ob-mk-keys", "\u2190 left \u00b7 \u2192 right"));
+    box.appendChild(acts);
+    content.appendChild(box);
+  }
+
   function drawBrainstorm(content) {
     var r = st.row, bs = st.ui.bs;
+    // The mock-up comparison holds this step until it is done or skipped.
+    if (mockPending()) { loadMockups(); drawMockups(content); return; }
     if (r.analysis_status === "none" && r.paper_id) startReading({ run: true });
     if (r.analysis_status === "error") {
       var failed = stepBox(content, count(6), "The paper could not be read");
@@ -1676,6 +1838,19 @@
     for (var i = all.length - 1; i >= 0; i--) { if (!all[i].disabled) { b = all[i]; break; } }
     if (!b) return;
     e.preventDefault(); b.click();
+  });
+
+  // Left and right pick the mock-up on that side, while the comparison is on
+  // screen and nothing is being typed into.
+  if (document.addEventListener) document.addEventListener("keydown", function (e) {
+    if (st.step !== 6 || e.metaKey || e.ctrlKey || e.altKey || !mockPending()) return;
+    var m = st.ui.mock, T = window.EngelbartTournament;
+    if (m.busy || m.placed || !m.t) return;
+    var tag = e.target && e.target.tagName ? String(e.target.tagName).toLowerCase() : "";
+    if (tag === "input" || tag === "textarea") return;
+    var cur = T.current(m.t); if (!cur) return;
+    if (e.key === "ArrowLeft") { if (e.preventDefault) e.preventDefault(); pickMock(cur.a); }
+    else if (e.key === "ArrowRight") { if (e.preventDefault) e.preventDefault(); pickMock(cur.b); }
   });
 
   var QUICK = ["What does this mean?", "Why does this matter?", "Give me an example", "Is this too much for a first project?"];

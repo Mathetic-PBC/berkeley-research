@@ -1001,7 +1001,8 @@
       var bytes = init.body && typeof init.body !== "string" ? (init.body.size || init.body.byteLength || init.body.bytes || 0) : undefined;
       var ctx = stage({ path: path, method: method, body: body, bytes: bytes, url: u, rawBody: typeof init.body === "string" ? init.body : null }), p;
       try {
-        if (path === "/api/engelbart-config") p = config(ctx);
+        if (path === "/api/engelbart-mockups") p = mockups(ctx);
+        else if (path === "/api/engelbart-config") p = config(ctx);
         else if (path === "/api/engelbart-device") p = device(ctx, body || {});
         else if (path === "/api/engelbart-setup") p = setup(ctx, body || {});
         else if (path === "/api/engelbart-onboarding") p = onboarding(ctx, body || {});
@@ -1013,6 +1014,16 @@
         ctx.end("error", status, { error: message }); return response(status, { error: message });
       });
     }
+    // The mock-up comparison is not simulated: the frames it draws are real
+    // requests to the real endpoint, which this backend does not stand in
+    // for. An empty bucket is how the page is told to leave it out, so a
+    // simulated run walks Install straight into Brainstorm as it always did.
+    function mockups(ctx) {
+      return ctx.op("processing", "mockups", "not simulated", {}, function () {
+        return { mockups: [], saved: null };
+      });
+    }
+
     function local(name, input, output) {
       var ctx = stage({ path: "(browser)", method: "LOCAL", body: { action: name } });
       return ctx.op("processing", name, "in the page, no network", input, function () { return output; }).then(function (v) { ctx.end("ok", 0, v); return v; });
