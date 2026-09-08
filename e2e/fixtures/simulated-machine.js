@@ -239,6 +239,14 @@ class SimulatedMachine {
     return result;
   }
 
+  async buildProjectContext(sessionId) {
+    const installed = JSON.parse(fs.readFileSync(path.join(this.managed, "install.json"), "utf8"));
+    const python = path.join(installed.runtime, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+    const result = await run(python, ["-c", "import sys; from pathlib import Path; from human_compact.trajectory import build, chat_state; print('\\n'.join(build.project_lines(chat_state.tree_session(sys.argv[1]), None)))", sessionId, this.vault], {cwd:this.workspace, env:this.env});
+    if (result.code !== 0) throw new Error(result.stderr);
+    return result.stdout;
+  }
+
   claudeInvocations() {
     try {
       return fs.readFileSync(this.fakeClaude.logFile, "utf8").trim().split(/\r?\n/).filter(Boolean);

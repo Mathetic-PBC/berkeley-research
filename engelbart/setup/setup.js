@@ -1752,7 +1752,7 @@
     line.appendChild(el("span", "ob-as-meta", a.type || ""));
     if (a.type === "dataset") {
       var access = a.access || { state: "checking" };
-      var labels = { checking: "Checking access…", available: "✓ Available", restricted: "! Restricted", too_large: "Too large", remote_only: "Remote only", unavailable: "Unavailable" };
+      var labels = { checking: "Checking access…", available: "✓ Available", restricted: "! Restricted", rate_limited: "Provider rate-limited", too_large: "Too large", remote_only: "Remote only", unavailable: "Unavailable" };
       line.appendChild(el("span", "ob-as-meta ob-as-access", labels[access.state] || "Checking access…"));
     }
     if (parent) line.appendChild(el("span", "ob-as-level", a.fallbackOf ? (a.fallbackOf.kind === "synthetic_fallback" ? "synthetic" : "fallback") : "simpler"));
