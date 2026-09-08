@@ -71,5 +71,14 @@ test("mock-up desktop previews fit and stay mounted across analysis completion a
     await expect(page.getByText("Your top four", { exact: true })).toBeVisible();
     expect(htmlLoads).toBe(4); // All four rounds reuse the four initial documents.
     await expect(page.locator(".ob-mk-frame")).toHaveCount(0);
+    await page.getByRole("button", { name: "Rank again", exact: true }).click();
+    await expect(page.locator(".ob-sub")).toContainText("pick 1 of 4");
+    for (let pick = 0; pick < 4; pick++) await page.locator('[data-preview="right"] .ob-mk-pick').click();
+    await expect(page.getByText("Your top four", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await page.getByRole("button", { name: "Mock-ups", exact: true }).click();
+    await expect(page.getByText("Your top four", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByText("What do you want to build?", { exact: true })).toBeVisible();
   } finally { await stack.stop(); }
 });
