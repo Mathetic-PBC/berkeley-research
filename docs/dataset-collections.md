@@ -55,3 +55,21 @@ Acceptance: downloaded TutorTrace can be dropped/chosen in Dataset; nested nonem
 No database migration or cloud storage is required. This changes installed-client compatibility, so the runtime/CLI are versioned 0.20.0 and the committed runtime is rebuilt into the vendored wheel. Release the installed client first, then deploy the hosted collection handoff. Users on older installed clients should update before receiving a collection handoff. Do not merge either PR until coordinated macOS, Ubuntu and Windows native workflows and browser compatibility pass against the companion branch/SHA.
 
 Limits remain intentional: provider listing bounds, 5,000-entry browser drop guard, safe local ingestion limits, existing 12-resource project history, bounded format inspection, and no empty-directory metadata from the folder chooser. Anonymous sources can change and are size-checked but not commit-pinned. Remote transfer failures ask for local upload; acquisition still uses existing per-file network timeouts. Browser reselection is required after an interrupted import. Relevance is a heuristic hint, not a scientific conclusion. Files remain available for deeper inspection.
+
+### Recorded local test results
+
+| Suite | Result |
+| --- | --- |
+| Berkeley `npm test` | 507 passed |
+| Berkeley `npm run check` | Passed |
+| Hosted Firefox/WebKit compatibility | 8 passed |
+| Native installer/hook/loopback round trip, rebuilt 0.20.0 wheel | 3 passed |
+| Installed full unittest suite, Python 3.13 | 2,845 run, OK; 177 optional browser tests skipped |
+| Installed focused production resource/upload/collection suite | 43 passed, including all three browser engines |
+| Additional folder API fallback check | Passed in Chromium, Firefox and WebKit |
+| Installed `hc/tests` | 55 passed |
+| Installed CLI npm suite | 185 passed |
+
+Python 3.14 full-suite attempts encountered intermittent two-second loopback timeouts in existing chat/project tests. The Python 3.13 run uses the CI interpreter and passed without changing those tests. Optional browser tests skipped by the unit environment were run separately in the focused browser environment; this does not claim all optional browser tests ran locally. Native OS drag gestures are not automated.
+
+Coordinated CI links and current outcomes are recorded in the paired PRs: [Berkeley #104](https://github.com/Mathetic-PBC/berkeley-research/pull/104), [installed Engelbart #95](https://github.com/divadbaroon/claude-plugins/pull/95). CI outcomes are a release gate, not implied by local success.
