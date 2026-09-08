@@ -142,6 +142,11 @@
       (db.onboardings || []).forEach(function (row) { if (row.status === "open" && (row.step === 6 || row.step === 7)) row.step = 13 - row.step; });
       db.flow_order = "brainstorm-topics"; save();
     }
+    // Mock-ups became the sixth step; every step from there on moved up by one.
+    if (db.flow_mockups !== "step") {
+      (db.onboardings || []).forEach(function (row) { if ((Number(row.step) || 0) >= 6) row.step = Number(row.step) + 1; });
+      db.flow_mockups = "step"; save();
+    }
     // A configured participant: the account has finished a setup before, so the profile is on record and
     // the next setup starts at the paper with their links and familiarity already filled in.
     var participant = opts.participant || null;
@@ -372,7 +377,7 @@
       if ("depth" in fields && DEPTHS.indexOf(String(fields.depth)) >= 0) values.depth = String(fields.depth);
       if (Array.isArray(fields.todos)) values.todos = fields.todos.map(function (t) { return one(t, 300); }).filter(Boolean).slice(0, 4);
       var asked = Number(body.step);
-      if (Number.isInteger(asked)) values.step = Math.max(Number(row.step) || 0, Math.min(12, Math.max(0, asked)));
+      if (Number.isInteger(asked)) values.step = Math.max(Number(row.step) || 0, Math.min(13, Math.max(0, asked)));
       return patchRow(ctx, row, values).then(function () { return { onboarding: publicRow(row) }; });
     };
 
@@ -591,7 +596,7 @@
         var known = levels.filter(function (l) { return l != null; });
         assessment = { areas: areas, mean: known.length ? Math.round(known.reduce(function (a, b) { return a + b; }, 0) / known.length) : null, depth: assessed.key, depth_shift: assessed.shift, compiled_at: now() };
         return assessment;
-      }, { why: "no model call: each area's level is its last graded answer; the mean sets the register (≤25 drops a stop, ≥75 raises one" + (knobs.depthShift ? ")" : ", disabled by knob depthShift)") }).then(function () { return patchRow(ctx, row, { assessment: assessment, step: Math.max(Number(row.step) || 0, 8) }, "store the assessment"); })
+      }, { why: "no model call: each area's level is its last graded answer; the mean sets the register (≤25 drops a stop, ≥75 raises one" + (knobs.depthShift ? ")" : ", disabled by knob depthShift)") }).then(function () { return patchRow(ctx, row, { assessment: assessment, step: Math.max(Number(row.step) || 0, 9) }, "store the assessment"); })
         .then(function () { return { assessment: assessment }; });
     };
 
@@ -679,7 +684,7 @@
               if (reply.card === "focus") text.push("(offered) " + reply.focus.options.map(function (o) { return o.label; }).join(" / "));
               if (row.paper_id !== paper) throw fail("The paper changed", 409);
               return addTurn(ctx, row, "brainstorm", "", "assistant", text.filter(Boolean).join("\n"), card);
-            }).then(function (t) { made = t; var values = body.prewarm ? {} : { step: Math.max(Number(row.step) || 0, 6) }; if (reply.interest) values.interest = reply.interest; return patchRow(ctx, row, values, "step, interest"); })
+            }).then(function (t) { made = t; var values = body.prewarm ? {} : { step: Math.max(Number(row.step) || 0, 7) }; if (reply.interest) values.interest = reply.interest; return patchRow(ctx, row, values, "step, interest"); })
             .then(function () { return Object.assign(publicReply(made), { leveled_status: row.leveled_status, interest: row.interest || "" }); });
         });
     };
@@ -720,7 +725,7 @@
       return ctx.op("processing", "findAsset", "key “title” or “parent :: child” in the fitted list", { key: body.key }, function () {
         var found = findAsset(row, body.key); if (!found) throw fail("Pick one of the things on the list", 400);
         var a = clone(found.asset); delete a.children; chosen = Object.assign({ key: body.key }, a, { parent: found.parent ? found.parent.title : "" }); return chosen;
-      }).then(function () { return patchRow(ctx, row, { asset_chosen: chosen, direction: null, subgoals: null, todos: null, step: Math.max(Number(row.step) || 0, 9) }, "store the choice, drop the plan"); })
+      }).then(function () { return patchRow(ctx, row, { asset_chosen: chosen, direction: null, subgoals: null, todos: null, step: Math.max(Number(row.step) || 0, 10) }, "store the choice, drop the plan"); })
         .then(function () { return { asset_chosen: chosen }; });
     };
 
@@ -784,7 +789,7 @@
       } else {
         work = ctx.op("model", "review " + kind, "sonnet · inspect the saved proposal", modelRequest("sonnet", [{type:"text",text:"Validate this " + kind + " against the paper evidence.\n" + JSON.stringify({paper:paperOf(row),draft:job.draft})}],1200), function () { return {grounded:true,actionable:true,mechanismFirst:true,resourceHonest:true,progression:true}; }, modelMeta("sonnet",{input:2300,output:200})).then(function () {
           if (JSON.stringify(context()) !== mine) throw fail("The planning inputs changed",409);
-          var values = kind === "direction" ? {direction:job.draft,subgoals:null,todos:null,step:9} : kind === "subgoals" ? {subgoals:job.draft.subgoals,todos:null,step:10} : {todos:job.draft.todos,project_name:row.project_name || job.draft.name,step:11};
+          var values = kind === "direction" ? {direction:job.draft,subgoals:null,todos:null,step:10} : kind === "subgoals" ? {subgoals:job.draft.subgoals,todos:null,step:11} : {todos:job.draft.todos,project_name:row.project_name || job.draft.name,step:12};
           job.status = "complete"; job.stage = "ready";
           job.result = Object.assign({},values,{name:values.project_name || row.project_name,asset_chosen:row.asset_chosen});
           return patchRow(ctx,row,values,"store the checked proposal").then(function () { mine = JSON.stringify(context()); });
@@ -905,7 +910,7 @@
       }).then(function () {
         return ctx.op("db", "upsert hc_profiles (best effort)", "POST /rest/v1/hc_profiles?on_conflict=user_id · a failure here never blocks the project", { user_id: USER.id, display_name: payload.reader.name, year: payload.reader.year, major: payload.reader.major, tech_level: payload.reader.level, knowledge: payload.reader.knowledge },
           function () { db.profiles = [{ user_id: USER.id, display_name: payload.reader.name, tech_level: payload.reader.level }]; save(); return [{ user_id: USER.id }]; });
-      }).then(function () { return patchRow(ctx, row, Object.assign({}, values, { status: "created", step: 12, pending_setup_id: pendingId }), "finish the setup"); })
+      }).then(function () { return patchRow(ctx, row, Object.assign({}, values, { status: "created", step: 13, pending_setup_id: pendingId }), "finish the setup"); })
         .then(function () { return { ok: true, pending_setup_id: pendingId, profile_saved: true }; });
     };
 

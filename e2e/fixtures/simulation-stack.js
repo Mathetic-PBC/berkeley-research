@@ -28,7 +28,7 @@ function initialOnboarding() {
     id: "22222222-2222-2222-2222-222222222222",
     user_id: USER.id,
     status: "open",
-    step: 11,
+    step: 12,
     name: "Sim Researcher",
     year: "Second year",
     major: "Computer Science",

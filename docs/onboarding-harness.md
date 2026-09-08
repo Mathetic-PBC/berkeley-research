@@ -124,3 +124,8 @@ Apply `20260908060000_brainstorm_before_topics.sql` with this order change. It s
 positions 6 and 7 only for open sessions, keeping existing readers on the same
 screen without changing their answers or conversation. New sessions follow
 Install → Brainstorm → Topics → Resources.
+
+Apply `20260908140000_mockups_step.sql` with the mock-up comparison. Mock-ups became
+a step of its own, sixth in the rail, between Install and Brainstorm; the migration
+widens the step check and moves every row from position 6 on up by one, so a reader
+in the middle of a setup lands on the screen they left.

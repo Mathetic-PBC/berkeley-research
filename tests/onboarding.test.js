@@ -1111,7 +1111,7 @@ test("Brainstorm gathers material, activity, and inquiry signals without repeate
 });
 
 test("migrated sessions keep their current step, interest, and calibration answers", async () => {
-  for (const [step, assessment, expected] of [[7, null, OB.STEP.topics], [6, { areas: [] }, OB.STEP.brainstorm]]) {
+  for (const [step, assessment, expected] of [[8, null, OB.STEP.topics], [7, { areas: [] }, OB.STEP.brainstorm]]) {
     const db = fake();
     const row = await ready(db, { step, assessment, interest: "Compare repeated failed runs" });
     db.tables.engelbart_onboarding_turns.push({ id: "saved", onboarding_id: row.id, stage: "brainstorm", role: "assistant", content: "Enough to propose a direction", card: { card: "none", ready: true } });
