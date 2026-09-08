@@ -210,3 +210,14 @@ test("a traced action tells the caller its trace id as it starts; an untraced po
   const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "api", "engelbart-onboarding.js"), "utf8");
   assert.match(source, /res\.setHeader\(TRACE_HEADER, traceId\)/, "the handler sends it as a response header");
 });
+
+test("paper grounding polls require no model credentials; run and retry do",async()=>{
+  let credentials=0;
+  const d=deps({credentialsFor:async()=>{credentials++;return {status:"active",apiKey:"k",baseUrl:"https://p",models:[]};},
+    OB:{paperGrounding:async(u,r,b,c)=>({grounding_status:b.run||b.retry?"done":"running",hasCredentials:!!c})}});
+  assert.equal((await handler.dispatch(USER,{action:"paper_grounding"},d)).hasCredentials,false);
+  assert.equal(credentials,0);
+  assert.equal((await handler.dispatch(USER,{action:"paper_grounding",run:true},d)).hasCredentials,true);
+  assert.equal((await handler.dispatch(USER,{action:"paper_grounding",retry:true},d)).hasCredentials,true);
+  assert.equal(credentials,2);
+});

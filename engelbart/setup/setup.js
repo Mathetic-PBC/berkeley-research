@@ -118,13 +118,19 @@
   function activePlan(kind) {
     var job = st.row.planning && st.row.planning[kind];
     return job && job.status !== "complete" && Object.keys(job.context || {}).every(function (key) {
-      return JSON.stringify(job.context[key]) === JSON.stringify(st.row[key] == null ? null : st.row[key]);
+      var expected = job.context[key], actual = st.row[key] == null ? null : st.row[key];
+      if (key === "analysis") {
+        expected = expected && Object.assign({}, expected); actual = actual && Object.assign({}, actual);
+        if (expected) delete expected.grounding; if (actual) delete actual.grounding;
+      }
+      return JSON.stringify(expected) === JSON.stringify(actual);
     });
   }
 
   function advancePlan(kind, body) {
     var paper = st.row.paper_id, chosen = JSON.stringify(st.row.asset_chosen), generation = st.row.id;
-    var request = Object.assign({ action: "plan", kind: kind, retry: true }, body);
+    var request = Object.assign({ action: "plan", kind: kind, retry: true, grounding_retry: st.ui.retryGrounding === true }, body);
+    st.ui.retryGrounding = false;
     st.ui.planRequests = st.ui.planRequests || {};
     if (body.revise || body.regenerate) {
       var key = JSON.stringify(body), saved = st.ui.planRequests[kind];
@@ -513,7 +519,7 @@
     if (st.screen === "loading") { app.appendChild(el("div", "ob-wait", st.error || "Waking up…")); return; }
     if (st.screen === "signin") { window.location.href = "/engelbart/signin"; return; }
     if (st.screen === "error") { var e = el("div", "ob-wait"); e.appendChild(el("div", "ob-err", st.error)); app.appendChild(e); return; }
-    if (st.row && st.row.status === "open") { warmBrainstorm(); if (st.row.analysis_status === "running") pollAnalysis(); }
+    if (st.row && st.row.status === "open") { warmBrainstorm(); maybeWarmGrounding(); if (st.row.analysis_status === "running") pollAnalysis(); }
     app.appendChild(railView());
     var main = el("div", "ob-main"), body = el("div", "ob-body"), content = el("div", "ob-content");
     content.id = "content";
@@ -768,6 +774,8 @@
       api(sources).then(function (out) {
         st.ui.psending = false;
         if (st.row.paper_id !== sources.paper_id) {
+          st.row.analysis = null;
+          if (st.row.planning) delete st.row.planning.paper_grounding;
           st.turns = []; st.cals = []; st.ui.fIdx = 0; st.ui.fAnswers = {}; st.ui.fam = {};
           st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false };
         }
@@ -847,9 +855,9 @@
     if (!read || read.analysis_status === "superseded") return;
     var changed = st.row.analysis_status !== read.analysis_status;
     st.row.analysis_status = read.analysis_status;
-    if (read.analysis) st.row.analysis = read.analysis;
+    if (read.analysis) st.row.analysis = Object.assign({}, read.analysis, st.row.analysis && st.row.analysis.grounding ? { grounding: st.row.analysis.grounding } : {});
     st.row.analysis_error = read.analysis_error || "";
-    warmBrainstorm();
+    warmBrainstorm(); maybeWarmGrounding();
     if (changed || st.step === 6 || st.step === 7) draw();
   }
   function startReading(body) {
@@ -1040,6 +1048,46 @@
     // each; only the prose is shown, the card draws the rest.
     var text = str(turn.content);
     return turn.role === "assistant" ? text.split(/(?:^|\n)\((?:asked|offered)\)/)[0] : text;
+  }
+
+  // Full PDF grounding is independent of the visible screen and all user choices.
+  // The browser explicitly owns each request; nothing runs after its HTTP response.
+  var groundingWarm = { key: "", pending: false, timer: null, stopped: false };
+  function hasGrounding() {
+    var g = st.row && st.row.analysis && st.row.analysis.grounding;
+    return g && typeof g.contribution === "string" && g.contribution.trim() &&
+      Array.isArray(g.evidence) && g.evidence.slice(0,10).some(function(e) {
+        return ["method","experiment","artifact"].indexOf(e.kind)>=0 &&
+          ["claim","quote","location"].every(function(k) { return typeof e[k] === "string" && e[k].trim(); });
+      });
+  }
+  function maybeWarmGrounding() {
+    var r = st.row;
+    if (!r || r.status !== "open" || !r.paper_id || r.analysis_status !== "done" || hasGrounding()) return;
+    var key = r.id + ":" + r.paper_id;
+    if (groundingWarm.key !== key) {
+      clearTimeout(groundingWarm.timer);
+      groundingWarm = { key:key, pending:false, timer:null, stopped:false };
+    }
+    var job = r.planning && r.planning.paper_grounding || {};
+    if (groundingWarm.pending || groundingWarm.timer || groundingWarm.stopped || job.status === "error") return;
+    groundingWarm.pending = true;
+    api("paper_grounding", job.status === "running" ? {} : {run:true}).then(function(out) {
+      if (!st.row || st.row.id + ":" + st.row.paper_id !== key) return;
+      groundingWarm.pending = false;
+      if (out.grounding_status === "superseded") { groundingWarm.stopped = true; return; }
+      st.row.planning = st.row.planning || {};
+      st.row.planning.paper_grounding = {status:out.grounding_status, error:out.grounding_error, started_at:out.grounding_started_at};
+      if (out.grounding) st.row.analysis = Object.assign({}, st.row.analysis, {grounding:out.grounding});
+      if (out.grounding_status === "running" || out.grounding_status === "none") {
+        groundingWarm.timer = setTimeout(function() { groundingWarm.timer = null; maybeWarmGrounding(); },3000);
+      } else if (out.grounding_status !== "done") groundingWarm.stopped = true;
+      // No redraw: background status must not interrupt typing or the install handoff.
+    }).catch(function() {
+      if (st.row && st.row.id + ":" + st.row.paper_id === key) {
+        groundingWarm.pending = false; groundingWarm.stopped = true;
+      }
+    });
   }
 
   // One request per paper, independent of the visible step. The server owns
@@ -1342,7 +1390,7 @@
     var head = el("div", "ob-as-header");
     head.appendChild(el("div", "ob-count", count(8, "Assets")));
     head.appendChild(el("h1", "ob-as-h1", "Select which resource to start with"));
-    head.appendChild(el("div", "ob-as-sub", "Choose the dataset, code, or demo you’ll use for your first project. Open a resource to see what it offers and any smaller examples you can start with."));
+    head.appendChild(el("div", "ob-as-sub", "Choose the dataset, code, or demo you’ll use for your first project."));
     box.appendChild(head);
     var group = el("div", "ob-as-list");
     list.forEach(function (a, i) {
@@ -1466,14 +1514,14 @@
 
   function planRetry(content, step) {
     var box = stepBox(content, count(step), "Couldn’t prepare the proposal");
-    box.appendChild(cta(st.ui.planRejected ? "Try a new proposal" : "Try again", false, function () { st.error = ""; st.busy = ""; draw(); }));
+    box.appendChild(cta(st.ui.planRejected ? "Try a new proposal" : "Try again", false, function () { st.ui.retryGrounding = true; st.error = ""; st.busy = ""; draw(); }));
   }
 
   function drawDirection(content) {
     var r = st.row;
     if (!r.asset_chosen) { stepBox(content, count(9), "Pick what to build on first"); return; }
     if (!r.direction || activePlan("direction")) {
-      if (st.error) { var blocked = stepBox(content, count(9), "Couldn’t prepare the direction"); blocked.appendChild(cta("Try again", false, function () { st.error = ""; st.busy = ""; draw(); })); blocked.appendChild(cta("Back to Assets", false, function () { go(8); })); return; }
+      if (st.error) { var blocked = stepBox(content, count(9), "Couldn’t prepare the direction"); blocked.appendChild(cta("Try again", false, function () { st.ui.retryGrounding = true; st.error = ""; st.busy = ""; draw(); })); blocked.appendChild(cta("Back to Assets", false, function () { go(8); })); return; }
       if (st.busy !== "direction") { st.busy = "direction"; api("direction", st.ui.planRejected ? { regenerate: true } : {}).then(function (out) { st.busy = ""; st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } draw(); }).catch(fail); }
       generating(content, st.ui.planMessage || "Drafting your direction"); return;
     }

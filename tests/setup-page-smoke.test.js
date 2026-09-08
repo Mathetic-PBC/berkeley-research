@@ -143,6 +143,7 @@ function mount(options = {}) {
       if (body.action === "reset") { row = { step: 0, status: "open", analysis_status: "none" }; return answer({ onboarding: row, calibrations: [], profile_reused: false }); }
       if (body.action === "step") { row = { ...row, ...body.fields, step: body.step }; return answer({ onboarding: row }); }
       if (body.action === "sources") return answer({ ok: true, analysis_status: "none" });
+      if (body.action === "paper_grounding") return answer({grounding_status:"done",grounding:{contribution:"Pose geometry",evidence:[{kind:"method",claim:"Compare angles",quote:"Compare angles",location:"Methods"}]}});
       if (body.action === "analysis") return answer({ analysis_status: "done", analysis: ANALYSIS });
       if (body.action === "assets") return answer({ assets_status: "done", assets: { assets: LEVELED.assets }, assets_brief: row.assets_brief || [] });
       if (body.action === "answer") return answer({ graded_level: 50, grade_confidence: 0.8, grade_rationale: "fine" });
@@ -190,7 +191,7 @@ function mount(options = {}) {
   const doc = makeEl("document");
   doc.getElementById = (id) => (id === "app" ? app : (find(app, (n) => n.id === id || n.attrs.id === id)[0] || null));
   doc.createElement = makeEl;
-  const sandbox = { window: win, fetch: fetchStub, setTimeout, clearTimeout, setInterval: loose, clearInterval, console, URL,
+  const sandbox = { window: win, fetch: fetchStub, setTimeout: (fn, ms) => { const t=setTimeout(fn,ms); if(ms>=1500) t.unref(); return t; }, clearTimeout, setInterval: loose, clearInterval, console, URL,
     navigator: {}, document: doc };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(INSTALL, sandbox, { filename: "engelbart/setup/install.js" });
@@ -260,7 +261,7 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
 
   assert.equal(page.title(), "Which computer are you on?", "the install step follows the paper");
   assert.deepEqual(page.actions, ["open", "step", "step", "step", "step",
-    "own_paper", "own_paper_saved", "sources", "analysis", "assets", "step", "brainstorm", "issue"]);
+    "own_paper", "own_paper_saved", "sources", "analysis", "assets", "step", "brainstorm", "paper_grounding", "issue"]);
   assert.equal(page.row().name, "Ada");
   assert.equal(page.row().year, "Second year");
   assert.equal(page.row().depth, "technical");
@@ -340,6 +341,7 @@ test("an accepted paper starts the reading and moves on without waiting for it",
   release();
   await settle();
   assert.equal(one(page.app, "ob-reading"), undefined, "and stops saying so once it is");
+  assert.equal(page.bodies.filter(b=>b.action==="paper_grounding" && b.run).length,1,"Analysis completion starts grounding while still on Install");
 });
 
 test("a refused paper keeps the reader on the paper step, with the reason", async () => {
@@ -390,7 +392,7 @@ test("the slider paints itself while it is dragged and only commits on release",
   assert.equal(one(page.app, "ob-track"), track, "the element under the finger survives the move");
   assert.equal(one(page.app, "ob-thumb").style.left, "70.00%");
   assert.equal(textOf(one(page.app, "ob-slider-name")), "Technical");
-  assert.equal(page.actions.filter(a => a !== "brainstorm").length, 1, "a drag writes nothing");
+  assert.equal(page.actions.filter(a => a !== "brainstorm" && a !== "paper_grounding").length, 1, "a drag writes nothing");
 
   // The release lands on the window: a finger that left the track still lets go.
   page.win.fire("pointerup", {});
@@ -952,4 +954,48 @@ test("a failed background opening waits for explicit retry",async()=>{
   page.cta().fire("click"); await settle();
   assert.equal(calls,2);
   assert.equal(page.bodies.filter(b=>b.action==="brainstorm")[1].retry,true);
+});
+
+test("grounding remains non-blocking across Install, Brainstorm, Topics, Skip Topics and Assets",async()=>{
+  const page=mount({search:"?test=true",row:fullRow({step:5,assessment:null}),replies:{
+    paper_grounding:()=>new Promise(()=>{})
+  }});
+  await settle();
+  assert.equal(page.bodies.filter(b=>b.action==="paper_grounding" && b.run).length,1);
+  for(const [step,title] of [[6,"What do you want to build?"],[7,"How familiar are you with the paper's concepts?"]]){
+    byClass(page.app,"ob-row")[step].fire("click");await settle();
+    assert.equal(page.title(),title);
+  }
+  one(page.app,"ob-skip").fire("click");await settle();
+  assert.equal(page.title(),"Select which resource to start with");
+  assert.equal(page.bodies.filter(b=>b.action==="paper_grounding").length,1);
+  assert.equal(page.bodies.filter(b=>b.action==="plan").length,0);
+});
+test("grounding reload joins running work, reuses legacy evidence, and never loops on an error",async()=>{
+  for(const status of ["running","error","legacy"]){
+    const row=fullRow({step:7,planning:{paper_grounding:{status,error:{message:"Timed out"}}}});
+    if(status==="legacy") row.analysis={...ANALYSIS,grounding:{contribution:"Angles",evidence:[{kind:"method",claim:"Compare",quote:"Compare",location:"Methods"}]}};
+    const page=mount({row,replies:{paper_grounding:()=>Promise.resolve({ok:true,json:async()=>({grounding_status:status})})}});
+    await settle();
+    const calls=page.bodies.filter(b=>b.action==="paper_grounding");
+    assert.equal(calls.length,status==="running"?1:0);
+    if(calls.length) assert.equal(calls[0].run,undefined,"reload polls rather than restarting");
+    assert.equal(page.title(),"How familiar are you with the paper's concepts?");
+  }
+});
+
+test("reopening Direction does not implicitly retry failed grounding; Try again opts in",async()=>{
+  const requests=[];
+  const page=mount({row:fullRow({step:9,direction:null,planning:{paper_grounding:{status:"error"}}}),replies:{
+    plan:body=>{
+      requests.push(body);
+      return Promise.resolve({ok:true,json:async()=>body.grounding_retry ? {status:"complete",direction:DIRECTION}
+        : {status:"error",stage:"grounding",error:{type:"timeout",message:"Reading the paper timed out"}}});
+    }
+  }});
+  await settle();
+  assert.equal(requests.length,1);assert.equal(requests[0].grounding_retry,false);
+  byClass(page.app,"ob-cta").find(b=>textOf(b).startsWith("Try again")).fire("click");await settle();
+  assert.equal(requests.length,2);assert.equal(requests[1].grounding_retry,true);
+  assert.equal(page.title(),DIRECTION.title);
 });

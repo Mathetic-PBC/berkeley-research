@@ -3,14 +3,16 @@ const crypto = require("node:crypto");
 const OM = require("./onboarding-model");
 const Grounding = require("./paper-grounding");
 const Resources = require("./project-resources");
-const Storage = require("./storage");
+const GroundingJob = require("./grounding-job");
 const Budget = require("./request-budget");
 const { rpc } = require("./supabase");
 const LABELS = { resources: "Checking the selected resource", grounding: "Reading the paper", draft: "Drafting the proposal", review: "Checking the proposal", correction: "Revising the proposal", ready: "Ready" };
 const fields = ["paper_id", "analysis", "asset_chosen", "assets", "leveled", "interest", "assessment", "name", "year", "major", "depth", "project_url", "repo_url", "direction", "subgoals", "todos"];
 const fail = (message, statusCode = 409) => Object.assign(new Error(message), { statusCode });
 function contextOf(row, kind) {
-  return Object.fromEntries(fields.map(k => [k, row[k] ?? null]));
+  const context = Object.fromEntries(fields.map(k => [k, row[k] ?? null]));
+  if (context.analysis) { context.analysis = { ...context.analysis }; delete context.analysis.grounding; }
+  return context;
 }
 function reply(job, status = job.status) {
   return { status, stage: job.stage, message: LABELS[job.stage], error: job.error || undefined,
@@ -23,7 +25,7 @@ async function advance(user, row, body, input, credentials, options = {}) {
   const context = contextOf(row, kind);
   const fingerprint = crypto.createHash("sha256").update(JSON.stringify({ prompts: options.promptOverrides || {}, reader: input.reader, turns: input.turns })).digest("hex");
   const old = row.planning?.[kind];
-  const matches = old && require("node:util").isDeepStrictEqual(old.context, context) && old.fingerprint === fingerprint;
+  const matches = old && require("node:util").isDeepStrictEqual(contextOf(old.context || {}, kind), context) && old.fingerprint === fingerprint;
   const revising = Boolean(body.revise || body.regenerate);
   if (!revising && (!old || (matches && old.status === "complete")) && row[kind] && (kind !== "todos" || row.todos.length)) {
     return { status: "complete", [kind]: row[kind], name: row.project_name, asset_chosen: row.asset_chosen, leveled: row.leveled };
@@ -45,18 +47,21 @@ async function advance(user, row, body, input, credentials, options = {}) {
         discoverFallback: value => OM.resourceFallback(value, credentials, { ...options, singleModelCall: true, withoutSearch: job.withoutSearch }) });
       job.stage = "grounding";
     } else if (job.stage === "grounding") {
-      if (!Grounding.normalize(job.input.paper.grounding)) {
-        const pdf = await Storage.downloadObject(Storage.paperObjectPath(row.paper_id), { ...options, maxBytes: 20 * 1024 * 1024 });
-        job.input.paper.grounding = await OM.paperGrounding({ pdfBase64: pdf.toString('base64') }, credentials, options);
-      }
-      job.stage = "draft";
+      const grounded = await GroundingJob.run(user, row, { run: true, retry: body.grounding_retry === true || (body.grounding_retry == null && body.retry === true && old?.status === "error" && old?.stage === "grounding"), caller: kind }, credentials, options);
+      if (grounded.grounding_status === "done") {
+        job.input.paper.grounding = grounded.grounding; job.stage = "draft";
+      } else if (grounded.grounding_status === "error") {
+        job.status = "error"; job.error = grounded.grounding_error;
+      } else if (grounded.grounding_status === "superseded") {
+        throw fail("The paper changed. The old result was discarded.");
+      } else job.waitingGrounding = true;
     } else {
+      if (!Grounding.normalize(job.input.paper.grounding)) throw fail("Valid paper grounding is required before drafting");
       const result = await OM.planStage(kind, job.stage === "review" ? "review" : "draft", job.input, job.draft,
         job.correction || "", credentials, options);
       if (job.stage === "review" && result.passed) {
         job.status = "complete"; job.stage = "ready";
         const made = job.draft;
-        updates.analysis = { ...row.analysis, grounding: job.input.paper.grounding };
         if (kind === "direction") {
           updates = { ...updates, direction: made, subgoals: null, todos: null, asset_chosen: job.input.asset,
             ...(row.leveled ? { leveled: { ...row.leveled, assets: job.assets } } : {}), step: 9 };
@@ -87,6 +92,6 @@ async function advance(user, row, body, input, credentials, options = {}) {
   }
   const saved = await rpc("engelbart_plan_transition", { ...args, p_save: job, p_updates: updates }, options);
   if (saved.status === "superseded") throw fail("The paper or planning inputs changed. The old result was discarded.");
-  return reply(saved.job, saved.status);
+  return reply(saved.job, saved.job.waitingGrounding && saved.job.stage === "grounding" && saved.status === "pending" ? "running" : saved.status);
 }
 module.exports = { advance, contextOf, LABELS };
