@@ -1097,3 +1097,15 @@ test("sessions saved in the swapped order resume without losing interest or repe
     assert.equal((await OB.open(USER, {}, db.options)).onboarding.step, expected, "resume adjustment is idempotent");
   }
 });
+
+
+test("the deferred grounding endpoint caches its full-paper extraction", async () => {
+  const db = fake();
+  const row = await ready(db, { analysis: { ...ANALYSIS }, direction: null });
+  const first = await OB.paperGrounding(USER, row, {}, CREDS, db.options);
+  assert.ok(first.grounding.contribution);
+  assert.equal(modelCalls(db), 1);
+  assert.deepEqual(await OB.paperGrounding(USER, row, {}, CREDS, db.options), first);
+  assert.equal(modelCalls(db), 1);
+  assert.equal(row.direction, null);
+});

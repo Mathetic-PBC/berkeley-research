@@ -164,7 +164,7 @@ test("an edited template in the options is what is sent, rendered from the call'
     CREDS, { fetchImpl: modelSaying(reply, calls), promptOverrides: { analyzePrompt: "Read the paper for {{familiarity}} / {{depth}}.\n{{urls}}" } });
   const blocks = calls[2].body.messages[0].content;
   assert.equal(blocks[1].type, "document");
-  assert.equal(blocks[2].text, "Read the paper for Lost / Everyday -- plain.\nhttps://x.org\npage text\n\n" + require("../api/_lib/paper-grounding").EXTRACTION);
+  assert.equal(blocks[2].text, "Read the paper for Lost / Everyday -- plain.\nhttps://x.org\npage text");
   assert.deepEqual(OM.promptFor("detailsPrompt", { reader: {}, paper: { title: "T", one_liner: "o" }, draft: "", registerNote: "", resources: [] }, { promptOverrides: { detailsPrompt: "x" } }).edited, false, "a prompt that is not editable keeps its function");
 });
 

@@ -947,10 +947,15 @@ function paperOf(row) {
     ...(a.grounding ? {grounding: a.grounding} : {}) };
 }
 
-// Old completed analyses retain compatibility; enrich from their canonical PDF
-// before a new paper-dependent plan is generated. Never fabricate from a title.
+// Topics uses the short diagnostic. Read the canonical PDF separately before planning.
+async function paperGrounding(user, row, body, credentials, options = {}) {
+  requireOpen(row);
+  await ensurePaperGrounding(row, credentials, options);
+  return { grounding: row.analysis.grounding };
+}
 async function ensurePaperGrounding(row, credentials, options) {
-  if (row.analysis?.grounding || !row.paper_id) return;
+  if (row.analysis?.grounding) return;
+  if (!row.paper_id || !row.analysis) throw fail("Read the paper first",409);
   const mine=row.paper_id;
   const pdf=await Storage.downloadObject(Storage.paperObjectPath(mine), {...options,maxBytes:MAX_PDF_BYTES});
   const grounding=await OM.paperGrounding({pdfBase64:pdf.toString("base64")},credentials,options);
@@ -1116,7 +1121,7 @@ async function create(user, row, calibrations, body, options = {}) {
 
 module.exports = {
   STEP, STEP_FIELDS, RUNNING_STALE_MS, MAX_PDF_BYTES,
-  open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
+  paperGrounding, open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
   assets: assetsAction, topicsDone, leveled: leveledAction, brainstorm: brainstormAction, assetAsk, chooseAsset,
   direction: directionAction, subgoals: subgoalsAction,
   areaLevels, knowledgeOf, assessedDepth, readerOf, toPayload, analysisRunning, publicRow,

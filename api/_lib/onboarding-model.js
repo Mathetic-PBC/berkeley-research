@@ -228,7 +228,6 @@ function normalizeAnalysis(raw) {
     one_liner: long(raw.one_liner, 300),
     date: normalizeDate(raw.date),
     areas,
-    ...(Grounding.normalize(raw.grounding) ? {grounding: Grounding.normalize(raw.grounding)} : {}),
   };
 }
 
@@ -257,7 +256,7 @@ async function analyze(input, credentials, options = {}) {
     // diagnostic's own text follows verbatim, its paper tag pointing up. An
     // edited template is rendered whole, the urls in its slot.
     const body = edited ? P.render("analyzePrompt", { ...input, urls }, options.promptOverrides) : before + "(the paper attached above)" + tail;
-    return [...paperPrefix(input), text(body + "\n\n" + Grounding.EXTRACTION)];
+    return [...paperPrefix(input), text(body)];
   });
   const raw = await callModel({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS,
     timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "analysis", template: "analyzePrompt", templateEdited: edited }, credentials, options);

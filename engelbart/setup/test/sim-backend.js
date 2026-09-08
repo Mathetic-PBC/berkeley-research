@@ -25,7 +25,7 @@
   var PRICE = { sonnet: { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 }, haiku: { input: 0.8, output: 4, cache_read: 0.08, cache_write: 1 } };
   var SEARCH_PRICE = 0.01;
   var LAT = { auth: 140, db: 70, dbw: 95, rpc: 120, storage: 260, storageDl: 420, web: 190, proc: 4, haiku: 900, sonnet: 2100, analyze: 5200, hunt: 6400, level: 3600, litellm: 160 };
-  var MODEL_ACTIONS = ["sources", "analysis", "assets", "leveled", "answer", "brainstorm", "asset_ask", "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"];
+  var MODEL_ACTIONS = ["sources", "analysis", "paper_grounding", "assets", "leveled", "answer", "brainstorm", "asset_ask", "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"];
   var POLLED = ["analysis", "assets", "leveled"];
   var RUNNING_STALE_MS = 180000;
   var P_FAM = ["I'm completely lost", "I wouldn't know where to start", "I can get oriented", "I can get started", "I can extend it"];
@@ -343,7 +343,7 @@
       return { name: row.name, year: row.year, major: row.major, depth: assessed.key, assessed: assessed,
         knowledge: levels.map(function (l, i) { return l == null ? null : { area: row.analysis.areas[i].area, level: l, project_role: row.analysis.areas[i].project_role }; }).filter(Boolean) };
     }
-    function paperOf(row) { var a = row.analysis || {}; return { title: one(a.title || row.paper_title, 60), one_liner: one(a.one_liner, 300) }; }
+    function paperOf(row) { var a = row.analysis || {}; return { title: one(a.title || row.paper_title, 60), one_liner: one(a.one_liner, 300), grounding: a.grounding || null }; }
 
     // --- actions ------------------------------------------------------------------------
     var A = {};
@@ -679,6 +679,17 @@
         var a = clone(found.asset); delete a.children; chosen = Object.assign({ key: body.key }, a, { parent: found.parent ? found.parent.title : "" }); return chosen;
       }).then(function () { return patchRow(ctx, row, { asset_chosen: chosen, direction: null, subgoals: null, todos: null, step: Math.max(Number(row.step) || 0, 9) }, "store the choice, drop the plan"); })
         .then(function () { return { asset_chosen: chosen }; });
+    };
+
+    A.paper_grounding = function (ctx, row) {
+      requireOpen(row);
+      if (row.analysis && row.analysis.grounding) return Promise.resolve({ grounding: row.analysis.grounding });
+      return ctx.op("model", "ground the paper", "sonnet · contribution, methods, experiments, evidence, limitations",
+        modelRequest("sonnet", paperPrefix().concat([{ type: "text", text: "Extract paper grounding for project planning from the full paper." }]), 4000),
+        function () { return { version: 1, contribution: "Infer an editable goal tree from conversation turns.",
+          evidence: [{ id: "p1", kind: "method", claim: "Infer goals from conversation turns.", quote: "Authored simulation fixture", location: "Simulator" }],
+          limits: "Authored fixture; no empirical results are supplied." }; }, modelMeta("sonnet", io({ input: 200, output: 650 }, paperIO(false))))
+        .then(function (grounding) { return patchRow(ctx, row, { analysis: Object.assign({}, row.analysis, { grounding: grounding }) }, "store paper grounding").then(function () { return { grounding: grounding }; }); });
     };
 
     A.direction = function (ctx, row, cals, body) {

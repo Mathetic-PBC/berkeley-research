@@ -66,3 +66,15 @@ The setup page is then `http://localhost:3000/engelbart/setup`, with `?test=true
 ## Where to change the prompts
 
 The prompt templates live together in one place: the diagnostic that reads the paper and produces the areas and their question ladders, the grader, the follow-up writer, the hunt for the paper's concrete things, the fitting of that list to the reader, the brainstorm turn, the answer to a question about one thing, the direction, the subgoals, the todos, the answer to a question about selected text, and the rewrite of a screen at another register. The diagnostic is the founder's own text and is kept verbatim; changing it changes what the harness believes is worth asking about, so it should be edited deliberately rather than tuned. The tests pin the shape of each reply — how many items come back, which fields they carry, and what the length and value bounds are — and never the wording of the prompt or the reply. That means the directions and todos prompts can be rewritten freely, in whatever voice reads best, as long as they still return the same shape.
+
+
+### Deferred paper grounding
+
+`analyze()` reads the uploaded paper for its goal/summary, important concepts, and
+Topics questions. It does not extract the detailed planning evidence.
+Before Direction, the page sends a separate `paper_grounding` request. The full-paper
+`paperGrounding()` call extracts contribution, methods, experiments, evidence, and
+limitations using the existing quoted-evidence schema. Direction, Subgoals, and TODOs
+reuse `analysis.grounding` and retain the existing plan validation. Separate requests
+give grounding and Direction their own execution budgets. Extraction failures offer
+a retry; changing the paper clears the cached analysis and rejects superseded results.

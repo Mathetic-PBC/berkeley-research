@@ -1441,8 +1441,8 @@
     var r = st.row;
     if (!r.asset_chosen) { stepBox(content, count(9), "Pick what to build on first"); return; }
     if (!r.direction) {
-      if (st.error) { var blocked = stepBox(content, count(9), "Choose a usable resource before planning"); blocked.appendChild(cta("Back to Assets", false, function () { go(8); })); return; }
-      if (st.busy !== "direction") { st.busy = "direction"; api("direction").then(function (out) { st.busy = ""; st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } draw(); }).catch(fail); }
+      if (st.error) { var blocked = stepBox(content, count(9), "Couldn’t prepare the direction"); blocked.appendChild(cta("Try again", false, function () { st.error = ""; st.busy = ""; draw(); })); blocked.appendChild(cta("Back to Assets", false, function () { go(8); })); return; }
+      if (st.busy !== "direction") { st.busy = "direction"; api("paper_grounding").then(function () { return api("direction"); }).then(function (out) { st.busy = ""; st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } draw(); }).catch(fail); }
       generating(content, "Choosing a direction"); return;
     }
     var d = r.direction, box = el("div", "ob-step");

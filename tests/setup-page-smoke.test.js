@@ -146,6 +146,7 @@ function mount(options = {}) {
             questions: { eyebrow: "first", items: [{ id: "drew", type: "mcq", title: "What drew you?", options: [{ label: "The dancing" }, { label: "The math", why: "w" }] }] } });
       if (body.action === "asset_ask") return answer({ answer: "Start with the toy.", turn_id: "a1" });
       if (body.action === "choose_asset") { row = { ...row, asset_chosen: { key: body.key, title: body.key.split(" :: ").pop() }, step: 9 }; return answer({ asset_chosen: row.asset_chosen }); }
+      if (body.action === "paper_grounding") return answer({ grounding: {} });
       if (body.action === "direction") { const d = body.revise ? { ...DIRECTION, title: "Pose to angles, live" } : DIRECTION; row = { ...row, direction: d }; return answer({ direction: d }); }
       if (body.action === "subgoals") { row = { ...row, subgoals: SUBGOALS }; return answer({ subgoals: SUBGOALS }); }
       if (body.action === "todos") return answer({ todos: ["do a", "do b"], name: "zebra-runner" });
@@ -864,4 +865,15 @@ test('Assets shows access fallbacks separately from the restricted original and 
     assert.match(textOf(page.app),/instead of Original ICU records/);
     assert.equal(textOf(one(page.app,'ob-as-level')),kind === 'synthetic_fallback'?'synthetic':'fallback');
   }
+});
+
+
+test("Direction waits for paper grounding and offers a retry when grounding fails", async () => {
+  const page = mount({ row: fullRow({ step: 9, direction: null, asset_chosen: LEVELED.assets[0] }),
+    refuse: { paper_grounding: { status: 502, error: "Paper grounding failed" } } });
+  await settle(); await settle();
+  assert.equal(page.actions.filter(a => a === "paper_grounding").length, 1);
+  assert.equal(page.actions.filter(a => a === "direction").length, 0);
+  assert.match(textOf(page.app), /Paper grounding failed/);
+  assert.match(textOf(page.app), /Try again/);
 });
