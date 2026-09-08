@@ -579,4 +579,4 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-dataset-title{font:var(--text-microcap);text-transform:uppercase;letter-spacing:1.5px}
 .ob-dataset-drop{padding:18px;border:1px dashed var(--bd);border-radius:var(--radius-md);font:var(--text-13);color:var(--mut)}
 .ob-dataset-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.ob-dataset-controls input[type=url]{min-width:180px;flex:1;padding:8px 10px;border:1px solid var(--bd);border-radius:var(--radius-md);background:var(--panel);color:var(--ink);font:var(--text-13)}
+.ob-dataset-controls input[type=url],.ob-dataset-controls input[type=text]{min-width:180px;flex:1;padding:8px 10px;border:1px solid var(--bd);border-radius:var(--radius-md);background:var(--panel);color:var(--ink);font:var(--text-13)}
