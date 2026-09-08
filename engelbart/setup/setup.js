@@ -546,7 +546,7 @@
   function mockViewKey() {
     var m = st.ui.mock, T = window.EngelbartTournament;
     var cur = st.screen === "flow" && st.step === 6 && m.loaded && !m.busy && !m.placed && T && m.t && T.current(m.t);
-    return cur ? JSON.stringify([st.row.id, cur.a, cur.b, m.t.picks, m.saveError, st.error]) : "";
+    return cur ? JSON.stringify([st.row.id, m.saveError, st.error]) : "";
   }
 
   function draw() {
@@ -562,6 +562,7 @@
         rail.textContent = "";
         Array.prototype.slice.call(nextRail.children).forEach(function (child) { rail.appendChild(child); });
       }
+      refreshMockPreviews();
       var reading = app.querySelector(".ob-mk-reading");
       if (reading) reading.textContent = st.row.analysis_status === "done" ? "" : "reading your paper";
       return;
@@ -599,6 +600,7 @@
     }
     lastMain = main; main.scrollTop = keep;
     if (mockKey) {
+      refreshMockPreviews();
       fitMocks();
       if (window.ResizeObserver) {
         mockResize = new window.ResizeObserver(fitMocks);
@@ -1356,6 +1358,46 @@
       .catch(function (e) { m.busy = false; m.saveError = e.message; draw(); });
   }
 
+  // Prioritize the current pair and the next pair for either possible choice.
+  // Retain other already-loaded previews when the six-frame budget permits.
+  // Hidden frames stay connected: moving a loaded iframe reloads its document.
+  function refreshMockPreviews() {
+    var m = st.ui.mock, T = window.EngelbartTournament, cur = T.current(m.t);
+    if (!cur || !m.previewArena) return;
+    var wanted = [cur.a, cur.b];
+    [cur.a, cur.b].forEach(function (winner) {
+      var future = JSON.parse(JSON.stringify(m.t)); T.pick(future, winner);
+      var next = T.current(future);
+      if (next) [next.a, next.b].forEach(function (id) { if (wanted.indexOf(id) < 0) wanted.push(id); });
+    });
+    var spare = Math.max(0, 6 - wanted.length);
+    m.previews = (m.previews || []).filter(function (entry) {
+      if (wanted.indexOf(entry.id) >= 0 || spare-- > 0) return true;
+      if (mockResize) mockResize.unobserve(entry.fit);
+      m.previewArena.removeChild(entry.pane); return false;
+    });
+    wanted.forEach(function (id) {
+      if (m.previews.some(function (entry) { return entry.id === id; })) return;
+      var pane = mockPane("left", id), fit = pane.querySelector(".ob-mk-fit");
+      // Set the inactive state before attaching so preloads never flash onscreen.
+      attr(pane, "data-preview", "warm"); attr(pane, "inert", "");
+      m.previewArena.appendChild(pane); m.previews.push({ id: id, pane: pane, fit: fit });
+      if (mockResize) mockResize.observe(fit);
+    });
+    m.previews.forEach(function (entry) {
+      var side = entry.id === cur.a ? "left" : entry.id === cur.b ? "right" : "warm";
+      attr(entry.pane, "data-preview", side); attr(entry.pane, "data-side", side);
+      attr(entry.pane, "aria-hidden", side === "warm" ? "true" : "false");
+      if (side === "warm") attr(entry.pane, "inert", ""); else entry.pane.removeAttribute("inert");
+      entry.pane.querySelector(".ob-mk-pick").textContent = side === "left" ? "◀ This one" : "This one ▶";
+    });
+    m.fits = m.previews.map(function (entry) { return entry.fit; });
+    var p = T.progress(m.t);
+    m.previewCaption.textContent = T.roundName(m.t, cur) + " · pick " + (p.made + 1) + " of " + p.total + ". Your top four are kept with your account.";
+    m.previewProgress.style.width = (p.total ? Math.round(100 * p.made / p.total) : 0) + "%";
+    fitMocks();
+  }
+
   function mockPane(side, id) {
     var pane = attr(el("div", "ob-mk-pane"), "data-side", side);
     var head = el("div", "ob-mk-head");
@@ -1375,7 +1417,7 @@
     attr(frame, "src", mockUrl(id));
     fit.appendChild(frame);
     pane.appendChild(fit);
-    (st.ui.mock.fits = st.ui.mock.fits || []).push(fit);
+
     var pick = el("button", "ob-mk-pick"); pick.type = "button";
     pick.appendChild(el("span", "", side === "left" ? "\u25c0 This one" : "This one \u25b6"));
     on(pick, "click", function () { pickMock(id); });
@@ -1429,18 +1471,12 @@
       box.appendChild(again);
       content.appendChild(box); return;
     }
-    var p = T.progress(m.t);
     box.appendChild(el("div", "ob-title", "Which of these two is better?"));
-    box.appendChild(el("div", "ob-sub", T.roundName(m.t, cur) + " \u00b7 pick " + (p.made + 1) + " of " + p.total
-      + ". Your top four are kept with your account."));
-    var bar = el("div", "ob-mk-bar"), fill = el("i");
-    fill.style.width = (p.total ? Math.round(100 * p.made / p.total) : 0) + "%";
-    bar.appendChild(fill); box.appendChild(bar);
-    var arena = el("div", "ob-mk-arena");
-    st.ui.mock.fits = [];
-    arena.appendChild(mockPane("left", cur.a));
-    arena.appendChild(mockPane("right", cur.b));
-    box.appendChild(arena);
+    m.previewCaption = el("div", "ob-sub"); box.appendChild(m.previewCaption);
+    var bar = el("div", "ob-mk-bar"); m.previewProgress = el("i");
+    bar.appendChild(m.previewProgress); box.appendChild(bar);
+    m.previewArena = el("div", "ob-mk-arena"); m.previews = [];
+    box.appendChild(m.previewArena);
     // draw() fits the panes synchronously once attached, before the next paint.
     if (m.saveError) box.appendChild(el("div", "ob-err", m.saveError));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");

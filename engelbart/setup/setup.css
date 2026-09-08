@@ -566,3 +566,10 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob[data-rail-collapsed="1"] .ob-row .ob-grow{display:none}
 .ob[data-rail-collapsed="1"] .ob-row{justify-content:center;padding:8px 0}
 .ob[data-rail-collapsed="1"] .ob-con{margin-left:23px}
+
+/* Warm the next live previews without adding them to layout or focus order. */
+.ob-mk-arena{position:relative}
+.ob-mk-pane[data-preview="left"]{order:0}
+.ob-mk-pane[data-preview="right"]{order:1}
+.ob-mk-pane[data-preview="warm"]{position:absolute;top:0;left:0;width:calc((100% - var(--space-3))/2);visibility:hidden;pointer-events:none}
+@media(max-width:820px){.ob-mk-pane[data-preview="warm"]{width:100%}}
