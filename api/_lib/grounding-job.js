@@ -8,7 +8,7 @@ const Storage = require("./storage");
 const { rpc } = require("./supabase");
 const { telemetry } = require("./telemetry");
 async function run(user, row, body = {}, credentials, options = {}) {
-  options = { ...Budget.start(options), deadlineAt: Math.min(options.deadlineAt || Infinity, Date.now() + 95000) };
+  options = { ...Budget.forAction(options, "paper_grounding"), deadlineAt: Math.min(options.deadlineAt || Infinity, Date.now() + 250000) };
   const args = { p_user: user.id, p_id: row.id, p_paper: row.paper_id, p_token: crypto.randomUUID(),
     p_run: !!(body.run || body.retry), p_retry: body.retry === true };
   return telemetry.runOperation({ name: "paper-grounding.job", type: "processing",

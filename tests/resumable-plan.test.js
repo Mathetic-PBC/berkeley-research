@@ -24,6 +24,7 @@ before(async () => {
     create table engelbart_onboarding_turns(onboarding_id uuid,user_id uuid,stage text,role text,content text,card jsonb);`);
   await db.exec(fs.readFileSync(require.resolve('../supabase/migrations/20260908050000_resumable_planning.sql'),'utf8'));
   await db.exec(fs.readFileSync(require.resolve('../supabase/migrations/20260908080000_background_paper_grounding.sql'),'utf8'));
+  await db.exec(fs.readFileSync(require.resolve('../supabase/migrations/20260908230000_longer_planning_leases.sql'),'utf8'));
 });
 after(async () => db.close());
 async function fixture({ grounded=true, model }={}) {
@@ -77,6 +78,7 @@ test('concurrent duplicate requests share a lease; stale paper results cannot co
   let release,arrive;const hold=new Promise(r=>release=r),arrived=new Promise(r=>arrive=r);
   const f=await fixture({model:async()=>{arrive();await hold;return draft;}});
   await f.step();await f.step();const running=f.step();await arrived;
+  assert.ok(Date.parse((await f.row()).planning.direction.lease_until)-Date.now()>300000);
   assert.equal((await f.step()).status,'running');assert.equal(f.calls.length,1);
   await db.query('update engelbart_onboardings set paper_id=$2 where id=$1',[f.id,crypto.randomUUID()]);
   release();await assert.rejects(running,/discarded/);assert.equal((await f.row()).direction,null);
@@ -129,6 +131,7 @@ test('changing the selected resource invalidates an in-flight draft',async()=>{
   let release,arrive;const hold=new Promise(r=>release=r),arrived=new Promise(r=>arrive=r);
   const f=await fixture({model:async()=>{arrive();await hold;return draft;}});
   await f.step();await f.step();const running=f.step();await arrived;
+  assert.ok(Date.parse((await f.row()).planning.direction.lease_until)-Date.now()>300000);
   await db.query('update engelbart_onboardings set asset_chosen=$2 where id=$1',[f.id,{title:'Other code',type:'code'}]);
   release();await assert.rejects(running,/discarded/);
   assert.equal((await f.row()).direction,null);
@@ -168,6 +171,7 @@ test('background grounding owns one call; reload and Direction join it, then all
     return /Validate this/.test(prompt)?positive:draft;
   }});
   const first=warm(f);await arrived;
+  assert.ok(Date.parse((await f.row()).planning.paper_grounding.lease_until)-Date.now()>300000);
   assert.equal((await warm(f)).grounding_status,'running');
   assert.equal((await warm(f,{})).grounding_status,'running');
   assert.equal((await f.step()).stage,'grounding');
@@ -278,4 +282,17 @@ test('an old in-progress planning job promotes its already-extracted same-paper 
   assert.equal((await warm(f)).grounding_status,'done');
   assert.deepEqual((await f.row()).analysis.grounding,grounding);
   assert.equal(f.calls.length,0);
+});
+
+
+test('planning gets 200-second model calls inside a bounded 300-second hosting window',async(t)=>{
+ const ordinary=Budget.forAction({},'analysis'),planning=Budget.forAction({},'plan');
+ assert.ok(planning.deadlineAt-ordinary.deadlineAt>=159000);
+ const earlier={deadlineAt:Date.now()+30000};assert.equal(Budget.forAction(earlier,'plan').deadlineAt,earlier.deadlineAt);
+ const config=require('../vercel.json');assert.equal(config.functions['api/engelbart-onboarding.js'].maxDuration,300);
+ const durations=[],original=AbortSignal.timeout;
+ t.mock.method(AbortSignal,'timeout',ms=>{durations.push(ms);return original(ms);});
+ const f=await fixture({grounded:false});await warm(f);await f.step();await f.step();await f.step();await f.step();
+ assert.equal(durations.filter(ms=>ms===200000).length,3,'grounding, draft and review each allow 200 seconds');
+ assert.ok(Budget.PLANNING_REQUEST_MS<300000);
 });
