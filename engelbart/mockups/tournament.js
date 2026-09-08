@@ -13,6 +13,10 @@
   var mod = factory();
   if (typeof module === "object" && module.exports) module.exports = mod;
   root.EngelbartTournament = mod;
+  // A page reaches it by name on the window, as it reaches the install
+  // module. In a browser that is this same object; where it is not, both
+  // names still lead here.
+  if (typeof window !== "undefined" && window !== root) window.EngelbartTournament = mod;
 })(typeof globalThis !== "undefined" ? globalThis : this, function createEngelbartTournament() {
   "use strict";
 
