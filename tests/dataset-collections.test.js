@@ -65,3 +65,20 @@ test('GitHub release-file URLs retain the single-file path',async()=>{
  const r=await R.probeUrl('https://github.com/org/research-repo/releases/download/v1/metrics.csv',{fetchImpl:async()=>new Response('metric,label\n1,yes\n')});
  assert.equal(r.state,'available');assert.equal(r.format,'csv');
 });
+
+test('interrupted provider listing retries once and preserves the full collection',async()=>{
+ const fixture=github({tree:files.map(path=>({type:'blob',path,size:20}))});let attempts=0;
+ const r=await R.probeUrl('https://github.com/org/research-repo/tree/main/dataset',{fetchImpl:async(...args)=>{
+  if(++attempts===1)throw new DOMException('slow connection','TimeoutError');
+  return fixture.fetchImpl(...args);
+ }});
+ assert.equal(r.state,'available');assert.equal(r.collection.manifest.fileCount,3);assert.equal(attempts,4);
+});
+test('persistent listing timeout is bounded and actionable; provider denial is not retried',async()=>{
+ let calls=0;
+ const r=await R.probeUrl('https://github.com/org/research-repo',{fetchImpl:async()=>{calls++;throw new DOMException('secret URL','TimeoutError');}});
+ assert.equal(calls,2);assert.equal(r.state,'unavailable');assert.match(r.reason,/timed out/);assert.ok(!r.reason.includes('secret'));assert.equal(r.retryable,true);
+ calls=0;
+ const denied=await R.probeUrl('https://github.com/org/research-repo',{fetchImpl:async()=>{calls++;return new Response('Forbidden',{status:403});}});
+ assert.equal(calls,1);assert.equal(denied.state,'restricted');
+});

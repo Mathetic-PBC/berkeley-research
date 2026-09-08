@@ -1,6 +1,7 @@
 "use strict";
 // Provider listings have their own budget; never parse a data sample as JSON metadata.
 const { createHash } = require('node:crypto');
+const Budget = require('./request-budget');
 const JSON_BYTES = 4 * 1024 * 1024, MAX_FILES = 5000;
 const DATA = /\.(csv|tsv|parquet|xlsx|json|jsonl|ndjson)$/i;
 function pathName(value) {
@@ -38,8 +39,17 @@ function collection(source, entries) {
 }
 async function resolve(url, options, read) {
   const parsed = new URL(url), parts = parsed.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  // One bounded retry for interrupted provider reads, within one shared budget.
+  const listingOptions = {...options, metadata:true, deadline:Math.min(options.deadline || Infinity, Date.now()+60000)};
+  const transient = e => Budget.isTimeout(e) || ['ECONNRESET','ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET','EAI_AGAIN'].includes(e?.cause?.code || e?.code) || e?.message === 'fetch failed';
   const json = async target => {
-    const got = await read(target, {...options, metadata:true}, JSON_BYTES);
+    let got;
+    for (let attempt=0; attempt<2; attempt++) {
+      try { got = await read(target, listingOptions, JSON_BYTES); break; }
+      catch (error) {
+        if (attempt || !transient(error) || Date.now() >= listingOptions.deadline || options.signal?.aborted) throw error;
+      }
+    }
     if (!got.response?.ok || got.restricted) throw {access:failure(got),status:got.response?.status};
     if (got.truncated || got.tooLarge) throw {access:result('remote_only','Provider listing exceeds the bounded JSON budget; supply the folder locally')};
     try { return JSON.parse(got.body.toString('utf8')); } catch { throw {access:result('unavailable','Provider returned an invalid file listing', {retryable:true})}; }
@@ -88,7 +98,12 @@ async function resolve(url, options, read) {
       return collection({type:'anonymous_github',provider:'anonymous_github',url,repo,rootPath},entries);
     }
     return null;
-  } catch (e) { return e.access || result('unavailable','Collection could not be verified', {retryable:true}); }
+  } catch (e) {
+    if (e.access) return e.access;
+    if (Budget.isTimeout(e) || e.message === 'Probe budget exceeded') return result('unavailable','Dataset provider timed out. Try attaching the link again or upload the folder.', {retryable:true});
+    if (transient(e)) return result('unavailable','Dataset provider connection was interrupted. Try attaching the link again or upload the folder.', {retryable:true});
+    return result('unavailable','Provider returned an unsupported or unsafe collection listing; upload the folder instead', {retryable:false});
+  }
 }
 // Used only for model input: the full manifest remains in persisted access/handoff.
 function compact(value) {

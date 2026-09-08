@@ -32,7 +32,13 @@ async function write(user,row,values,options) {
   let query=[eq('id',row.id),eq('user_id',user.id),'status=eq.open'];
   if(row.dataset_upload)query.push(eq('dataset_upload->>id',row.dataset_upload.id),eq('dataset_upload->>revision',row.dataset_upload.revision));
   else query.push('dataset_upload=is.null');
-  const result=await patchRows(TABLE,query.join('&'),{...values,updated_at:new Date().toISOString()},options);
+  let result;
+  try { result=await patchRows(TABLE,query.join('&'),{...values,updated_at:new Date().toISOString()},options); }
+  catch (error) {
+    if (/dataset_(?:upload|resource)/i.test(error.detail || '') && /column|schema cache/i.test(error.detail || ''))
+      throw fail('Dataset uploads are not configured on this deployment. Apply the onboarding dataset upload migration in Supabase.',503);
+    throw error;
+  }
   if(!result?.[0])throw fail('Dataset changed in another tab. Reload and try again.',409);
   Object.assign(row,result[0]);const {user_id,...onboarding}=row;return {onboarding};
 }
