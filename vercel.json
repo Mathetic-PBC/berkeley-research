@@ -120,6 +120,10 @@
   ],
   "rewrites": [
     {
+      "source": "/ea-ais",
+      "destination": "/ea-ais/index.html"
+    },
+    {
       "source": "/engelbart",
       "destination": "/engelbart/index.html"
     },
