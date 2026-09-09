@@ -258,6 +258,20 @@ class SimulationStack {
         this.row.step = Math.max(Number(this.row.step) || 0, Number(body.step) || 0);
         return send(response, 200, { onboarding: clone(this.row) });
       }
+      if (body.action === 'sources') {
+        try {
+          const result=await Onboarding.sources(USER,this.row,body,null,{trace:false,
+            env:{SUPABASE_URL:'https://simulation.supabase.invalid',SUPABASE_ANON_KEY:'fixture-anon',SUPABASE_SERVICE_ROLE_KEY:'fixture-service'},
+            fetchImpl:async(url,init)=>{
+              if(url.includes('/rest/v1/engelbart_onboardings')) {Object.assign(this.row,JSON.parse(init.body));return Response.json([this.row]);}
+              if(url==='https://article.example/methods')return new Response('<p>The article describes the observed protocol.</p>');
+              throw Error('Unexpected source fixture request');
+            }});
+          return send(response,200,result);
+        } catch(error) {return send(response,error.statusCode || 500,{error:error.message});}
+      }
+      if (body.action === 'analysis') return send(response,200,{analysis_status:'running'});
+      if (body.action === 'assets') return send(response,200,{assets_status:'running'});
       if (body.action === 'dataset') {
         try {
           const result=await require('../../api/_lib/onboarding-dataset').handle(USER,this.row,body,{

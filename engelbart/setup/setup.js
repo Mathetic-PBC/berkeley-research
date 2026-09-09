@@ -19,7 +19,7 @@
   var DEVICE_API = "/api/engelbart-device";
   var MOCKUPS_API = "/api/engelbart-mockups";
 
-  var LABELS = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Mock-ups", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"];
+  var LABELS = ["Name", "Year", "Major", "Explanations", "Sources", "Install", "Interface", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"];
   var DONE = LABELS.length;  // the step after the last label
   var YEARS = ["First year", "Second year", "Third year", "Fourth year"];
   var MAJORS = ["Computer Science", "Electrical Engineering & Computer Sciences", "Data Science", "Cognitive Science",
@@ -66,6 +66,7 @@
       railCollapsed: false,
       yearOther: false, yearText: "",
       depthPos: 0.25, depthTouched: false,
+      article: null, articleOpen: false, articleUrl: "",
       pfile: null,      // { name, meta, id, token } once uploaded; { name, meta, uploading } meanwhile
       pover: false, popen: null, plink: "", prepo: "", pfam: 0.2, psending: false,
       draft: "",
@@ -135,7 +136,7 @@
   }
 
   function advancePlan(kind, body) {
-    var paper = st.row.paper_id, chosen = JSON.stringify(st.row.asset_chosen), generation = st.row.id;
+    var paper = sourceIdentity(st.row), chosen = JSON.stringify(st.row.asset_chosen), generation = st.row.id;
     var request = Object.assign({ action: "plan", kind: kind, retry: true }, body);
     st.ui.planRequests = st.ui.planRequests || {};
     if (body.revise || body.regenerate) {
@@ -144,11 +145,11 @@
       st.ui.planRequests[kind] = { key: key, id: request.request_id };
     }
     function next() {
-      if (st.row.id !== generation || st.row.paper_id !== paper || JSON.stringify(st.row.asset_chosen) !== chosen) {
+      if (st.row.id !== generation || sourceIdentity(st.row) !== paper || JSON.stringify(st.row.asset_chosen) !== chosen) {
         var obsolete = new Error("The planning inputs changed."); obsolete.obsolete = true; return Promise.reject(obsolete);
       }
       return post(API, request).then(function (out) {
-        if (st.row.id !== generation || st.row.paper_id !== paper || JSON.stringify(st.row.asset_chosen) !== chosen) {
+        if (st.row.id !== generation || sourceIdentity(st.row) !== paper || JSON.stringify(st.row.asset_chosen) !== chosen) {
           var obsolete = new Error("The planning inputs changed."); obsolete.obsolete = true; throw obsolete;
         }
         if (out.status === "complete") {
@@ -213,6 +214,7 @@
     st.ui.yearText = st.ui.yearOther ? r.year : "";
     var d = DEPTHS.map(function (x) { return x.key; }).indexOf(r.depth);
     if (d >= 0) { st.ui.depthPos = (d + 1) / 4; st.ui.depthTouched = true; }
+    st.ui.article = r.source_article || null;
     st.ui.plink = r.project_url || ""; st.ui.prepo = r.repo_url || "";
     if (r.paper_id) st.ui.pfile = { name: r.paper_title || "Your paper", meta: "PDF", id: r.paper_id, token: st.ui.pfile && st.ui.pfile.token };
     if (typeof r.paper_familiarity === "number") st.ui.pfam = (r.paper_familiarity + 1) / 5;
@@ -231,7 +233,7 @@
   function forgetUi() {
     st.ui.fam = {}; st.ui.fAnswers = {}; st.ui.fIdx = 0; st.ui.qIdx = 0;
     st.ui.goalPick = ""; st.ui.goalOther = ""; st.ui.goalOtherOn = false; st.ui.todos = []; st.ui.newTodo = ""; st.ui.projName = "";
-    st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.dataset = null; st.ui.draft = "";
+    st.ui.asks = []; st.ui.made = null; st.ui.pfile = null; st.ui.article = null; st.ui.articleOpen = false; st.ui.articleUrl = ""; st.ui.dataset = null; st.ui.draft = "";
     st.ui.bs = { answers: {}, pick: "", note: "", text: "", thinking: false };
     st.ui.as = { open: {}, picked: "", threads: {}, drafts: {}, chatOpen: {}, thinking: {} };
     st.ui.change = { open: false, text: "", thinking: false, log: [] };
@@ -834,42 +836,63 @@
     for (var entry of entries) await walk(entry, "");
     return files;
   }
-  function selectLocalDataset(entries) {
+  async function uploadDataset(entries) {
     var state = datasetState();
     if (state.busy || !entries.length) return;
     var root = entries[0].path.split("/")[0];
     var folder = entries.every(function(e) {return e.path.indexOf(root + "/") === 0;});
-    return datasetChange({op:"local_picker", name:folder ? root : entries[0].file.name,
-      files:entries.map(function(e) {return {path:folder ? e.path.slice(root.length + 1) : e.path, size:e.file.size};})});
+    state.busy = true; state.error = ""; state.text = "Starting upload…"; draw();
+    try {
+      var begun = await api({action:"dataset", op:"begin", name:folder ? root : entries[0].file.name,
+        files:entries.map(function(e) {return {path:folder ? e.path.slice(root.length + 1) : e.path, size:e.file.size};})});
+      rememberDataset(begun);
+      var pending = st.row.dataset_upload;
+      for (var i = 0; i < entries.length; i++) {
+        state.text = "Uploading " + (i + 1) + " of " + entries.length; draw();
+        var signed = await api({action:"dataset",op:"sign",id:pending.id,index:i});
+        var headers = {"Content-Type":"application/octet-stream", "x-upsert":"false"};
+        if (signed.anonKey) {headers.apikey = signed.anonKey; headers.Authorization = "Bearer " + signed.anonKey;}
+        var sent = await fetch(signed.uploadUrl, {method:"PUT", headers:headers, body:entries[i].file});
+        if (!sent.ok) throw new Error("Upload failed for " + entries[i].path + ". Choose the files again to retry.");
+        rememberDataset(await api({action:"dataset",op:"confirm",id:pending.id,index:i}));
+      }
+      rememberDataset(await api({action:"dataset",op:"finish",id:pending.id}));
+    } catch (error) {state.error = error.message;}
+    state.busy = false; state.text = ""; draw();
   }
+
   function datasetUploadView() {
     var state = datasetState(), resource = st.row.dataset_resource;
     var section = el("section", "ob-dataset"); attr(section, "aria-label", "Project dataset");
     var picker = el("input", "ob-hide"); picker.type = "file"; picker.multiple = true;
-    attr(picker, "webkitdirectory", ""); attr(picker, "aria-label", "Choose project dataset folder"); picker.disabled = state.busy;
-    on(picker, "change", function () {selectLocalDataset(selectedDatasetFiles(picker.files)); picker.value = "";});
+    attr(picker, "aria-label", "Upload dataset files"); picker.disabled = state.busy;
+    on(picker, "change", function () {uploadDataset(selectedDatasetFiles(picker.files)); picker.value = "";});
     var choose = el("button", "ob-drop ob-dataset-pick ob-dataset-drop"); choose.type = "button"; choose.disabled = state.busy;
-    attr(choose, "aria-label", "Choose dataset folder");
+    attr(choose, "aria-label", "Upload Dataset");
     choose.appendChild(el("span", "ob-drop-icon", "+"));
     var text = el("span", "ob-drop-text");
-    text.appendChild(el("span", "ob-drop-title", "Add your dataset (optional)"));
-    text.appendChild(el("span", "ob-drop-sub", "Drop a file or folder, or click to choose a folder"));
+    text.appendChild(el("span", "ob-drop-title", "Upload Dataset"));
     choose.appendChild(text);
     // Open synchronously from the gesture, just like the Paper file input.
     on(choose, "click", function () {picker.click();});
     on(choose, "dragover", function(e) {e.preventDefault();});
     function dropDataset(e) {
       e.preventDefault(); if (state.busy) return;
-      droppedDatasetFiles(e.dataTransfer).then(selectLocalDataset).catch(function(error) {state.error=error.message;draw();});
+      droppedDatasetFiles(e.dataTransfer).then(uploadDataset).catch(function(error) {state.error=error.message;draw();});
     }
     on(choose, "drop", dropDataset);
     section.appendChild(picker);
+    var folderPicker = el("input", "ob-hide"); folderPicker.type = "file"; folderPicker.multiple = true;
+    attr(folderPicker, "webkitdirectory", ""); attr(folderPicker, "aria-label", "Upload dataset folder");
+    on(folderPicker, "change", function () {uploadDataset(selectedDatasetFiles(folderPicker.files)); folderPicker.value = "";});
+    section.appendChild(folderPicker);
+
     if (resource && (resource.name !== "Local dataset" || resource.manifest)) {
       var saved = el("div", "ob-file ob-dataset-saved ob-dataset-drop"); saved.appendChild(fileIcon());
       var detail = el("div", "ob-file-text");
       detail.appendChild(el("div", "ob-file-name", resource.name || "Dataset"));
       var count = resource.manifest && resource.manifest.fileCount;
-      detail.appendChild(el("div", "ob-file-meta", "Dataset" + (count ? " · " + count + (count === 1 ? " file" : " files") : "") + " · Selection saved"));
+      detail.appendChild(el("div", "ob-file-meta", "Dataset" + (count ? " · " + count + (count === 1 ? " file" : " files") : "") + " · " + (resource.source && resource.source.provider === "supabase" ? "Uploaded" : "Selection saved")));
       saved.appendChild(detail);
       var replace = el("button", "ob-link", "Replace"); replace.type = "button"; replace.disabled = state.busy;
       attr(replace, "aria-label", "Replace dataset");
@@ -877,29 +900,75 @@
       on(saved, "dragover", function(e) {e.preventDefault();}); on(saved, "drop", dropDataset);
       section.appendChild(saved);
     } else section.appendChild(choose);
-    if (state.busy || state.error) {
-      var message = el("div", "ob-hint", state.error || "Saving dataset selection…");
+    var folderButton = el("button", "ob-link ob-folder-pick", "Choose folder"); folderButton.type = "button"; folderButton.disabled = state.busy;
+    on(folderButton, "click", function () {folderPicker.click();}); section.appendChild(folderButton);
+    if (resource || st.row.dataset_upload) {
+      var remove = el("button", "ob-link", "Remove"); remove.type = "button"; remove.disabled = state.busy;
+      attr(remove, "aria-label", "Remove dataset");
+      on(remove, "click", function () {datasetChange({op:"remove"});}); section.appendChild(remove);
+    }
+    if (state.busy || state.error || st.row.dataset_upload) {
+      var message = el("div", "ob-hint", state.error || state.text || "Choose the files again to finish the upload.");
       attr(message, "role", state.error ? "alert" : "status"); section.appendChild(message);
     }
     return section;
   }
 
+  function articleUploadView() {
+    var section = el("section", "ob-article"); attr(section, "aria-label", "Project article");
+    var article = st.ui.article;
+    if (article) {
+      var saved = el("div", "ob-file"); saved.appendChild(fileIcon());
+      saved.appendChild(el("div", "ob-file-name", article.name || article.url || "Article"));
+      var remove = el("button", "ob-link", "Remove"); remove.type = "button";
+      on(remove, "click", function () {st.ui.article = null; draw();}); saved.appendChild(remove); section.appendChild(saved);
+    } else {
+      var choose = el("button", "ob-drop"); choose.type = "button"; attr(choose, "aria-label", "Upload Article");
+      choose.appendChild(el("span", "ob-drop-icon", "+")); choose.appendChild(el("span", "ob-drop-title", "Upload Article"));
+      on(choose, "click", function () {st.ui.articleOpen = !st.ui.articleOpen; draw();}); section.appendChild(choose);
+    }
+    return section;
+  }
+
+  function articleEditor() {
+    var panel = el("div", "ob-article-editor");
+    var file = el("input"); file.type = "file"; file.accept = ".txt,.md,.markdown,.html,.htm,text/plain,text/markdown,text/html";
+    attr(file, "aria-label", "Upload article file");
+    on(file, "change", async function () {
+      var chosen = file.files[0]; if (!chosen) return;
+      if (chosen.size > 200000) {st.error = "Choose an article smaller than 200 KB."; draw(); return;}
+      try {st.ui.article = {name:chosen.name, text:await chosen.text()}; st.ui.articleOpen = false; draw();}
+      catch (e) {fail(e);}
+    }); panel.appendChild(file);
+    var url = el("input"); url.type = "url"; url.placeholder = "https://…"; url.value = st.ui.articleUrl;
+    attr(url, "aria-label", "Article URL"); on(url, "input", function () {st.ui.articleUrl = url.value;}); panel.appendChild(url);
+    var add = el("button", "ob-ghost", "Use article link"); add.type = "button";
+    on(add, "click", function () {
+      if (!/^https?:\/\//i.test(st.ui.articleUrl.trim())) {st.error = "Enter the article’s full link."; draw(); return;}
+      st.ui.article = {url:st.ui.articleUrl.trim()}; st.ui.articleOpen = false; st.error = ""; draw();
+    }); panel.appendChild(add); return panel;
+  }
+
+  function hasSources(row) {return !!(row.paper_id || row.source_article || row.dataset_resource);}
+  function sourceIdentity(row) {return JSON.stringify([row.paper_id || null, row.source_article || null, row.dataset_resource || null]);}
+
   function drawPaper(content) {
-    var box = stepBox(content, count(4), "Which paper are you building on?");
-    var card = el("div", "ob-card"), stack = el("div", "ob-stack"), p = st.ui.pfile;
+    var box = stepBox(content, count(4), "What are you building on?");
+    var card = el("div", "ob-card ob-sources-card"), stack = el("div", "ob-stack"), choices = el("div", "ob-source-options"), p = st.ui.pfile;
     if (!p) {
       var drop = attr(el("label", "ob-drop"), "data-over", st.ui.pover ? "1" : "0");
+      attr(drop, "role", "button"); attr(drop, "aria-label", "Upload PDF"); drop.tabIndex = 0;
       drop.appendChild(el("div", "ob-drop-icon", "+"));
       var t = el("div", "ob-drop-text");
-      t.appendChild(el("div", "ob-drop-title", "Add the PhD student's paper"));
-      t.appendChild(el("div", "ob-drop-sub", "Drop a PDF or click to choose"));
+      t.appendChild(el("div", "ob-drop-title", "Upload PDF"));
       drop.appendChild(t);
-      var input = el("input", "ob-hide"); input.type = "file"; input.accept = "application/pdf";
+      var input = el("input", "ob-hide"); input.type = "file"; input.accept = "application/pdf"; attr(input, "aria-label", "Upload PDF");
       on(input, "change", function () { upload(input.files[0]); }); drop.appendChild(input);
+      on(drop, "keydown", function (e) {if (e.key === "Enter" || e.key === " ") {e.preventDefault();input.click();}});
       on(drop, "dragover", function (e) { e.preventDefault(); if (!st.ui.pover) { st.ui.pover = true; drop.setAttribute("data-over", "1"); } });
       on(drop, "dragleave", function () { st.ui.pover = false; drop.setAttribute("data-over", "0"); });
       on(drop, "drop", function (e) { e.preventDefault(); st.ui.pover = false; upload(e.dataTransfer.files[0]); });
-      stack.appendChild(drop);
+      choices.appendChild(drop);
     } else {
       var row = el("div", "ob-file"); row.appendChild(fileIcon());
       var txt = el("div", "ob-file-text");
@@ -908,9 +977,10 @@
       row.appendChild(txt);
       var replace = el("button", "ob-link", "Replace"); replace.type = "button";
       row.appendChild(on(replace, "click", function () { st.ui.pfile = null; draw(); }));
-      stack.appendChild(row);
+      choices.appendChild(row);
     }
-    stack.appendChild(datasetUploadView());
+    choices.appendChild(datasetUploadView()); choices.appendChild(articleUploadView()); stack.appendChild(choices);
+    if (st.ui.articleOpen) stack.appendChild(articleEditor());
     [{ key: "plink", label: "Project page" }, { key: "prepo", label: "GitHub" }].forEach(function (r) {
       var wrap = el("div", "ob-urlrow"), open_ = st.ui.popen === r.key, val = st.ui[r.key];
       var btn = attr(el("button", "ob-urlbtn"), "data-open", open_ ? "1" : "0"); btn.type = "button";
@@ -930,17 +1000,17 @@
     card.appendChild(slider({ stops: FAMILIARITY, pos: st.ui.pfam, ends: ["Beginner", "Expert"],
       onCommit: function (v) { st.ui.pfam = v; } }));
     var acts = el("div", "ob-actions");
-    var ready = !!(p && p.id && !p.uploading) && !st.ui.psending;
+    var ready = !!((p && p.id) || st.ui.article || st.row.dataset_resource) && !(p && p.uploading) && !st.ui.psending && !datasetState().busy && !st.row.dataset_upload;
     acts.appendChild(cta(st.ui.psending ? "Sending" : "Continue", !ready, function () {
       // Accepting the paper is awaited -- it is quick, and a refusal has to
       // keep the reader here, on the step that can fix it. Reading the paper
       // is not: that is a minute of model, and they walk on through it.
-      var sources = { action: "sources", paper_id: p.id, paper_token: p.token,
+      var sources = { action: "sources", paper_id: p && p.id, paper_token: p && p.token, article: st.ui.article,
         project_url: st.ui.plink.trim(), repo_url: st.ui.prepo.trim(), paper_familiarity: snap(st.ui.pfam, 5) };
       st.ui.psending = true; st.error = ""; draw();
       api(sources).then(function (out) {
         st.ui.psending = false;
-        if (st.row.paper_id !== sources.paper_id) {
+        if (st.row.paper_id !== sources.paper_id || JSON.stringify(st.row.source_article) !== JSON.stringify(sources.article)) {
           st.row.analysis = null;
           if (st.row.planning) delete st.row.planning.paper_grounding;
           st.turns = []; st.cals = []; st.ui.fIdx = 0; st.ui.fAnswers = {}; st.ui.fam = {};
@@ -949,6 +1019,7 @@
         if (out && out.onboarding) st.row = out.onboarding;
         else {
           st.row.paper_id = sources.paper_id;
+          st.row.source_article = sources.article;
           st.row.project_url = sources.project_url;
           st.row.repo_url = sources.repo_url;
           st.row.paper_familiarity = sources.paper_familiarity;
@@ -1054,12 +1125,12 @@
 
   function drawTopics(content) {
     var r = st.row;
-    if (r.analysis_status === "none" && r.paper_id) {
+    if (r.analysis_status === "none" && hasSources(r)) {
       // The tab closed between the paper step's sources and its run.
       startReading({ run: true });
     }
     if (r.analysis_status === "error") {
-      var box = stepBox(content, count(8), "The paper could not be read");
+      var box = stepBox(content, count(8), "The sources could not be read");
       box.appendChild(el("div", "ob-sub", r.analysis_error || "Something went wrong while reading it."));
       var acts = el("div", "ob-actions");
       acts.appendChild(cta("Try again", false, function () { startReading({ retry: true }); draw(); }));
@@ -1067,7 +1138,7 @@
     }
     if (r.analysis_status !== "done" || !r.analysis) {
       var w = el("div", "ob-wait"); w.appendChild(dots());
-      w.appendChild(el("div", "ob-wait-t", "Still reading your paper"));
+      w.appendChild(el("div", "ob-wait-t", "Reading your sources"));
       content.appendChild(w); pollAnalysis(); return;
     }
     var a = r.analysis, areas = a.areas, fi = Math.min(st.ui.fIdx || 0, areas.length - 1), area = areas[fi];
@@ -1225,7 +1296,7 @@
   function warmBrainstorm(retry) {
     var r = st.row;
     if (!r || r.analysis_status !== "done" || r.status !== "open" || st.turns.length) return;
-    var key = r.id + ":" + r.paper_id;
+    var key = r.id + ":" + sourceIdentity(r);
     if (opening.key !== key) {
       clearTimeout(opening.timer);
       opening = { key: key, pending: false, error: "", timer: null };
@@ -1233,7 +1304,7 @@
     if (opening.pending || opening.timer || opening.error && !retry) return;
     opening.pending = true; opening.error = ""; st.ui.bs.thinking = true;
     api("brainstorm", { prewarm: true, retry: retry === true }).then(function (out) {
-      if (!st.row || st.row.id + ":" + st.row.paper_id !== key) return;
+      if (!st.row || st.row.id + ":" + sourceIdentity(st.row) !== key) return;
       opening.pending = false;
       if (out.initial_status === "running") {
         opening.timer = setTimeout(function () { opening.timer = null; warmBrainstorm(); }, 3000);
@@ -1247,7 +1318,7 @@
       } else if (!out.turn_id) opening.error = "The paper changed. Reload to continue.";
       if (st.step === 7) draw();
     }).catch(function (e) {
-      if (!st.row || st.row.id + ":" + st.row.paper_id !== key) return;
+      if (!st.row || st.row.id + ":" + sourceIdentity(st.row) !== key) return;
       opening.pending = false; opening.error = e.message; st.ui.bs.thinking = false; if (st.step === 7) draw();
     });
   }
@@ -1450,7 +1521,7 @@
     });
     m.fits = m.previews.map(function (entry) { return entry.fit; });
     var p = T.progress(m.t);
-    m.previewCaption.textContent = T.roundName(m.t, cur) + " · pick " + (p.made + 1) + " of " + p.total + ". Your top four are kept with your account.";
+    m.previewCaption.textContent = "";
     m.previewProgress.style.width = (p.total ? Math.round(100 * p.made / p.total) : 0) + "%";
     fitMocks();
   }
@@ -1484,8 +1555,7 @@
 
   function drawMockPlacing(box, content) {
     var m = st.ui.mock;
-    box.appendChild(el("div", "ob-title", "Your top four"));
-    box.appendChild(el("div", "ob-sub", "Kept with your account. Rank again to change your choices; your current ranking stays saved until you finish."));
+    box.appendChild(el("div", "ob-title", "Your preferred interfaces"));
     var list = el("ol", "ob-mk-places");
     m.placed.forEach(function (t, i) {
       var row = el("li", "ob-mk-place");
@@ -1496,7 +1566,7 @@
     box.appendChild(list);
     var acts = el("div", "ob-actions");
     if (m.list.length > 1) {
-      var again = el("button", "ob-ghost", "Rank again"); again.type = "button";
+      var again = el("button", "ob-ghost", "Choose again"); again.type = "button";
       acts.appendChild(on(again, "click", function () {
         m.placed = null; m.error = ""; m.saveError = ""; m.leaving = false;
         m.t = window.EngelbartTournament.create(window.EngelbartTournament.shuffle(m.list.map(function (item) { return item.id; })));
@@ -1514,11 +1584,12 @@
     if (!m.loaded && !m.busy) loadMockups();
     var box = el("div", "ob-step ob-mk-step");
     var head = el("div", "ob-head");
-    head.appendChild(el("span", "ob-count", count(6, "Mock-ups")));
-    head.appendChild(el("span", "ob-count ob-mk-reading", st.row.analysis_status === "done" ? "" : "reading your paper"));
+    head.appendChild(el("span", "ob-count", count(6, "Interface")));
+    var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
+    on(skip, "click", leaveMockups); head.appendChild(skip);
     box.appendChild(head);
     if (!m.loaded || (m.busy && !m.placed)) {
-      box.appendChild(el("div", "ob-title", m.busy && m.t && T.done(m.t) ? "Saving your top four" : "Two mock-ups at a time"));
+      box.appendChild(el("div", "ob-title", m.busy && m.t && T.done(m.t) ? "Saving your preferences" : "Choose an interface"));
       var w = el("div", "ob-mk-wait"); w.appendChild(dots()); box.appendChild(w);
       content.appendChild(box); return;
     }
@@ -1527,7 +1598,7 @@
     if (!cur) {
       // Every pick is made but the placing was refused: the step offers it
       // again, and a way past it, rather than an empty box.
-      box.appendChild(el("div", "ob-title", "Your top four could not be saved"));
+      box.appendChild(el("div", "ob-title", "Your preferred interfaces could not be saved"));
       box.appendChild(el("div", "ob-err", m.saveError || "The placing was not written."));
       var again = attr(el("div", "ob-actions"), "data-between", "1");
       var past = el("button", "ob-ghost", "Continue anyway"); past.type = "button";
@@ -1545,25 +1616,23 @@
     // draw() fits the panes synchronously once attached, before the next paint.
     if (m.saveError) box.appendChild(el("div", "ob-err", m.saveError));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
-    var skip = el("button", "ob-ghost", "Skip"); skip.type = "button";
-    acts.appendChild(on(skip, "click", leaveMockups));
-    acts.appendChild(el("span", "ob-mk-keys", "\u2190 left \u00b7 \u2192 right"));
+
     box.appendChild(acts);
     content.appendChild(box);
   }
 
   function drawBrainstorm(content) {
     var r = st.row, bs = st.ui.bs;
-    if (r.analysis_status === "none" && r.paper_id) startReading({ run: true });
+    if (r.analysis_status === "none" && hasSources(r)) startReading({ run: true });
     if (r.analysis_status === "error") {
-      var failed = stepBox(content, count(7), "The paper could not be read");
+      var failed = stepBox(content, count(7), "The sources could not be read");
       failed.appendChild(el("div", "ob-sub", r.analysis_error || "Try reading the paper again."));
       failed.appendChild(cta("Try again", false, function () { startReading({ retry: true }); draw(); }));
       return;
     }
     if (r.analysis_status !== "done") {
       var w = el("div", "ob-wait"); w.appendChild(dots());
-      w.appendChild(el("div", "ob-wait-t", "Still reading your paper"));
+      w.appendChild(el("div", "ob-wait-t", "Reading your sources"));
       content.appendChild(w); if (r.analysis_status !== "done") pollAnalysis(); return;
     }
     if (!st.turns.length) {
@@ -1989,7 +2058,7 @@
     if (n < 2 || n >= 4) box.appendChild(el("div", "ob-hint", n < 2 ? "At least two todos." : "Four is the cap — keep the first piece small."));
     function clean() { return todos.map(function (t) { return str(t).trim(); }).filter(Boolean); }
     function off() { var c = clean(); return c.length < 2 || c.length > 4 || !str(st.ui.projName).trim() || !!r.dataset_upload || datasetState().busy; }
-    if (r.dataset_upload || datasetState().busy) box.appendChild(el("div", "ob-hint", "Finish or remove the dataset upload on Paper before creating this project."));
+    if (r.dataset_upload || datasetState().busy) box.appendChild(el("div", "ob-hint", "Finish or remove the dataset upload in Sources before creating this project."));
     var name = el("div", "ob-namerow");
     var input = el("input"); input.value = st.ui.projName || ""; input.placeholder = "project name…"; input.spellcheck = false;
     on(input, "input", function () { st.ui.projName = input.value; create.disabled = off(); }); name.appendChild(input);

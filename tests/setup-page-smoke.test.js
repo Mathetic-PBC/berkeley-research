@@ -228,7 +228,7 @@ function mount(options = {}) {
 
 test("every step draws from the record, and none of them throws", async () => {
   const titles = ["What is your name?", "What year are you?", "What is your major?",
-    "How technical should explanations be?", "Which paper are you building on?", "Which computer are you on?",
+    "How technical should explanations be?", "What are you building on?", "Which computer are you on?",
     "Which of these two is better?", "What do you want to build?", "How familiar are you with the paper's concepts?",
     "Select which resource to start with", "Pose to angles", "Pose to angles", "One pose drawn"];
   for (let step = 0; step < titles.length; step += 1) {
@@ -267,7 +267,7 @@ test("the walk from Name to Install writes every step as it goes, and fires the 
   page.cta().fire("click");
   await settle();
 
-  assert.equal(page.title(), "Which paper are you building on?");
+  assert.equal(page.title(), "What are you building on?");
   const chooser = one(page.app, "ob-hide");
   chooser.files = [{ name: "paper.pdf", type: "application/pdf", size: 1024 * 1024 }];
   chooser.fire("change");
@@ -346,7 +346,7 @@ test("an accepted paper starts the reading and moves on without waiting for it",
     replies: { analysis: () => held.then(() => ({ ok: true, status: 200, json: () => Promise.resolve({ analysis_status: "done", analysis: ANALYSIS }) })) },
   });
   await settle();
-  assert.equal(page.title(), "Which paper are you building on?");
+  assert.equal(page.title(), "What are you building on?");
   page.cta().fire("click");
   await settle();
 
@@ -372,7 +372,7 @@ test("a refused paper keeps the reader on the paper step, with the reason", asyn
   await settle();
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "Which paper are you building on?");
+  assert.equal(page.title(), "What are you building on?");
   assert.equal(page.error(), "That paper is not yours to analyse");
   assert.deepEqual(page.actions, ["open", "sources"], "nothing was read and no step was written");
   assert.equal(page.cta().disabled, false, "and they can try again");
@@ -739,7 +739,7 @@ test("only a change of step replays the entry animation; a pick or a slider rele
   assert.equal(textOf(one(page.app, "ob-slider-name")), "Some detail");
   page.cta().fire("click");
   await settle();
-  assert.equal(page.title(), "Which paper are you building on?");
+  assert.equal(page.title(), "What are you building on?");
   assert.equal(page.app.attrs["data-still"], "0", "the next step animates in");
   const year = mount({ row: fullRow({ step: 1, year: "" }) });
   await settle();
@@ -752,10 +752,10 @@ test("only a change of step replays the entry animation; a pick or a slider rele
 test("a second setup starts at the paper and counts nine steps from there", async () => {
   const page = mount({ profileReused: true, row: fullRow({ step: 4, paper_id: null, analysis: null, analysis_status: "none" }) });
   await settle();
-  assert.equal(page.title(), "Which paper are you building on?");
+  assert.equal(page.title(), "What are you building on?");
   assert.equal(textOf(one(page.app, "ob-count")), "Step 1 of 9");
   assert.deepEqual(byClass(page.app, "ob-label").map(textOf),
-    ["Paper", "Install", "Mock-ups", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"]);
+    ["Sources", "Install", "Interface", "Brainstorm", "Topics", "Assets", "Direction", "Subgoals", "Todos"]);
   assert.equal(textOf(one(page.app, "ob-caption")), "Setting up another project");
   assert.equal(textOf(one(page.app, "ob-profile-line")), "Ada · First year · Physics · Some detail");
   // The way back to the four answers, for the member whose situation changed.
@@ -1031,7 +1031,7 @@ test("Mock-ups is the sixth step in the rail, and each pick is between two of th
   await settle();
 
   assert.equal(page.title(), "Which of these two is better?", "the comparison is the step Install leads into");
-  assert.match(textOf(page.app), /Semifinal · pick 1 of 4/, "four entrants: two semifinals, third place, final");
+  assert.doesNotMatch(textOf(page.app), /Semifinal|pick 1 of 4|tournament/i, "comparison mechanics stay out of the interface");
   assert.equal(picks(page).length, 2, "two mock-ups, one pick each");
 
   // Each frame is the endpoint's own page, sandboxed onto an opaque origin.
@@ -1048,9 +1048,9 @@ test("Mock-ups is the sixth step in the rail, and each pick is between two of th
 
   // Sixth in the rail, numbered, between Install and Brainstorm.
   const labels = byClass(page.app, "ob-label").map(textOf);
-  assert.deepEqual(labels.slice(5, 8), ["Install", "Mock-ups", "Brainstorm"], "it has a place of its own in the rail");
+  assert.deepEqual(labels.slice(5, 8), ["Install", "Interface", "Brainstorm"], "it has a place of its own in the rail");
   assert.equal(textOf(byClass(page.app, "ob-circle")[6]), "7", "and a number, counting the profile in");
-  assert.match(textOf(page.app), /Step 7 of 13 · Mock-ups/, "the step says which one it is");
+  assert.match(textOf(page.app), /Step 7 of 13 · Interface/, "the step says which one it is");
 });
 
 test("picking through the bracket saves the placing the member chose, then goes on to the brainstorm", async () => {
@@ -1074,7 +1074,7 @@ test("picking through the bracket saves the placing the member chose, then goes 
   for (const t of saved.top) assert.ok(MOCKUPS.some((m) => m.id === t.id), "a placed mock-up is one of the bucket's");
   for (const p of saved.picks) assert.ok(p.winner === p.a || p.winner === p.b, "a pick's winner is one of its two");
 
-  assert.equal(page.title(), "Your top four", "the placing is shown before moving on");
+  assert.equal(page.title(), "Your preferred interfaces", "the placing is shown before moving on");
   const named = saved.top.map((t) => MOCKUPS.find((m) => m.id === t.id).name);
   assert.deepEqual(byClass(page.app, "ob-mk-place-name").map(textOf), named, "the placing is shown in the order it was decided");
   assert.equal(byClass(page.app, "ob-mk-rank").map(textOf).join(""), "1234");
@@ -1118,7 +1118,7 @@ test("a placing already made is shown back, not asked for again", async () => {
   const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS, mockupSaved: saved });
   await settle();
 
-  assert.equal(page.title(), "Your top four", "the step shows what they chose last time");
+  assert.equal(page.title(), "Your preferred interfaces", "the step shows what they chose last time");
   assert.deepEqual(byClass(page.app, "ob-mk-place-name").map(textOf), MOCKUPS.map((m) => m.name));
   assert.equal(frames(page).length, 0, "and asks for no more picks");
 
@@ -1132,7 +1132,7 @@ test("the step fills the wait while the paper is still being read", async () => 
   const page = mount({ row: fullRow({ step: 6, analysis_status: "running" }), turns: [], mockups: MOCKUPS });
   await settle();
   assert.equal(page.title(), "Which of these two is better?", "it does not wait on the paper");
-  assert.match(textOf(page.app), /reading your paper/, "and it says the paper is still being read");
+  assert.match(textOf(page.app), /Reading your paper/, "and it says the paper is still being read");
 });
 
 test("the arrow keys pick the mock-up on that side, and are left alone once the comparison is done", async () => {
@@ -1163,7 +1163,7 @@ test("a placing the server refused is offered again, and can be left behind", as
   for (let i = 0; i < 4; i += 1) { picks(page)[0].fire("click"); await settle(); }
 
   assert.equal(page.mockSaves.length, 1, "the placing was attempted");
-  assert.equal(page.title(), "Your top four could not be saved", "not a blank step");
+  assert.equal(page.title(), "Your preferred interfaces could not be saved", "not a blank step");
   assert.equal(page.error(), "the placing could not be saved", "in the server's own words");
 
   page.cta().fire("click");                    // Try again
@@ -1195,7 +1195,7 @@ test("preview lookahead stays bounded through a sixteen-design bracket", async (
     assert.ok(rounds <= 16);
   }
   assert.equal(rounds, 16);
-  assert.equal(page.title(), "Your top four");
+  assert.equal(page.title(), "Your preferred interfaces");
 });
 
 
@@ -1203,14 +1203,14 @@ test("a saved ranking can be redone without overwriting it until the new bracket
   const saved = { top: MOCKUPS.map((m, i) => ({ rank: i + 1, id: m.id, name: m.name })) };
   const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS, mockupSaved: saved });
   await settle();
-  const again = byClass(page.app, "ob-ghost").find(n => textOf(n) === "Rank again");
+  const again = byClass(page.app, "ob-ghost").find(n => textOf(n) === "Choose again");
   assert.ok(again); again.fire("click"); await settle();
   assert.equal(page.title(), "Which of these two is better?");
-  assert.match(textOf(page.app), /pick 1 of 4/);
+  assert.doesNotMatch(textOf(page.app), /pick 1 of 4/);
   assert.equal(page.mockSaves.length, 0);
   for (let i = 0; i < 4; i++) { picks(page)[1].fire("click"); await settle(); }
   assert.equal(page.mockSaves.length, 1);
   assert.equal(page.mockSaves[0].picks.length, 4);
-  assert.equal(page.title(), "Your top four");
-  assert.ok(byClass(page.app, "ob-ghost").some(n => textOf(n) === "Rank again"));
+  assert.equal(page.title(), "Your preferred interfaces");
+  assert.ok(byClass(page.app, "ob-ghost").some(n => textOf(n) === "Choose again"));
 });

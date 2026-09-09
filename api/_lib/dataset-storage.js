@@ -31,4 +31,21 @@ async function views(paths, options={}) {
   }
   return urls;
 }
-module.exports={BUCKET,upload,size,views};
+async function sample(path, options={}) {
+  const config=supabaseConfig(options.env), limit=16384;
+  const response=await (options.fetchImpl || fetch)(`${base(options)}/object/${BUCKET}/${path}`, {
+    headers:{apikey:config.serviceRoleKey,Authorization:`Bearer ${config.serviceRoleKey}`,Range:`bytes=0-${limit-1}`},
+    signal:Budget.signal(options,15000)});
+  if (!response.ok) throw Error('The uploaded dataset could not be read');
+  const reader=response.body?.getReader();
+  if (!reader) throw Error('Dataset sampling requires a streaming response');
+  const chunks=[];let used=0;
+  try {
+    while (used<limit) {
+      const {done,value}=await reader.read();if(done)break;
+      const chunk=Buffer.from(value).subarray(0,limit-used);chunks.push(chunk);used+=chunk.length;
+    }
+  } finally {await reader.cancel();}
+  return Buffer.concat(chunks).toString('utf8').replace(/\0/g,'');
+}
+module.exports={BUCKET,upload,size,views,sample};

@@ -6,6 +6,7 @@
 // bounded in onboarding-model. The row is the truth the page mirrors.
 
 const crypto = require("node:crypto");
+const Sources = require("./onboarding-sources");
 const Budget = require("./request-budget");
 const OM = require("./onboarding-model");
 const P = require("./onboarding-prompts");
@@ -88,8 +89,11 @@ function wroteOne(rows) {
 // The write's lineage is the columns it sets: each column written with a
 // value is a write of the value that column holds (a cleared column is not).
 async function patch(row, values, options) {
-  const rows = await patchRows(TABLE, `${eq("id", row.id)}`, { ...values, updated_at: new Date().toISOString() },
+  const revision = options?.sourceRevision;
+  const query = `${eq("id", row.id)}` + (revision == null ? "" : `&${eq("source_revision", revision)}`);
+  const rows = await patchRows(TABLE, query, { ...values, updated_at: new Date().toISOString() },
     traced(options, null, { writes: Lineage.writesOf(values) }));
+  if (revision != null && !rows?.length) throw Object.assign(fail("The project sources changed", 409), {sourceChanged:true});
   Object.assign(row, wroteOne(rows));
   return row;
 }
@@ -247,11 +251,11 @@ async function pageTexts(row, options) {
 // paper. The row is re-read at the end of the run, and a run whose paper is no
 // longer the row's paper writes nothing at all: neither its answer nor its
 // error belongs to the paper that is there now.
-async function supersededBy(row, paperId, options, name = "check-superseded") {
+async function supersededBy(row, sourceKey, options, name = "check-superseded") {
   try {
-    const rows = await selectRows(TABLE, `${eq("id", row.id)}&select=id,paper_id&limit=1`, traced(options, name, { reads: ["paper"] }));
+    const rows = await selectRows(TABLE, `${eq("id", row.id)}&select=id,paper_id,source_article,dataset_resource&limit=1`, traced(options, name, { reads: ["paper"] }));
     const now = rows && rows[0];
-    return Boolean(now) && String(now.paper_id) !== String(paperId);
+    return Boolean(now) && Sources.key(now) !== sourceKey;
   } catch (error) {
     // A row that cannot be read is not evidence of a newer paper; write as before.
     return false;
@@ -265,14 +269,14 @@ async function supersededBy(row, paperId, options, name = "check-superseded") {
 // boundaries trace themselves, and the semantic database names come from
 // `traced` so the graph reads "analysis.persist" where the code says patch.
 async function runAnalysis(user, row, credentials, options) {
-  options = Budget.start(options);
-  const mine = row.paper_id;
-  await patch(row, { analysis_status: "running", analysis_started_at: new Date().toISOString(), analysis_error: "" },
-    traced(options, "analysis.mark-running"));
+  options = Budget.start({...options, sourceRevision:row.source_revision});
+  const mine = Sources.key(row);
+  try { await patch(row, { analysis_status: "running", analysis_started_at: new Date().toISOString(), analysis_error: "" },
+    traced(options, "analysis.mark-running")); } catch (error) {
+    if (error.sourceChanged) return { analysis_status:outcome("superseded") }; throw error;
+  }
   try {
-    const pdf = await Storage.downloadObject(Storage.paperObjectPath(mine),
-      { ...options, maxBytes: MAX_PDF_BYTES });
-    if (pdf.length > MAX_PDF_BYTES) throw fail("That PDF is larger than 20 MB", 413);
+    const material = await Sources.materials(user, row, options);
     const familiarity = P.FAMILIARITY[Number(row.paper_familiarity) || 0];
     const depth = P.depthOf(row.depth) || P.DEPTHS[0];
     const urls = await telemetry.runOperation({ name: "analysis.context", type: "processing", reads: ["links"],
@@ -285,16 +289,19 @@ async function runAnalysis(user, row, credentials, options) {
     const analysis = await OM.analyze({
       familiarityLabel: familiarity.label, familiarityDesc: familiarity.desc,
       depthLabel: depth.label, depthDesc: depth.desc,
-      pdfBase64: pdf.toString("base64"),
+      ...material,
       urls,
     }, credentials, options);
     if (await supersededBy(row, mine, options, "analysis.check-superseded")) return { analysis_status: outcome("superseded") };
     await patch(row, { analysis, analysis_status: "done", paper_title: analysis.title }, traced(options, "analysis.persist"));
     return { analysis_status: outcome("done"), analysis };
   } catch (error) {
+    if (error.sourceChanged) return { analysis_status:outcome("superseded") };
     if (await supersededBy(row, mine, options, "analysis.check-superseded")) return { analysis_status: outcome("superseded") };
-    await patch(row, { analysis_status: "error", analysis_error: one(Budget.isTimeout(error) ? Budget.expired().message : error.message, 300) || "analysis failed" },
-      traced(options, "analysis.persist-error"));
+    try { await patch(row, { analysis_status: "error", analysis_error: one(Budget.isTimeout(error) ? Budget.expired().message : error.message, 300) || "analysis failed" },
+      traced(options, "analysis.persist-error")); } catch (writeError) {
+      if (writeError.sourceChanged) return { analysis_status:outcome("superseded") }; throw writeError;
+    }
     outcome("error");
     if (error.statusCode === 409) throw error;
     return { analysis_status: "error", analysis_error: row.analysis_error };
@@ -307,14 +314,17 @@ async function runAnalysis(user, row, credentials, options) {
 // minute-long model call from sitting under the reader's Continue.
 async function sources(user, row, body, credentials, options = {}) {
   requireOpen(row);
-  const paperId = Curated.optUuid(body && body.paper_id);
-  if (!paperId) throw fail("Add the paper first", 400);
+  const paperId = Curated.optUuid(body && body.paper_id) || null;
+  if (body.paper_id && !paperId) throw fail("Invalid paper", 400);
+  const sourceArticle = await Sources.article(body.article === undefined ? row.source_article : body.article, options);
+  if (!paperId && !sourceArticle && !row.dataset_resource) throw fail("Add a PDF, dataset, or article first", 400);
+  if (row.dataset_upload) throw fail("Finish or remove the dataset upload first", 409);
   const given = String((body && body.paper_token) || "");
   // A reload loses the token the upload minted, but not the record: the paper
   // already on this row was proven by the member who owns the row, so it stays
   // proven with no token at all. Any other paper still has to show one.
   const proven = Boolean(row.paper_id) && paperId === row.paper_id;
-  if (given || !proven) {
+  if (paperId && (given || !proven)) {
     const expected = ownPaperToken(paperId, user.id, options.env);
     // Byte length, not character length: timingSafeEqual throws on a length
     // mismatch, and a multibyte token of the same character count would reach it.
@@ -326,13 +336,13 @@ async function sources(user, row, body, credentials, options = {}) {
   if (!Number.isInteger(familiarity) || familiarity < 0 || familiarity > 4) throw fail("Say how familiar you are with the paper", 400);
   // `analysis_started_at` goes with the status: a run that was in flight for
   // the old paper must leave no trace that reads as this paper's run.
-  await patch(row, { paper_id: paperId, project_url: optionalUrl(body.project_url), repo_url: optionalUrl(body.repo_url),
+  await patch(row, { paper_id: paperId, source_article: sourceArticle, project_url: optionalUrl(body.project_url), repo_url: optionalUrl(body.repo_url),
     paper_familiarity: familiarity, analysis: null, paper_title: "", analysis_status: "none",
     analysis_error: "", analysis_started_at: null,
     assets: null, assets_brief: null, assets_status: "none", assets_error: "", assets_started_at: null,
     assessment: null, leveled: null, leveled_status: "none", leveled_error: "", leveled_started_at: null,
     asset_chosen: null, direction: null, subgoals: null, todos: null }, options);
-  return { ok: true, analysis_status: "none", assets_status: "none" };
+  return { ok: true, onboarding: publicRow(row), analysis_status: "none", assets_status: "none" };
 }
 
 // --- the asset hunt ------------------------------------------------------------
@@ -410,25 +420,45 @@ async function verifyLinks(assets, options, of = "assets") {
   });
 }
 
+function attachSources(assets, row) {
+  if (row.source_article) {
+    const article = row.source_article;
+    if (!assets.some(a => a.title === article.name)) assets.unshift({title:article.name, type:"other", one_liner:"Your article", description:"Build from the supplied article and its evidence.",
+      availability:"usable", links:article.url ? [{kind:"docs",url:article.url}] : []});
+  }
+  const dataset = row.dataset_resource;
+  if (!dataset) return;
+  const existing = assets.findIndex(a => a.title === dataset.name);
+  if (existing >= 0) assets.splice(existing,1);
+  assets.unshift({title:dataset.name, type:"dataset", one_liner:"Your supplied dataset", description:"Inspect its actual schema before analysis.",
+    availability:"usable", links:[], access:{state:dataset.status === "needs_user" ? "restricted" : "available", reason:dataset.error || "Supplied by you", collection:dataset}});
+}
+
 async function runAssets(user, row, credentials, options) {
-  const mine = row.paper_id;
-  await patch(row, { assets_status: "running", assets_started_at: new Date().toISOString(), assets_error: "" },
-    traced(options, "assets.mark-running"));
+  options = {...options, sourceRevision:row.source_revision};
+  const mine = Sources.key(row);
+  try { await patch(row, { assets_status: "running", assets_started_at: new Date().toISOString(), assets_error: "" },
+    traced(options, "assets.mark-running")); } catch (error) {
+    if (error.sourceChanged) return { assets_status:outcome("superseded") }; throw error;
+  }
   try {
-    const pdf = await Storage.downloadObject(Storage.paperObjectPath(mine), { ...options, maxBytes: MAX_PDF_BYTES });
-    if (pdf.length > MAX_PDF_BYTES) throw fail("That PDF is larger than 20 MB", 413);
-    const found = await OM.assets({ pdfBase64: pdf.toString("base64") }, credentials, options);
+    const material = await Sources.materials(user, row, options);
+    const found = await OM.assets({...material, allowEmptyAssets:!!(row.source_article || row.dataset_resource)}, credentials, options);
     const assets = await verifyLinks(found.assets, options);
     await Resources.probeAssets(assets, options);
+    attachSources(assets, row);
     if (await supersededBy(row, mine, options, "assets.check-superseded")) return { assets_status: outcome("superseded") };
     const value = { assets, searched: found.searched };
     // The brief is cut from the verified list here, so the persist reads the assets it writes the brief from.
     await patch(row, { assets: value, assets_brief: OM.briefOf(assets), assets_status: "done" }, traced(options, "assets.persist", { reads: ["assets"] }));
     return { assets_status: outcome("done"), assets: value, assets_brief: row.assets_brief };
   } catch (error) {
+    if (error.sourceChanged) return { assets_status:outcome("superseded") };
     if (await supersededBy(row, mine, options, "assets.check-superseded")) return { assets_status: outcome("superseded") };
-    await patch(row, { assets_status: "error", assets_error: one(error.message, 300) || "the asset hunt failed" },
-      traced(options, "assets.persist-error"));
+    try { await patch(row, { assets_status: "error", assets_error: one(error.message, 300) || "the asset hunt failed" },
+      traced(options, "assets.persist-error")); } catch (writeError) {
+      if (writeError.sourceChanged) return { assets_status:outcome("superseded") }; throw writeError;
+    }
     outcome("error");
     if (error.statusCode === 409) throw error;
     return { assets_status: "error", assets_error: row.assets_error };
@@ -437,7 +467,7 @@ async function runAssets(user, row, credentials, options) {
 
 async function assetsAction(user, row, body, credentials, options = {}) {
   if (body && (body.run || body.retry)) {
-    if (!row.paper_id) throw fail("Add the paper first", 400);
+    if (!Sources.has(row)) throw fail("Add a PDF, dataset, or article first", 400);
     if (running(row, "assets")) return { assets_status: "running" };
     return runAssets(user, row, credentials, options);
   }
@@ -503,9 +533,12 @@ async function topicsDone(user, row, calibrations, body, options = {}) {
 // Needs the hunt. Topic evidence is optional; profile and familiarity are enough.
 
 async function runLeveled(user, row, calibrations, credentials, options) {
-  const mine = row.paper_id;
-  await patch(row, { leveled_status: "running", leveled_started_at: new Date().toISOString(), leveled_error: "" },
-    traced(options, "leveled.mark-running"));
+  options = {...options, sourceRevision:row.source_revision};
+  const mine = Sources.key(row);
+  try { await patch(row, { leveled_status: "running", leveled_started_at: new Date().toISOString(), leveled_error: "" },
+    traced(options, "leveled.mark-running")); } catch (error) {
+    if (error.sourceChanged) return { leveled_status:outcome("superseded") }; throw error;
+  }
   try {
     const leveled = await OM.levelAssets({ reader: readerOf(row, calibrations), assessment: latestAssessment(row, calibrations),
       assets: row.assets.assets, interest: row.interest || "" }, credentials, options);
@@ -514,13 +547,17 @@ async function runLeveled(user, row, calibrations, credentials, options) {
     Resources.markChecking(leveled.assets);
     await patch(row, { leveled, leveled_status: "done" }, traced(options, "leveled.persist"));
     await Resources.probeAssets(leveled.assets, options);
+    attachSources(leveled.assets, row);
     if (await supersededBy(row, mine, options, "leveled.check-access-superseded")) return { leveled_status: outcome("superseded") };
     await patch(row, { leveled }, traced(options, "leveled.access-persist"));
     return { leveled_status: outcome("done"), leveled };
   } catch (error) {
+    if (error.sourceChanged) return { leveled_status:outcome("superseded") };
     if (await supersededBy(row, mine, options, "leveled.check-superseded")) return { leveled_status: outcome("superseded") };
-    await patch(row, { leveled_status: "error", leveled_error: one(error.message, 300) || "levelling failed" },
-      traced(options, "leveled.persist-error"));
+    try { await patch(row, { leveled_status: "error", leveled_error: one(error.message, 300) || "levelling failed" },
+      traced(options, "leveled.persist-error")); } catch (writeError) {
+      if (writeError.sourceChanged) return { leveled_status:outcome("superseded") }; throw writeError;
+    }
     outcome("error");
     if (error.statusCode === 409) throw error;
     return { leveled_status: "error", leveled_error: row.leveled_error };
@@ -731,7 +768,7 @@ async function chooseAsset(user, row, body, options = {}) {
 async function plan(user, row, calibrations, body, credentials, options = {}) {
   requireOpen(row);
   const kind = body.kind;
-  if (!row.paper_id || !row.analysis) throw fail("Read the paper first", 409);
+  if (!Sources.has(row) || !row.analysis) throw fail("Read the project sources first", 409);
   if (!row.asset_chosen) throw fail("Pick what to build on first", 409);
   if (kind !== "direction" && !row.direction) throw fail("Settle the direction first", 409);
   if (kind === "todos" && !row.subgoals?.length) throw fail("Settle the subgoals first", 409);
@@ -799,7 +836,7 @@ async function analysis(user, row, body, credentials, options = {}) {
   // `retry` is the reader asking again after one failed. Both do the same
   // work. Anything else is the poll: a row read, priced as one.
   if (body && (body.run || body.retry)) {
-    if (!row.paper_id) throw fail("Add the paper first", 400);
+    if (!Sources.has(row)) throw fail("Add a PDF, dataset, or article first", 400);
     if (analysisRunning(row)) return { analysis_status: "running" };
     return runAnalysis(user, row, credentials, options);
   }
@@ -1064,6 +1101,10 @@ function toPayload(row, calibrations) {
     row.asset_chosen ? `Starting from ${row.asset_chosen.title}${row.asset_chosen.links && row.asset_chosen.links[0] ? ` <${row.asset_chosen.links[0].url}>` : ""}.` : "",
     d.paperBasis ? `Paper-grounded path: ${d.paperBasis.reproduce} Then ${d.paperBasis.interrogate} After observing that: ${d.paperBasis.extend} ${d.paperBasis.limitation || ""}` : "",
     row.interest ? `What drew them: ${row.interest}` : ""].filter(Boolean).join("\n\n");
+  if (row.source_article && subgoals.length) {
+    const article = row.source_article;
+    subgoals[0].document = {title:article.name, body_md:[article.url, article.text].filter(Boolean).join("\n\n")};
+  }
   const payload = {
     resources: require("./project-resources").fromOnboarding(row),
     name: row.project_name,
@@ -1105,7 +1146,7 @@ async function create(user, row, calibrations, body, options = {}) {
   // Nothing left to write on a repeat, so nothing left to fail -- and nothing
   // written means nothing claimed: no `profile_saved` verdict on this branch.
   if (row.status === "created") return { ok: true, pending_setup_id: row.pending_setup_id };
-  if (row.dataset_upload) throw fail("Finish or remove the dataset upload on Paper before creating this project", 409);
+  if (row.dataset_upload) throw fail("Finish or remove the dataset upload in Sources before creating this project", 409);
   const values = {};
   if (body && "project_name" in body) values.project_name = one(body.project_name, 80);
   if (body && Array.isArray(body.todos)) values.todos = body.todos.map((t) => one(t, 300)).filter(Boolean).slice(0, 4);

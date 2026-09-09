@@ -26,7 +26,7 @@ test("the page talks to the onboarding endpoint and the paper upload", () => {
 });
 
 test("the rail names the thirteen steps in order", () => {
-  const labels = ["Name", "Year", "Major", "Explanations", "Paper", "Install", "Mock-ups", "Brainstorm", "Topics",
+  const labels = ["Name", "Year", "Major", "Explanations", "Sources", "Install", "Interface", "Brainstorm", "Topics",
     "Assets", "Direction", "Subgoals", "Todos"];
   const found = /var LABELS = \[([^\]]*)\]/.exec(js);
   assert.ok(found, "LABELS array");
