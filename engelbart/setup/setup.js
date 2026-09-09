@@ -452,7 +452,7 @@
 
   function dots() {
     var grid = el("span", "ob-dots");
-    for (var i = 0; i < 9; i++) { var d = el("span", "ob-dot"); d.style.animationDelay = (i * 90) + "ms"; grid.appendChild(d); }
+    for (var i = 0; i < 9; i++) { grid.appendChild(el("span", "ob-dot")); }
     return grid;
   }
 
@@ -579,7 +579,7 @@
     app.textContent = "";
     if (st.screen === "loading") {
       var loading = el("div", "ob-loading"); attr(loading, "role", "status"); attr(loading, "aria-live", "polite");
-      var ring = el("div", "ob-loading-ring"); attr(ring, "aria-hidden", "true"); loading.appendChild(ring);
+      var indicator = dots(); attr(indicator, "aria-hidden", "true"); loading.appendChild(indicator);
       loading.appendChild(el("div", "ob-loading-label", "Loading your setup…"));
       app.appendChild(loading); return;
     }
@@ -876,14 +876,7 @@
       on(replace, "click", function () {picker.click();}); saved.appendChild(replace);
       on(saved, "dragover", function(e) {e.preventDefault();}); on(saved, "drop", dropDataset);
       section.appendChild(saved);
-      if (resource.source && resource.source.provider === "local_picker")
-        section.appendChild(el("div", "ob-hint", "Files stay local. Select this folder again when Engelbart opens."));
     } else section.appendChild(choose);
-    var link = el("div", "ob-dataset-controls"), input = el("input"); input.type = "url"; input.placeholder = "Dataset or repository URL"; input.value = state.url; input.disabled = state.busy;
-    attr(input, "aria-label", "Dataset or repository URL"); on(input, "input", function () {state.url = input.value;});
-    var attach = el("button", "ob-seed", "Attach link"); attach.type = "button"; attach.disabled = state.busy;
-    on(attach, "click", function () {datasetChange({op:"link", url:state.url});});
-    link.appendChild(input); link.appendChild(attach); section.appendChild(link);
     if (state.busy || state.error) {
       var message = el("div", "ob-hint", state.error || "Saving dataset selection…");
       attr(message, "role", state.error ? "alert" : "status"); section.appendChild(message);

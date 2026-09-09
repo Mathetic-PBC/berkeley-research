@@ -583,9 +583,15 @@ input.range:active::-webkit-slider-thumb{transform:scale(1.15)}
 .ob-dataset-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .ob-dataset-controls input[type=url],.ob-dataset-controls input[type=text]{min-width:180px;flex:1;padding:8px 10px;border:1px solid var(--bd);border-radius:var(--radius-md);background:var(--panel);color:var(--ink);font:var(--text-13)}
 
-/* The initial loader fills the viewport, including before JavaScript starts. */
-.ob-loading{width:100%;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;box-sizing:border-box;padding:24px;text-align:center}
-.ob-loading-ring{width:36px;height:36px;border:2px solid var(--bd);border-top-color:var(--acc);border-radius:50%;animation:ob-loading-spin .9s linear infinite}
-.ob-loading-label{font:var(--text-13);color:var(--mut)}
-@keyframes ob-loading-spin{to{transform:rotate(360deg)}}
-@media(prefers-reduced-motion:reduce){.ob-loading-ring{animation:none}}
+/* Initial loading uses the shared dots, centered independently of page layout. */
+.ob-loading{position:fixed;inset:0;z-index:30;display:grid;place-items:center;background:var(--bg);color:var(--ink)}
+.ob-loading-label{position:absolute;top:calc(50% + 26px);left:24px;right:24px;text-align:center;font:var(--text-13);color:var(--mut)}
+.ob-dot:nth-child(2){animation-delay:90ms}
+.ob-dot:nth-child(3){animation-delay:180ms}
+.ob-dot:nth-child(4){animation-delay:270ms}
+.ob-dot:nth-child(5){animation-delay:360ms}
+.ob-dot:nth-child(6){animation-delay:450ms}
+.ob-dot:nth-child(7){animation-delay:540ms}
+.ob-dot:nth-child(8){animation-delay:630ms}
+.ob-dot:nth-child(9){animation-delay:720ms}
+@media(prefers-reduced-motion:reduce){.ob-loading .ob-dot{animation:none;opacity:.5}}

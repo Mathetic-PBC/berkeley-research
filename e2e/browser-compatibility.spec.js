@@ -62,7 +62,7 @@ test("navigation collapses, remembers its width, and expands with the keyboard",
 });
 
 
-test("Paper step accepts dataset files, folders and links and retains the attachment on reload", async ({page}) => {
+test("Paper step accepts dataset folders and retains the selection on reload", async ({page}) => {
   const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'onboarding-dataset-'));
   const folder=path.join(root,'Research dataset');fs.mkdirSync(path.join(folder,'nested'),{recursive:true});
@@ -97,10 +97,6 @@ test("Paper step accepts dataset files, folders and links and retains the attach
     });
     await expect(dataset).toContainText('Dropped data');
     expect(stack.datasetFiles.size).toBe(0);
-    await page.getByLabel('Dataset or repository URL',{exact:true}).fill('https://data.example/metrics.csv');
-    await page.getByRole('button',{name:'Attach link',exact:true}).click();
-    await expect.poll(()=>stack.row.dataset_resource.source.url).toBe('https://data.example/metrics.csv');
-    expect(stack.row.dataset_resource.source.url).toBe('https://data.example/metrics.csv');
   } finally {await stack.stop();fs.rmSync(root,{recursive:true,force:true});}
 });
 
@@ -120,5 +116,24 @@ test('dataset plus opens a folder chooser without saving a selection on click or
   await expect(section).not.toContainText('Enter a path manually instead');
   await expect(section).not.toContainText('Folder selection queued');
   await expect(section).not.toContainText('Remove dataset');
+ } finally {await stack.stop();}
+});
+
+test('setup loader uses the shared dots at the viewport center',async({page})=>{
+ const stack=new SimulationStack();await stack.start();
+ try {
+  await installBrowserSession(page);
+  await page.route('**/api/engelbart-onboarding',route=>route.request().postDataJSON().action==='open'?new Promise(()=>{}):route.continue());
+  await page.goto(stack.url+'/engelbart/setup/?test=true');
+  const loader=page.locator('.ob-loading');await expect(loader).toBeVisible();
+  await expect(loader.locator('.ob-dot')).toHaveCount(9);
+  for(const size of [{width:1280,height:900},{width:390,height:844}]){
+   await page.setViewportSize(size);
+   const box=await loader.locator('.ob-dots').boundingBox();
+   expect(Math.abs(box.x+box.width/2-size.width/2)).toBeLessThan(2);
+   expect(Math.abs(box.y+box.height/2-size.height/2)).toBeLessThan(2);
+  }
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await expect(loader.locator('.ob-dot').first()).toHaveCSS('animation-name','none');
  } finally {await stack.stop();}
 });
