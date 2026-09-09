@@ -577,7 +577,12 @@
     app.setAttribute("data-still", still ? "1" : "0");
     app.setAttribute("data-test", st.test ? "1" : "0");
     app.textContent = "";
-    if (st.screen === "loading") { app.appendChild(el("div", "ob-wait", st.error || "Waking up…")); return; }
+    if (st.screen === "loading") {
+      var loading = el("div", "ob-loading"); attr(loading, "role", "status"); attr(loading, "aria-live", "polite");
+      var ring = el("div", "ob-loading-ring"); attr(ring, "aria-hidden", "true"); loading.appendChild(ring);
+      loading.appendChild(el("div", "ob-loading-label", "Loading your setup…"));
+      app.appendChild(loading); return;
+    }
     if (st.screen === "signin") { window.location.href = "/engelbart/signin"; return; }
     if (st.screen === "error") { var e = el("div", "ob-wait"); e.appendChild(el("div", "ob-err", st.error)); app.appendChild(e); return; }
     if (st.row && st.row.status === "open") { warmBrainstorm(); if (st.row.analysis_status === "running") pollAnalysis(); }
