@@ -201,7 +201,7 @@ test("GitHub folder handoff is one collection satisfied by a local folder in the
 });
 
 
-test("a dataset uploaded beneath Paper is automatically present in the installed Dataset pane",async({page})=>{
+test("a previously uploaded dataset remains present in the installed Dataset pane",async({page})=>{
   test.setTimeout(240000);
   const stack=new SimulationStack();await stack.start();
   stack.row.asset_chosen={type:'code',title:'Existing code'};
@@ -210,9 +210,16 @@ test("a dataset uploaded beneath Paper is automatically present in the installed
     stack.codeIssued=true;await machine.install(SETUP_CODE);
     await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
     await page.locator('.ob-row').filter({hasText:'Paper'}).click();
-    await page.getByText('Upload files instead',{exact:true}).click();
-    await page.getByLabel('Choose project dataset file',{exact:true}).setInputFiles({name:'uploaded-with-paper.csv',mimeType:'text/csv',buffer:Buffer.from('metric,value\nlatency,1\n')});
-    await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Attached to project');
+    // Backward compatibility: an attachment saved by the previous upload UI.
+    await page.evaluate(async()=>{
+      async function call(body){const r=await fetch('/api/engelbart-onboarding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'dataset',...body})});if(!r.ok)throw Error(await r.text());return r.json();}
+      const bytes='metric,value\nlatency,1\n';
+      const begun=await call({op:'begin',name:'uploaded-with-paper.csv',files:[{path:'uploaded-with-paper.csv',size:bytes.length}]});
+      const id=begun.onboarding.dataset_upload.id;
+      const signed=await call({op:'sign',id,index:0});await fetch(signed.uploadUrl,{method:'PUT',body:bytes});
+      await call({op:'confirm',id,index:0});await call({op:'finish',id});
+    });
+    await page.reload();
     await page.locator('.ob-row').filter({hasText:'Todos'}).click();
     await page.getByRole('button',{name:/Create project/}).click();
     await expect(page.getByText('Browser CLI Round Trip is saved',{exact:true})).toBeVisible();
@@ -228,7 +235,7 @@ test("a dataset uploaded beneath Paper is automatically present in the installed
   } finally {await machine.stop();await stack.stop();}
 });
 
-test('local folder path beneath Paper becomes an active linked dataset without cloud upload',async({page})=>{
+test('a previously saved local folder path remains an active linked dataset without cloud upload',async({page})=>{
   test.setTimeout(240000);
   const fs=require('node:fs'),path=require('node:path');
   const stack=new SimulationStack();await stack.start();stack.row.asset_chosen={type:'code',title:'Existing code'};
@@ -239,10 +246,11 @@ test('local folder path beneath Paper becomes an active linked dataset without c
     stack.codeIssued=true;await machine.install(SETUP_CODE);
     await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
     await page.locator('.ob-row').filter({hasText:'Paper'}).click();
-    await page.getByText('Enter a path manually instead',{exact:true}).click();
-    await page.getByLabel('Local dataset folder path',{exact:true}).fill(folder);
-    await page.getByRole('button',{name:'Use local folder',exact:true}).click();
-    await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Inspected when Engelbart opens locally');
+    await page.evaluate(async path=>{
+      const r=await fetch('/api/engelbart-onboarding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'dataset',op:'local_path',path})});
+      if(!r.ok)throw Error(await r.text());
+    },folder);
+    await page.reload();
     expect(stack.datasetFiles.size).toBe(0);
     await page.locator('.ob-row').filter({hasText:'Todos'}).click();await page.getByRole('button',{name:/Create project/}).click();
     await expect(page.getByText('Browser CLI Round Trip is saved',{exact:true})).toBeVisible();

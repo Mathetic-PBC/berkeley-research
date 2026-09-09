@@ -55,3 +55,9 @@ No additional schema migration is required beyond the existing dataset attachmen
 Release runtime 0.20.3 before deploying this button. The existing dataset attachment columns suffice; no new schema migration or browser-to-loopback security exception is required.
 
 The Paper-step dataset selector shares the PDF upload card styling (plus icon, centered title, padding and background). The local-folder card is primary; cloud transfer controls are under **Upload files instead**, and manual path entry remains collapsed. Local selection still queues the native dialog rather than uploading the folder.
+
+## Immediate folder chooser
+
+The dataset plus now opens a browser directory chooser synchronously from the click, like the PDF input. Choosing or dropping a collection saves its validated name/relative-path/size manifest as `local_picker`; no file contents are read or uploaded. Canceling does not mutate the existing resource. The card title is **Add your dataset (optional)**; the previous upload/manual-path/removal controls and queued placeholder are removed.
+
+A browser directory input does not expose an absolute path usable by a separate installed app. Accordingly the selected-state hint says to select the folder again in Engelbart; this is a metadata selection, not local materialization. Runtime 0.20.3's existing native picker performs that final selection and bounded preparation. Legacy cloud/path attachments still work through the existing handoff and API. No migration or client release required.

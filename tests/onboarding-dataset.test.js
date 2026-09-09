@@ -105,3 +105,13 @@ test('native picker can be queued without a local path, file manifest, or cloud 
  assert.equal(f.row.dataset_upload,null);assert.equal(f.calls.length,1);
  const payload=await R.forClaim({resources:R.fromOnboarding(f.row)});assert.equal(payload.resources[0].source.provider,'local_picker');
 });
+
+test('local chooser saves only validated metadata and preserves the previous selection on invalid input',async()=>{
+ const f=fixture();await D.handle(user,f.row,{op:'local_picker',name:'Research data',files:[{path:'nested/metrics.csv',size:199*1024*1024}]},f.options);
+ assert.equal(f.row.dataset_resource.name,'Research data');
+ assert.equal(f.row.dataset_resource.manifest.files[0].path,'nested/metrics.csv');
+ assert.equal(f.row.dataset_resource.source.provider,'local_picker');
+ const before=structuredClone(f.row.dataset_resource);
+ await assert.rejects(D.handle(user,f.row,{op:'local_picker',files:[{path:'../escape.csv',size:1}]},f.options),/Unsafe/);
+ assert.deepEqual(f.row.dataset_resource,before);
+});

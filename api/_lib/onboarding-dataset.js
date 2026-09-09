@@ -47,7 +47,10 @@ async function handle(user,row,body,options={}) {
   const op=body.op, storage=options.datasetStorage || Storage;
   if(op==='remove')return write(user,row,{dataset_resource:null,dataset_upload:null},options);
   if(op==='local_picker') {
-    const resource={id:'dataset-local-picker-'+row.id,kind:'dataset',name:'Local dataset',status:'selected',error:'',
+    const name=String(body.name || 'Local dataset').trim().slice(0,200);
+    const selected=body.files ? manifest(body.files,name,options.env) : null;
+    const resource={id:'dataset-local-picker-'+row.id,kind:'dataset',name,status:'selected',error:'',
+      ...(selected ? {manifest:selected} : {}),
       source:{type:'local_folder',provider:'local_picker'},metadata:{},
       provenance:{onboardingId:row.id,providedBy:'user',selectedBy:'paper-step'}};
     return write(user,row,{dataset_resource:resource,dataset_upload:null},options);

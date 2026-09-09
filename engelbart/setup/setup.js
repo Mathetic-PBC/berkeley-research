@@ -829,98 +829,47 @@
     for (var entry of entries) await walk(entry, "");
     return files;
   }
-  async function uploadDataset(entries) {
+  function selectLocalDataset(entries) {
     var state = datasetState();
     if (state.busy || !entries.length) return;
-    var root = entries[0].path.split("/")[0], folder = entries.every(function (e) {return e.path.indexOf(root + "/") === 0;});
-    var files = entries.map(function (e) {return {file:e.file, path:folder ? e.path.slice(root.length + 1) : e.path};});
-    state.busy = true; state.error = ""; state.text = "Starting dataset upload…"; draw();
-    try {
-      var out = await api({action:"dataset", op:"begin", name:folder ? root : files[0].file.name,
-        files:files.map(function (e) {return {path:e.path, size:e.file.size};})});
-      rememberDataset(out);
-      var pending = out.onboarding.dataset_upload;
-      // The server filters OS junk and normalizes paths; use its canonical order.
-      for (var i = 0; i < pending.manifest.files.length; i++) {
-        var expected = pending.manifest.files[i], entry = files.find(function (e) {return e.path.normalize("NFC") === expected.path;});
-        if (!entry) throw new Error("The selected folder changed. Choose it again.");
-        state.text = "Uploading dataset file " + (i + 1) + " of " + pending.manifest.fileCount + "…"; draw();
-        var signed = await api({action:"dataset", op:"sign", id:pending.id, index:i});
-        var response = await fetch(signed.uploadUrl, {method:"PUT", headers:Object.assign({"Content-Type":"application/octet-stream"}, signed.anonKey ? {apikey:signed.anonKey,Authorization:"Bearer " + signed.anonKey} : {}), body:entry.file});
-        if (!response.ok) throw new Error("Dataset upload failed. Your previously attached dataset is unchanged. Choose the files again to retry.");
-        out = await api({action:"dataset", op:"confirm", id:pending.id, index:i}); rememberDataset(out);
-      }
-      out = await api({action:"dataset", op:"finish", id:pending.id}); rememberDataset(out);
-      state.text = "";
-    } catch (error) {state.error = error.message;}
-    finally {state.busy = false; draw();}
+    var root = entries[0].path.split("/")[0];
+    var folder = entries.every(function(e) {return e.path.indexOf(root + "/") === 0;});
+    return datasetChange({op:"local_picker", name:folder ? root : entries[0].file.name,
+      files:entries.map(function(e) {return {path:folder ? e.path.slice(root.length + 1) : e.path, size:e.file.size};})});
   }
   function datasetUploadView() {
-    var state = datasetState(), resource = st.row.dataset_resource, pending = st.row.dataset_upload;
+    var state = datasetState(), resource = st.row.dataset_resource;
     var section = el("section", "ob-dataset"); attr(section, "aria-label", "Project dataset");
-    section.appendChild(el("div", "ob-dataset-title", "Dataset (optional)"));
-    section.appendChild(el("div", "ob-hint", "Add a file, folder, or dataset link. It will appear in your project’s Dataset tab automatically."));
-    if (resource) {
-      section.appendChild(el("div", "ob-file-name", resource.name));
-      var manifest = resource.manifest;
-      section.appendChild(el("div", "ob-hint", manifest ? manifest.fileCount + " files · " + ((manifest.totalBytes || 0) / 1024 / 1024).toFixed(1) + " MB · Attached to project" : "Attached to project"));
-      if (resource.source && resource.source.provider === "local_picker") section.appendChild(el("div", "ob-hint", "Folder selection queued — choose it when Engelbart opens locally."));
-      if (resource.source && resource.source.provider === "local_path") section.appendChild(el("div", "ob-hint", resource.source.path + " · Inspected when Engelbart opens locally"));
-      if (resource.error) section.appendChild(el("div", "ob-hint", resource.error));
-    }
-    var chooseLocal = el("button", "ob-drop ob-dataset-pick"); chooseLocal.type = "button"; chooseLocal.disabled = state.busy;
-    attr(chooseLocal, "aria-label", "Choose local folder in Engelbart");
-    chooseLocal.appendChild(el("span", "ob-drop-icon", "+"));
-    var localText = el("span", "ob-drop-text");
-    localText.appendChild(el("span", "ob-drop-title", "Add your dataset"));
-    localText.appendChild(el("span", "ob-drop-sub", "Click to choose a local folder in Engelbart"));
-    chooseLocal.appendChild(localText);
-    on(chooseLocal, "click", function () {datasetChange({op:"local_picker"});}); section.appendChild(chooseLocal);
-    section.appendChild(el("div", "ob-hint", "A folder picker will open on your computer when installed Engelbart prepares this project. No path to type and no data uploaded."));
-    var uploads = el("details", "ob-dataset-uploads");
-    uploads.appendChild(el("summary", "ob-hint", "Upload files instead"));
-    var drop = el("div", "ob-drop ob-dataset-drop");
-    drop.appendChild(el("div", "ob-drop-icon", "+"));
-    var uploadText = el("div", "ob-drop-text");
-    uploadText.appendChild(el("div", "ob-drop-title", "Upload your dataset"));
-    uploadText.appendChild(el("div", "ob-drop-sub", "Drop a file or folder, or choose below"));
-    drop.appendChild(uploadText);
-    on(drop, "dragover", function (e) {e.preventDefault();});
-    on(drop, "drop", function (e) {
+    var picker = el("input", "ob-hide"); picker.type = "file"; picker.multiple = true;
+    attr(picker, "webkitdirectory", ""); attr(picker, "aria-label", "Choose project dataset folder"); picker.disabled = state.busy;
+    on(picker, "change", function () {selectLocalDataset(selectedDatasetFiles(picker.files)); picker.value = "";});
+    var choose = el("button", "ob-drop ob-dataset-pick ob-dataset-drop"); choose.type = "button"; choose.disabled = state.busy;
+    attr(choose, "aria-label", "Choose dataset folder");
+    choose.appendChild(el("span", "ob-drop-icon", "+"));
+    var text = el("span", "ob-drop-text");
+    text.appendChild(el("span", "ob-drop-title", "Add your dataset (optional)"));
+    text.appendChild(el("span", "ob-drop-sub", "Drop a file or folder, or click to choose a folder"));
+    choose.appendChild(text);
+    // Open synchronously from the gesture, just like the Paper file input.
+    on(choose, "click", function () {picker.click();});
+    on(choose, "dragover", function(e) {e.preventDefault();});
+    on(choose, "drop", function(e) {
       e.preventDefault(); if (state.busy) return;
-      droppedDatasetFiles(e.dataTransfer).then(uploadDataset).catch(function (error) {state.error = error.message; draw();});
-    }); uploads.appendChild(drop);
-    var controls = el("div", "ob-dataset-controls");
-    [{label:"Upload file", folder:false}, {label:"Upload folder", folder:true}].forEach(function (choice) {
-      var label = el("span"), button = el("button", "ob-seed", choice.label), input = el("input", "ob-hide"); input.type = "file"; input.disabled = state.busy;
-      button.type = "button"; button.disabled = state.busy; on(button, "click", function () {input.click();}); label.appendChild(button);
-      attr(input, "aria-label", choice.folder ? "Choose project dataset folder" : "Choose project dataset file");
-      if (choice.folder) {attr(input, "webkitdirectory", ""); input.multiple = true;}
-      else input.accept = ".csv,.tsv,.parquet,.xlsx,.json,.jsonl,.ndjson";
-      on(input, "change", function () {uploadDataset(selectedDatasetFiles(input.files)); input.value = "";});
-      label.appendChild(input); controls.appendChild(label);
+      droppedDatasetFiles(e.dataTransfer).then(selectLocalDataset).catch(function(error) {state.error=error.message;draw();});
     });
-    if (resource || pending) {
-      var remove = el("button", "ob-tiny", "Remove dataset"); remove.type = "button"; remove.disabled = state.busy;
-      section.appendChild(on(remove, "click", function () {datasetChange({op:"remove"});}));
+    section.appendChild(choose); section.appendChild(picker);
+    if (resource && resource.name !== "Local dataset") {
+      section.appendChild(el("div", "ob-file-name", resource.name));
+      if (resource.source && resource.source.provider === "local_picker")
+        section.appendChild(el("div", "ob-hint", "Files stay local. Select this folder again when Engelbart opens."));
     }
-    uploads.appendChild(controls); section.appendChild(uploads);
-    var local = el("div", "ob-dataset-controls"), localInput = el("input"); localInput.type = "text";
-    localInput.placeholder = "~/Desktop/Dataset/dataset"; localInput.value = state.localPath || ""; localInput.disabled = state.busy;
-    attr(localInput, "aria-label", "Local dataset folder path");
-    on(localInput, "input", function () {state.localPath = localInput.value;});
-    var localAttach = el("button", "ob-seed", "Use local folder"); localAttach.type = "button"; localAttach.disabled = state.busy;
-    on(localAttach, "click", function () {datasetChange({op:"local_path", path:state.localPath});});
-    local.appendChild(localInput); local.appendChild(localAttach);
-    var manual = el("details"); manual.appendChild(el("summary", "ob-hint", "Enter a path manually instead")); manual.appendChild(local); section.appendChild(manual);
-    manual.appendChild(el("div", "ob-hint", "Use a folder already on the computer where Engelbart will run. Only its path is saved here; files stay on your computer. Keep the folder in place."));
     var link = el("div", "ob-dataset-controls"), input = el("input"); input.type = "url"; input.placeholder = "Dataset or repository URL"; input.value = state.url; input.disabled = state.busy;
     attr(input, "aria-label", "Dataset or repository URL"); on(input, "input", function () {state.url = input.value;});
     var attach = el("button", "ob-seed", "Attach link"); attach.type = "button"; attach.disabled = state.busy;
     on(attach, "click", function () {datasetChange({op:"link", url:state.url});});
     link.appendChild(input); link.appendChild(attach); section.appendChild(link);
-    if (state.busy || state.error || pending) {
-      var message = el("div", "ob-hint", state.error || state.text || "Dataset upload is incomplete and is not attached yet. Choose the files again to retry.");
+    if (state.busy || state.error) {
+      var message = el("div", "ob-hint", state.error || "Saving dataset selection…");
       attr(message, "role", state.error ? "alert" : "status"); section.appendChild(message);
     }
     return section;
