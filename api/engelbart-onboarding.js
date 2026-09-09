@@ -175,8 +175,8 @@ async function route(user, body, d, action) {
 // One action, one trace. A routine poll runs untraced unless polls are
 // switched on, in which case it is its own clearly-marked `.poll` workflow.
 async function dispatch(user, body, d = {}) {
-  d = { ...d, options: Budget.start(d.options) };
   const action = String((body && body.action) || "");
+  d = { ...d, options: Budget.forAction(d.options, action) };
   const poll = isPoll(action, body);
   if (poll && !telemetry.settings.tracePolls) return telemetry.untraced(() => route(user, body, d, action));
   const testRun = testRunId(body, d);
@@ -205,9 +205,11 @@ async function handler(req, res) {
   let status = 200;
   let payload;
   let traceId = "";
-  const options = Budget.start();
+  const startedAt = Date.now();
   try {
     const body = await readJson(req, 2 * 1024 * 1024);
+    const options = Budget.forAction({}, String(body.action || ""));
+    options.deadlineAt -= Date.now() - startedAt;
     // Authentication is bookkeeping, not onboarding; it stays out of the graph.
     const user = await telemetry.untraced(() => verifyUser(bearerToken(req), options));
     payload = await dispatch(user, body, { options, testRunId: String(req.headers[TEST_RUN_HEADER] || ""), onTrace: (id) => { traceId = id; } });

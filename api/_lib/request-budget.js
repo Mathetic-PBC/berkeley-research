@@ -1,10 +1,15 @@
 "use strict";
 
-// Vercel allows 120 seconds. Stop work early enough to persist a useful reply.
+// Ordinary actions retain their budget. Planning uses the 300-second host window.
 const REQUEST_MS = 110000;
 const SAVE_MS = 10000;
-function start(options = {}) {
-  return { ...options, deadlineAt: options.deadlineAt || Date.now() + REQUEST_MS };
+const PLANNING_REQUEST_MS = 270000;
+const PLANNING_MODEL_MS = 200000;
+function start(options = {}, duration = REQUEST_MS) {
+  return { ...options, deadlineAt: options.deadlineAt || Date.now() + duration };
+}
+function forAction(options = {}, action) {
+  return start(options, ['plan', 'paper_grounding'].includes(action) ? PLANNING_REQUEST_MS : REQUEST_MS);
 }
 function timeout(options = {}, cap = 90000, reserve = SAVE_MS) {
   const remaining = options.deadlineAt ? options.deadlineAt - Date.now() - reserve : cap;
@@ -19,4 +24,4 @@ function expired() {
   return Object.assign(new Error("This step timed out. Retry to continue from the last saved step."), { statusCode: 504, code: "STEP_TIMEOUT" });
 }
 function isTimeout(error) { return error && ["TimeoutError", "AbortError"].includes(error.name) || error?.code === "STEP_TIMEOUT"; }
-module.exports = { start, timeout, signal, expired, isTimeout, REQUEST_MS, SAVE_MS };
+module.exports = { start, forAction, timeout, signal, expired, isTimeout, REQUEST_MS, SAVE_MS, PLANNING_REQUEST_MS, PLANNING_MODEL_MS };

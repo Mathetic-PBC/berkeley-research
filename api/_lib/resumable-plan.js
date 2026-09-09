@@ -19,7 +19,7 @@ function reply(job, status = job.status) {
     retryable: job.error?.type !== "rejected", ...(status === "complete" ? job.result : {}) };
 }
 async function advance(user, row, body, input, credentials, options = {}) {
-  options = Budget.start(options);
+  options = Budget.forAction(options, "plan");
   const kind = body.kind;
   if (!['direction', 'subgoals', 'todos'].includes(kind)) throw fail("Unknown planning step", 400);
   const context = contextOf(row, kind);

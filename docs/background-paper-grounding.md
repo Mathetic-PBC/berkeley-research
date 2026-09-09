@@ -14,7 +14,7 @@
 
 7. **Reload:** Valid evidence is immediately reused. A running job is polled; an expired job is reported as none and reclaimed by the next run. A missing job starts automatically. Persisted errors do not automatically restart on reload. Direction's retry button explicitly authorizes a grounding retry.
 
-8. **Stale/timeout recovery:** Vercel's configured ceiling is 120 seconds. Grounding caps its application budget at 95 seconds, never extends a caller deadline, gives the model at most 75 seconds, and uses the existing 15-second PDF download cap and 10-second save reserve. A 130-second lease prevents recovery from overlapping a still-live hosting invocation. Application timeouts save a retryable error; killed invocations recover after lease expiry. A stale token cannot overwrite a successor.
+8. **Stale/timeout recovery:** Vercel's onboarding ceiling is 300 seconds. Planning requests have a 270-second budget; grounding caps its application budget at 250 seconds, never extends a caller deadline, gives the model at most 200 seconds, and uses the existing 15-second PDF download cap and 10-second save reserve. A 310-second lease prevents recovery from overlapping a still-live hosting invocation. Application timeouts save a retryable error; killed invocations recover after lease expiry. A stale token cannot overwrite a successor.
 
 9. **Paper replacement:** A before-update trigger removes grounding and its whole job when `paper_id` changes. Old saves fail paper/token checks. Re-reading lightweight Analysis for the same canonical PDF preserves valid existing grounding. The previous Brainstorm/calibration replacement cleanup stays intact.
 
@@ -46,3 +46,7 @@
     - This report.
 
 18. **Remaining limits/risks:** Real hosted Sonnet latency and live-paper output quality were not benchmarked; extraction content, token allowance and quality/review rules are unchanged. A browser that closes before initiating grounding leaves Direction/reload to recover it. A killed request can require waiting for the 130-second lease. If extraction succeeds but database persistence is lost, recovery may repeat that unrecorded work. Deployment must coordinate the additive migration and updated functions. Telemetry uses existing PDF-byte/secret redaction; job traces identify caller, start/reuse/join, stale recovery, retries, timeout/error and supersession without logging raw PDFs or credentials.
+
+## Longer planning requests
+
+Apply `20260908230000_longer_planning_leases.sql` before deploying the longer request budgets. It replaces only the planning/grounding transition functions (same arguments and grants), extends newly claimed leases to 310 seconds, and does not rewrite onboarding rows. Grounding, planning drafts, corrections and reviews allow 200 seconds per model call. Vercel’s onboarding function is configured for 300 seconds; verify the deployment accepts that duration. Ordinary actions retain 110-second request budgets. Existing caller deadlines, bounded resource probes, paper-download limits and explicit retry behavior remain intact. No installed-client change is required.

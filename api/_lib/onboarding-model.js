@@ -412,14 +412,14 @@ async function generate(key, input, normalize, credentials, options, what, purpo
 async function planStage(kind, stage, input, draft, correction, credentials, options) {
   if (stage === "review") {
     const review = await callModel({ content: [text(Grounding.reviewPrompt(draft, input, kind))],
-      family: "sonnet", purpose: "paper_plan_check", maxTokens: 1200 }, credentials, options);
+      family: "sonnet", timeoutMs: Budget.PLANNING_MODEL_MS, purpose: "paper_plan_check", maxTokens: 1200 }, credentials, options);
     return { passed: Grounding.reviewPass(review), reason: one(review?.reason, 600) || "The proposal needs a better-supported runnable progression." };
   }
   const key = { direction: "directionPrompt", subgoals: "subgoalsPrompt", todos: "todosPrompt" }[kind];
   const normalize = { direction: normalizeDirection, subgoals: normalizeSubgoals, todos: normalizeTodos }[kind];
   const pr = promptFor(key, input, options);
   const raw = await callModel({ content: [text([pr.text, Grounding.rules(input, kind), correction].filter(Boolean).join("\n\n"))],
-    family: "sonnet", purpose: kind, template: key, templateEdited: pr.edited }, credentials, options);
+    family: "sonnet", timeoutMs: Budget.PLANNING_MODEL_MS, purpose: kind, template: key, templateEdited: pr.edited }, credentials, options);
   const made = await normalized(kind, raw, normalize);
   if (!made) return { draft: null, reason: "The reply did not match the requested JSON shape." };
   made.paperBasis = Grounding.basis(raw, input);
@@ -470,7 +470,7 @@ function paperPrefix(input) {
 }
 
 async function paperGrounding(input, credentials, options = {}) {
-  const raw = await callModel({content:[...paperPrefix(input),text(Grounding.EXTRACTION + " Return only {grounding: ...} as JSON.")],family:"sonnet",purpose:"paper_grounding",maxTokens:4000,timeoutMs:75000},credentials,options);
+  const raw = await callModel({content:[...paperPrefix(input),text(Grounding.EXTRACTION + " Return only {grounding: ...} as JSON.")],family:"sonnet",purpose:"paper_grounding",maxTokens:4000,timeoutMs:Budget.PLANNING_MODEL_MS},credentials,options);
   const result=Grounding.normalize(raw?.grounding);
   if (!result) {const error=new Error("Could not identify a supported runnable contribution in this paper");error.statusCode=502;throw error;}
   return result;
