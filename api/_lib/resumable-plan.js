@@ -5,7 +5,7 @@ const Resources = require("./project-resources");
 const Budget = require("./request-budget");
 const { rpc } = require("./supabase");
 const LABELS = { resources: "Checking the selected resource", draft: "Drafting the proposal", review: "Checking the proposal", correction: "Revising the proposal", ready: "Ready" };
-const fields = ["paper_id", "analysis", "asset_chosen", "assets", "leveled", "interest", "assessment", "name", "year", "major", "depth", "project_url", "repo_url", "direction", "subgoals", "todos"];
+const fields = ["source_revision", "paper_id", "source_article", "dataset_resource", "analysis", "asset_chosen", "assets", "leveled", "interest", "assessment", "name", "year", "major", "depth", "project_url", "repo_url", "direction", "subgoals", "todos"];
 const fail = (message, statusCode = 409) => Object.assign(new Error(message), { statusCode });
 function contextOf(row, kind) {
   const context = Object.fromEntries(fields.map(k => [k, row[k] ?? null]));

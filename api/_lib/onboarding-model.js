@@ -257,7 +257,7 @@ async function analyze(input, credentials, options = {}) {
     // diagnostic's own text follows verbatim, its paper tag pointing up. An
     // edited template is rendered whole, the urls in its slot.
     const body = edited ? P.render("analyzePrompt", { ...input, urls }, options.promptOverrides) : before + "(the paper attached above)" + tail;
-    return [...paperPrefix(input), text(body)];
+    return [...paperPrefix(input), ...(input.sourceText ? [text(input.sourceText)] : []), text(body)];
   });
   const raw = await callModel({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS,
     timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "analysis", template: "analyzePrompt", templateEdited: edited }, credentials, options);
@@ -564,11 +564,11 @@ function shaped(out, what) {
 // The asset hunt: the cached paper, the prompt, and the model's own search.
 async function assets(input, credentials, options = {}) {
   const pr = promptFor("assetsPrompt", {}, options);
-  const content = [...paperPrefix(input), text(pr.text)];
+  const content = [...paperPrefix(input), ...(input.sourceText ? [text(input.sourceText)] : []), text(pr.text)];
   const got = await searched({ content, family: "sonnet", maxTokens: ANALYZE_TOKENS, timeoutMs: ANALYZE_TIMEOUT_MS, purpose: "assets", template: pr.template, templateEdited: pr.edited },
     credentials, options, WEB_SEARCH);
   const out = shaped(await normalized("assets", got.raw, normalizeAssets), "asset hunt");
-  if (!out.assets.length) {
+  if (!out.assets.length && !input.allowEmptyAssets) {
     const error = new Error("The asset hunt found nothing it could name");
     error.statusCode = 502;
     throw error;

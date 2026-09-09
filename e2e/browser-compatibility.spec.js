@@ -48,9 +48,9 @@ test("navigation collapses, remembers its width, and expands with the keyboard",
     await page.reload();
     await expect(rail).toHaveCSS("width", "64px");
     // Step names remain accessible while their labels are visually hidden.
-    await page.getByRole("button", { name: "Paper", exact: true }).focus();
+    await page.getByRole("button", { name: "Sources", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByText("Which paper are you building on?", { exact: true })).toBeVisible();
+    await expect(page.getByText("What are you building on?", { exact: true })).toBeVisible();
     const expand = page.getByRole("button", { name: "Expand navigation", exact: true });
     await expand.focus();
     await page.keyboard.press("Enter");
@@ -71,22 +71,22 @@ test("Paper step accepts dataset folders and retains the selection on reload", a
   const stack=new SimulationStack();await stack.start();
   try {
     await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
-    await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    await page.locator('.ob-row').filter({hasText:'Sources'}).click();
     const dataset=page.getByRole('region',{name:'Project dataset'});
     await expect(dataset).toBeVisible();
     const chooserEvent=page.waitForEvent('filechooser');
-    await page.getByRole('button',{name:'Choose dataset folder',exact:true}).click();
+    await page.getByRole('button',{name:'Choose folder',exact:true}).click();
     const chooser=await chooserEvent;await chooser.setFiles(folder);
     await expect(dataset).toContainText('Research dataset');
     expect(stack.row.dataset_resource.manifest.fileCount).toBe(2);
     expect(stack.row.dataset_resource.manifest.files.map(f=>f.path)).toContain('nested/測定.csv');
-    expect(stack.datasetFiles.size).toBe(0);
-    await expect(dataset.locator('.ob-dataset-saved')).toContainText('2 files · Selection saved');
-    await expect(page.getByRole('button',{name:'Choose dataset folder',exact:true})).not.toBeVisible();
+    expect(stack.datasetFiles.size).toBeGreaterThan(0);
+    await expect(dataset.locator('.ob-dataset-saved')).toContainText('2 files · Uploaded');
+    await expect(page.getByRole('button',{name:'Upload Dataset',exact:true})).not.toBeVisible();
     const replaceEvent=page.waitForEvent('filechooser');
     await page.getByRole('button',{name:'Replace dataset',exact:true}).click();await replaceEvent;
     await expect(dataset.locator('.ob-dataset-saved')).toContainText('Research dataset');
-    await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    await page.reload();await page.locator('.ob-row').filter({hasText:'Sources'}).click();
     await expect(dataset).toContainText('Research dataset');
     await page.evaluate(()=>{
       const file={name:'metrics.csv',isFile:true,file:ok=>ok(new File(['x,y\n1,2\n'],'metrics.csv'))};
@@ -96,7 +96,7 @@ test("Paper step accepts dataset folders and retains the selection on reload", a
       document.querySelector('.ob-dataset-drop').dispatchEvent(event);
     });
     await expect(dataset).toContainText('Dropped data');
-    expect(stack.datasetFiles.size).toBe(0);
+    expect(stack.datasetFiles.size).toBeGreaterThan(0);
   } finally {await stack.stop();fs.rmSync(root,{recursive:true,force:true});}
 });
 
@@ -104,9 +104,9 @@ test('dataset plus opens a folder chooser without saving a selection on click or
  const stack=new SimulationStack();await stack.start();
  try {
   await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
-  await page.locator('.ob-row').filter({hasText:'Paper'}).click();
-  const picker=page.getByRole('button',{name:'Choose dataset folder',exact:true});
-  await expect(picker.locator('.ob-drop-title')).toHaveText('Add your dataset (optional)');
+  await page.locator('.ob-row').filter({hasText:'Sources'}).click();
+  const picker=page.getByRole('button',{name:'Upload Dataset',exact:true});
+  await expect(picker.locator('.ob-drop-title')).toHaveText('Upload Dataset');
   const before=JSON.stringify(stack.row.dataset_resource);
   const event=page.waitForEvent('filechooser');await picker.click();await event;
   expect(JSON.stringify(stack.row.dataset_resource)).toBe(before);
@@ -136,4 +136,52 @@ test('setup loader uses the shared dots at the viewport center',async({page})=>{
   await page.emulateMedia({reducedMotion:'reduce'});
   await expect(loader.locator('.ob-dot').first()).toHaveCSS('animation-name','none');
  } finally {await stack.stop();}
+});
+
+test('source choices share a row and a dataset alone uploads actual bytes before Continue',async({page})=>{
+ const stack=new SimulationStack();await stack.start();
+ Object.assign(stack.row,{step:4,paper_id:null,paper_title:'',dataset_resource:null,source_article:null});
+ try {
+  await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
+  const next=page.getByRole('button',{name:'Continue',exact:false});await expect(next).toBeDisabled();
+  const pdf=await page.locator('.ob-source-options>.ob-drop').boundingBox(),dataset=await page.getByRole('region',{name:'Project dataset'}).boundingBox(),article=await page.getByRole('region',{name:'Project article'}).boundingBox();
+  expect(Math.abs(pdf.y-dataset.y)).toBeLessThan(1);expect(Math.abs(dataset.y-article.y)).toBeLessThan(1);expect(article.x).toBeGreaterThan(dataset.x);
+  const data='metric,value\nlatency,17\n';
+  await page.getByLabel('Upload dataset files',{exact:true}).setInputFiles({name:'metrics.csv',mimeType:'text/csv',buffer:Buffer.from(data)});
+  await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Uploaded');
+  expect([...stack.datasetFiles.values()][0].toString()).toBe(data);
+  await expect(next).toBeEnabled();await next.click();
+  await expect(page.getByText('macOS',{exact:true})).toBeVisible();
+  expect(stack.row.paper_id).toBeNull();expect(stack.row.dataset_resource.source.provider).toBe('supabase');
+ } finally {await page.close();await stack.stop();}
+});
+
+test('article-only input survives continuation and reload, with optional links retained',async({page})=>{
+ const stack=new SimulationStack();await stack.start();
+ Object.assign(stack.row,{step:4,paper_id:null,paper_title:'',dataset_resource:null,source_article:null});
+ try {
+  await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
+  await page.getByRole('button',{name:'Upload Article',exact:true}).click();
+  await page.getByLabel('Upload article file',{exact:true}).setInputFiles({name:'Methods.md',mimeType:'text/markdown',buffer:Buffer.from('# Methods\nCompare observed and predicted measurements.')});
+  await expect(page.getByRole('region',{name:'Project article'})).toContainText('Methods.md');
+  await expect(page.getByRole('button',{name:'Project page optional',exact:false})).toBeVisible();
+  await page.getByRole('button',{name:'Continue',exact:false}).click();
+  await expect(page.getByText('macOS',{exact:true})).toBeVisible();
+  expect(stack.row.paper_id).toBeNull();expect(stack.row.source_article.text).toContain('Compare observed');
+  await page.reload();await page.getByRole('button',{name:'Sources',exact:true}).click();
+  await expect(page.getByRole('region',{name:'Project article'})).toContainText('Methods.md');
+  await expect(page.getByRole('button',{name:'Continue',exact:false})).toBeEnabled();
+ } finally {await page.close();await stack.stop();}
+});
+
+test('interface rating can be skipped while previews are still loading',async({page})=>{
+ const stack=new SimulationStack();await stack.start();Object.assign(stack.row,{step:6});
+ try {
+  await installBrowserSession(page);
+  await page.route('**/api/engelbart-mockups',()=>new Promise(()=>{}));
+  await page.goto(stack.url+'/engelbart/setup/?test=true');
+  await page.getByRole('button',{name:'Skip',exact:true}).click();
+  await expect(page.getByText('What do you want to build?',{exact:true})).toBeVisible();
+  expect(stack.row.step).toBe(7);
+ } finally {await page.close();await stack.stop();}
 });

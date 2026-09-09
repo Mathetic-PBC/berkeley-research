@@ -18,7 +18,7 @@ before(async () => {
   db = new PGlite();
   await db.exec(`create role anon; create role authenticated; create role service_role;
     create table engelbart_onboardings (id uuid primary key,user_id uuid,status text default 'open',step integer default 9,
-      paper_id uuid,analysis jsonb,asset_chosen jsonb,assets jsonb,leveled jsonb,interest text,assessment jsonb,
+      source_revision bigint,paper_id uuid,source_article jsonb,dataset_resource jsonb,analysis jsonb,asset_chosen jsonb,assets jsonb,leveled jsonb,interest text,assessment jsonb,
       name text,year text,major text,depth text,project_url text,repo_url text,direction jsonb,subgoals jsonb,todos jsonb,
       project_name text,goal_chosen text,updated_at timestamptz);
     create table engelbart_onboarding_turns(onboarding_id uuid,user_id uuid,stage text,role text,content text,card jsonb);`);

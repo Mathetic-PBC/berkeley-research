@@ -46,7 +46,7 @@ test("mock-up desktop previews fit and stay mounted across analysis completion a
     await page.setViewportSize({ width: 1440, height: 900 });
     await expect.poll(() => polls).toBeGreaterThan(0);
     complete = true;
-    await expect(page.locator(".ob-mk-reading")).toHaveText("");
+    await expect.poll(() => polls).toBeGreaterThan(1);
     expect(await original.evaluate(el => el.isConnected)).toBe(true);
     expect(htmlLoads).toBe(4);
     await page.getByRole("button", { name: "Collapse navigation", exact: true }).click();
@@ -60,7 +60,7 @@ test("mock-up desktop previews fit and stay mounted across analysis completion a
     const warmed = await page.locator('[data-preview="warm"] iframe').elementHandles();
     expect(warmed).toHaveLength(2);
     await page.locator('[data-preview="left"] .ob-mk-pick').click();
-    await expect(page.locator(".ob-sub")).toContainText("pick 2 of 4");
+    await expect(page.locator(".ob-sub")).toHaveText("");
     for (const frame of warmed) {
       expect(await frame.evaluate(el => el.isConnected && el.closest(".ob-mk-pane").getAttribute("data-preview") !== "warm")).toBe(true);
     }
@@ -68,16 +68,16 @@ test("mock-up desktop previews fit and stay mounted across analysis completion a
     expect(await original.evaluate(el => el.isConnected)).toBe(true);
     await expect(page.locator('.ob-mk-pane:not([data-preview="warm"])')).toHaveCount(2);
     for (let pick = 0; pick < 3; pick++) await page.locator('[data-preview="left"] .ob-mk-pick').click();
-    await expect(page.getByText("Your top four", { exact: true })).toBeVisible();
+    await expect(page.getByText("Your preferred interfaces", { exact: true })).toBeVisible();
     expect(htmlLoads).toBe(4); // All four rounds reuse the four initial documents.
     await expect(page.locator(".ob-mk-frame")).toHaveCount(0);
-    await page.getByRole("button", { name: "Rank again", exact: true }).click();
-    await expect(page.locator(".ob-sub")).toContainText("pick 1 of 4");
+    await page.getByRole("button", { name: "Choose again", exact: true }).click();
+    await expect(page.locator(".ob-sub")).toHaveText("");
     for (let pick = 0; pick < 4; pick++) await page.locator('[data-preview="right"] .ob-mk-pick').click();
-    await expect(page.getByText("Your top four", { exact: true })).toBeVisible();
+    await expect(page.getByText("Your preferred interfaces", { exact: true })).toBeVisible();
     await page.locator("#content .ob-cta").click();
-    await page.getByRole("button", { name: "Mock-ups", exact: true }).click();
-    await expect(page.getByText("Your top four", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Interface", exact: true }).click();
+    await expect(page.getByText("Your preferred interfaces", { exact: true })).toBeVisible();
     await page.locator("#content .ob-cta").click();
     await expect(page.getByText("What do you want to build?", { exact: true })).toBeVisible();
   } finally { await stack.stop(); }

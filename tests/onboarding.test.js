@@ -270,7 +270,7 @@ test("sources needs the paper token, stores the paper, and does not read it", as
   const token = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
   const out = await OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: token, project_url: "https://x.org/p",
     repo_url: "", paper_familiarity: 2 }, CREDS, db.options);
-  assert.deepEqual(out, { ok: true, analysis_status: "none", assets_status: "none" });
+  assert.deepEqual({...out,onboarding:undefined}, { ok: true, analysis_status: "none", assets_status: "none", onboarding:undefined });
   const row = db.tables.engelbart_onboardings[0];
   assert.equal(row.paper_id, PAPER);
   assert.equal(row.project_url, "https://x.org/p");
@@ -291,7 +291,7 @@ test("a paper already on the row needs no token; another one still does", async 
   const token = setupHandler.ownPaperToken(PAPER, USER.id, ENV);
   await OB.sources(USER, onboarding, { paper_id: PAPER, paper_token: token, paper_familiarity: 2 }, CREDS, db.options);
   const again = await OB.sources(USER, onboarding, { paper_id: PAPER, paper_familiarity: 4 }, CREDS, db.options);
-  assert.deepEqual(again, { ok: true, analysis_status: "none", assets_status: "none" });
+  assert.deepEqual({...again,onboarding:undefined}, { ok: true, analysis_status: "none", assets_status: "none", onboarding:undefined });
   assert.equal(db.tables.engelbart_onboardings[0].paper_familiarity, 4);
   const other = "44444444-4444-4444-4444-444444444444";
   await assert.rejects(OB.sources(USER, onboarding, { paper_id: other, paper_familiarity: 2 }, CREDS, db.options),
@@ -1179,4 +1179,49 @@ test("skipping Topics retains partial answers and fitting works with zero answer
   const prompt=request.messages[0].content.map(b=>b.text||"").join("\n");
   assert.match(prompt,/Self-reported paper familiarity/);
   assert.doesNotMatch(prompt,/How they did on the topic questions/);
+});
+
+test('dataset-only setup is accepted, read and offered as a usable resource',async()=>{
+ const db=fake({model:{analysis:ANALYSIS,assets:{assets:[]}}});
+ const {onboarding}=await OB.open(USER,{},db.options);
+ onboarding.dataset_resource={id:'data',kind:'dataset',name:'Measurements',status:'selected',source:{provider:'supabase',uploadId:'upload'},manifest:{files:[{path:'metrics.csv',format:'csv',size:20,objectPath:`${USER.id}/${onboarding.id}/upload/0`}]}};
+ Object.assign(db.tables.engelbart_onboardings[0],onboarding);
+ const options={...db.options,datasetStorage:{sample:async()=> 'metric,value\nlatency,1'}};
+ const saved=await OB.sources(USER,onboarding,{paper_familiarity:2},CREDS,options);
+ assert.equal(saved.onboarding.paper_id,null);
+ assert.equal((await OB.analysis(USER,onboarding,{run:true},CREDS,options)).analysis_status,'done');
+ const call=db.calls.find(c=>c.url.endsWith('/v1/messages'));
+ assert.match(call.init.body,/metric,value/);assert.doesNotMatch(call.init.body,/"type":"document"/);
+ const assets=await OB.assets(USER,onboarding,{run:true},CREDS,options);
+ assert.equal(assets.assets_status,'done',assets.assets_error);
+ assert.equal(assets.assets.assets[0].title,'Measurements');assert.equal(assets.assets.assets[0].access.state,'available');
+});
+
+test('an article alone supports analysis and its source survives the installed handoff',async()=>{
+ const db=fake({model:{analysis:ANALYSIS}});const row=await ready(db,{paper_id:null});
+ await OB.sources(USER,row,{article:{name:'Methods.md',text:'Actual methods and evidence',url:'https://x.org/article'},paper_familiarity:2},CREDS,db.options);
+ assert.equal((await OB.analysis(USER,row,{run:true},CREDS,db.options)).analysis_status,'done');
+ assert.match(db.calls.find(c=>c.url.endsWith('/v1/messages')).init.body,/Actual methods and evidence/);
+ Object.assign(row,{asset_chosen:{title:'Tool'},direction:{title:'A tool'},subgoals:[{label:'Inspect the source'}]});
+ const payload=OB.toPayload(row,[]);
+ assert.equal(payload.subgoals[0].document.title,'Methods.md');assert.match(payload.subgoals[0].document.body_md,/https:\/\/x.org\/article/);
+});
+
+test('source replacement between the freshness read and final analysis PATCH rejects the old result atomically',async()=>{
+ const db=fake({model:{analysis:ANALYSIS}});
+ const row=await ready(db,{paper_id:null,source_article:{name:'Article',text:'First source'},source_revision:1,analysis:null,analysis_status:'none'});
+ let raced=false;
+ const options={...db.options,fetchImpl:async(url,init)=>{
+   const response=await db.options.fetchImpl(url,init);
+   if(!raced && url.includes('select=id,paper_id,source_article,dataset_resource')) {
+     raced=true;
+     Object.assign(db.tables.engelbart_onboardings[0],{source_revision:2,source_article:{name:'Article',text:'Replacement source'},analysis:null,analysis_status:'none'});
+   }
+   return response;
+ }};
+ const out=await OB.analysis(USER,row,{run:true},CREDS,options);
+ assert.equal(raced,true);assert.equal(out.analysis_status,'superseded');
+ assert.equal(db.tables.engelbart_onboardings[0].analysis,null);assert.equal(db.tables.engelbart_onboardings[0].analysis_status,'none');
+ const writes=db.calls.filter(c=>c.init.method==='PATCH' && c.url.includes('/engelbart_onboardings'));
+ assert.ok(writes.every(c=>c.url.includes('source_revision=eq.1')),'running, final and error writes share the original revision');
 });

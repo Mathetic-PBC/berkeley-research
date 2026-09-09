@@ -1,8 +1,8 @@
-# Dataset upload beneath Paper
+# Project sources and dataset upload
 
-The hosted Paper step has an optional Dataset section immediately beneath the PDF uploader. It accepts a file, a folder (picker or recursive directory drop), or a public dataset/repository URL. Completed attachments survive reloads. They are included automatically alongside the paper and independently of any discovered resource selected later.
+The hosted Sources step offers Upload PDF, Upload Dataset, and Upload Article side by side. At least one source is required; any combination is accepted. Dataset accepts files or folders (picker or recursive directory drop). Articles accept plain text, Markdown, HTML files up to 200 KB, or a public article link. Project page and GitHub links remain optional. Completed attachments survive reloads. They are included automatically alongside the paper and independently of any discovered resource selected later.
 
-Dataset transfer can continue while the reader proceeds through onboarding. Analysis and Asset Hunt remain independent. An unfinished dataset upload prevents final project creation until it is completed or removed, with a link back via the Paper step. The separate 20 MiB Paper policy is unchanged.
+Continue waits until every selected dataset file has been uploaded and its size verified. A failed replacement preserves the last complete dataset; reselect the files to retry or remove the unfinished upload. Analysis and Asset Hunt remain independent. An unfinished upload also prevents final project creation. The separate 20 MiB Paper policy is unchanged.
 
 ## Persistence and storage
 
@@ -22,7 +22,7 @@ Runtime/CLI 0.20.1 is required for automatic acquisition of these private upload
 
 ## Deployment
 
-1. Apply the additive migration and verify the private bucket and project upload limit.
+1. Apply the dataset upload migration and `20260909160000_onboarding_sources.sql`; verify the private bucket and project upload limit.
 2. Release/install Engelbart 0.20.1 with its rebuilt vendored wheel.
 3. Deploy Berkeley's new Paper-step uploader and claim signing.
 
@@ -61,3 +61,11 @@ The Paper-step dataset selector shares the PDF upload card styling (plus icon, c
 The dataset plus now opens a browser directory chooser synchronously from the click, like the PDF input. Choosing or dropping a collection saves its validated name/relative-path/size manifest as `local_picker`; no file contents are read or uploaded. Canceling does not mutate the existing resource. The card title is **Add your dataset (optional)**; the previous upload/manual-path/removal controls and queued placeholder are removed.
 
 A browser directory input does not expose an absolute path usable by a separate installed app. Accordingly the selected-state hint says to select the folder again in Engelbart; this is a metadata selection, not local materialization. Runtime 0.20.3's existing native picker performs that final selection and bounded preparation. Legacy cloud/path attachments still work through the existing handoff and API. No migration or client release required.
+
+## Source-aware analysis
+
+A PDF remains a document input. Article text is persisted on `source_article` and supplied as text; public links are fetched into a readable snapshot. Dataset analysis includes at most 100 manifest entries and the first 16 KiB from up to three CSV/TSV/JSON/text files. Binary files are described by their manifest only. These limits are explicit in model context, so the analysis must not claim to have inspected unseen data. Private samples are checked against the member/setup/upload ownership prefix.
+
+The user's supplied dataset and article remain choices in Assets even when discovery finds no external resources. Article snapshots accompany the first subgoal through the existing `document` handoff contract (8,000 characters including the source URL); the complete accepted text remains in onboarding storage. Source replacements clear stale conversations, calibrations, analysis, and planning, and a monotonic source revision guards every background analysis/asset write, including the initial running state. Replaced-source writes fail atomically even if replacement occurs after the last read.
+
+The previous `local_picker` metadata-only API remains readable for old setups. New browser selections use begin → signed PUT → confirm → finish and never label a metadata-only selection “Uploaded.” HTTP browser fixtures prove bytes, filenames, size confirmation, and reload persistence; they do not by themselves prove live Supabase deployment configuration.
