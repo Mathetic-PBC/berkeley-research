@@ -88,8 +88,9 @@ test("browser → CLI → /bart browser → Claude context", async ({ page }) =>
     expect(new URL(page.url()).pathname).toBe("/");
     await expect(page.getByLabel("Plan").getByText("Resources", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("tab").nth(0)).toHaveText("Bart");
-    await expect(page.getByRole("tab").nth(1)).toHaveText("Live preview");
-    await expect(page.getByRole("tab").nth(2)).toHaveText("Terminal");
+    await expect(page.getByRole("tab").nth(1)).toHaveText("Notes");
+    await expect(page.getByRole("tab").nth(2)).toHaveText("Live preview");
+    await expect(page.getByRole("tab").nth(3)).toHaveText("Terminal");
     await expect(page.getByRole("tab", { name: "Dataset", exact: true })).toBeVisible();
     await page.getByRole("tab", { name: "Dataset", exact: true }).click();
     await expect(page.locator(".dataset-preview th")).toHaveText(["event", "session_id"]);
@@ -209,7 +210,7 @@ test("a previously uploaded dataset remains present in the installed Dataset pan
   try {
     stack.codeIssued=true;await machine.install(SETUP_CODE);
     await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
-    await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    await page.locator('.ob-row').filter({hasText:'Sources'}).click();
     // Backward compatibility: an attachment saved by the previous upload UI.
     await page.evaluate(async()=>{
       async function call(body){const r=await fetch('/api/engelbart-onboarding',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer browser-simulation-token'},body:JSON.stringify({action:'dataset',...body})});if(!r.ok)throw Error(await r.text());return r.json();}
@@ -245,7 +246,7 @@ test('a previously saved local folder path remains an active linked dataset with
   try {
     stack.codeIssued=true;await machine.install(SETUP_CODE);
     await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
-    await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    await page.locator('.ob-row').filter({hasText:'Sources'}).click();
     await page.evaluate(async path=>{
       const r=await fetch('/api/engelbart-onboarding',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer browser-simulation-token'},body:JSON.stringify({action:'dataset',op:'local_path',path})});
       if(!r.ok)throw Error(await r.text());
