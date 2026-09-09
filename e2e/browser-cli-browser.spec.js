@@ -212,7 +212,7 @@ test("a previously uploaded dataset remains present in the installed Dataset pan
     await page.locator('.ob-row').filter({hasText:'Paper'}).click();
     // Backward compatibility: an attachment saved by the previous upload UI.
     await page.evaluate(async()=>{
-      async function call(body){const r=await fetch('/api/engelbart-onboarding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'dataset',...body})});if(!r.ok)throw Error(await r.text());return r.json();}
+      async function call(body){const r=await fetch('/api/engelbart-onboarding',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer browser-simulation-token'},body:JSON.stringify({action:'dataset',...body})});if(!r.ok)throw Error(await r.text());return r.json();}
       const bytes='metric,value\nlatency,1\n';
       const begun=await call({op:'begin',name:'uploaded-with-paper.csv',files:[{path:'uploaded-with-paper.csv',size:bytes.length}]});
       const id=begun.onboarding.dataset_upload.id;
@@ -247,7 +247,7 @@ test('a previously saved local folder path remains an active linked dataset with
     await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
     await page.locator('.ob-row').filter({hasText:'Paper'}).click();
     await page.evaluate(async path=>{
-      const r=await fetch('/api/engelbart-onboarding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'dataset',op:'local_path',path})});
+      const r=await fetch('/api/engelbart-onboarding',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer browser-simulation-token'},body:JSON.stringify({action:'dataset',op:'local_path',path})});
       if(!r.ok)throw Error(await r.text());
     },folder);
     await page.reload();
