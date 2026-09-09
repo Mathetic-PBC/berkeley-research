@@ -869,6 +869,9 @@
       if (resource.source && resource.source.provider === "local_path") section.appendChild(el("div", "ob-hint", resource.source.path + " · Inspected when Engelbart opens locally"));
       if (resource.error) section.appendChild(el("div", "ob-hint", resource.error));
     }
+    var chooseLocal = el("button", "ob-seed", "Choose local folder in Engelbart"); chooseLocal.type = "button"; chooseLocal.disabled = state.busy;
+    on(chooseLocal, "click", function () {datasetChange({op:"local_picker"});}); section.appendChild(chooseLocal);
+    section.appendChild(el("div", "ob-hint", "A folder picker will open on your computer when installed Engelbart prepares this project. No path to type and no data uploaded."));
     var drop = el("div", "ob-dataset-drop", "Drop a dataset file or folder here");
     on(drop, "dragover", function (e) {e.preventDefault();});
     on(drop, "drop", function (e) {
@@ -876,7 +879,7 @@
       droppedDatasetFiles(e.dataTransfer).then(uploadDataset).catch(function (error) {state.error = error.message; draw();});
     }); section.appendChild(drop);
     var controls = el("div", "ob-dataset-controls");
-    [{label:"Choose file", folder:false}, {label:"Choose folder", folder:true}].forEach(function (choice) {
+    [{label:"Upload file", folder:false}, {label:"Upload folder", folder:true}].forEach(function (choice) {
       var label = el("span"), button = el("button", "ob-seed", choice.label), input = el("input", "ob-hide"); input.type = "file"; input.disabled = state.busy;
       button.type = "button"; button.disabled = state.busy; on(button, "click", function () {input.click();}); label.appendChild(button);
       attr(input, "aria-label", choice.folder ? "Choose project dataset folder" : "Choose project dataset file");
@@ -890,17 +893,15 @@
       controls.appendChild(on(remove, "click", function () {datasetChange({op:"remove"});}));
     }
     section.appendChild(controls);
-    var chooseLocal = el("button", "ob-seed", "Choose local folder in Engelbart"); chooseLocal.type = "button"; chooseLocal.disabled = state.busy;
-    on(chooseLocal, "click", function () {datasetChange({op:"local_picker"});}); section.appendChild(chooseLocal);
-    section.appendChild(el("div", "ob-hint", "A folder picker will open on your computer when installed Engelbart prepares this project. No path to type and no data uploaded."));
     var local = el("div", "ob-dataset-controls"), localInput = el("input"); localInput.type = "text";
     localInput.placeholder = "~/Desktop/Dataset/dataset"; localInput.value = state.localPath || ""; localInput.disabled = state.busy;
     attr(localInput, "aria-label", "Local dataset folder path");
     on(localInput, "input", function () {state.localPath = localInput.value;});
     var localAttach = el("button", "ob-seed", "Use local folder"); localAttach.type = "button"; localAttach.disabled = state.busy;
     on(localAttach, "click", function () {datasetChange({op:"local_path", path:state.localPath});});
-    local.appendChild(localInput); local.appendChild(localAttach); section.appendChild(local);
-    section.appendChild(el("div", "ob-hint", "Use a folder already on the computer where Engelbart will run. Only its path is saved here; files stay on your computer. Keep the folder in place."));
+    local.appendChild(localInput); local.appendChild(localAttach);
+    var manual = el("details"); manual.appendChild(el("summary", "ob-hint", "Enter a path manually instead")); manual.appendChild(local); section.appendChild(manual);
+    manual.appendChild(el("div", "ob-hint", "Use a folder already on the computer where Engelbart will run. Only its path is saved here; files stay on your computer. Keep the folder in place."));
     var link = el("div", "ob-dataset-controls"), input = el("input"); input.type = "url"; input.placeholder = "Dataset or repository URL"; input.value = state.url; input.disabled = state.busy;
     attr(input, "aria-label", "Dataset or repository URL"); on(input, "input", function () {state.url = input.value;});
     var attach = el("button", "ob-seed", "Attach link"); attach.type = "button"; attach.disabled = state.busy;

@@ -111,7 +111,8 @@ test('local dataset path is saved without a browser file upload',async({page})=>
  try {
   await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
   await page.locator('.ob-row').filter({hasText:'Paper'}).click();
-  await page.getByLabel('Local dataset folder path',{exact:true}).fill('~/Desktop/Dataset/dataset');
+  await page.getByText('Enter a path manually instead',{exact:true}).click();
+    await page.getByLabel('Local dataset folder path',{exact:true}).fill('~/Desktop/Dataset/dataset');
   await page.getByRole('button',{name:'Use local folder',exact:true}).click();
   await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Inspected when Engelbart opens locally');
   expect(stack.datasetFiles.size).toBe(0);expect(stack.row.dataset_resource.source.provider).toBe('local_path');
