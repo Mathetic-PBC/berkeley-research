@@ -22,3 +22,20 @@ end $$;
 drop trigger if exists engelbart_brainstorm_paper_change on public.engelbart_onboardings;
 create trigger engelbart_brainstorm_paper_change before update of paper_id,source_article,dataset_resource on public.engelbart_onboardings
 for each row execute function public.engelbart_clear_brainstorm_for_paper();
+
+-- The older analysis trigger preserves grounding on a same-paper re-read.
+-- A changed article or dataset also invalidates that evidence, even when the
+-- UPDATE includes analysis and therefore invokes both triggers.
+create or replace function public.engelbart_clear_grounding_for_paper()
+returns trigger language plpgsql security definer set search_path=public as $$
+begin
+  if old.paper_id is distinct from new.paper_id
+     or old.source_article is distinct from new.source_article
+     or old.dataset_resource is distinct from new.dataset_resource then
+    new.analysis := new.analysis - 'grounding';
+    new.planning := coalesce(new.planning,'{}'::jsonb) - 'paper_grounding';
+  elsif public.engelbart_valid_grounding(old.analysis->'grounding') then
+    new.analysis := coalesce(new.analysis,'{}'::jsonb) || jsonb_build_object('grounding',old.analysis->'grounding');
+  end if;
+  return new;
+end $$;
