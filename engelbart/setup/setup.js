@@ -876,14 +876,7 @@
       on(replace, "click", function () {picker.click();}); saved.appendChild(replace);
       on(saved, "dragover", function(e) {e.preventDefault();}); on(saved, "drop", dropDataset);
       section.appendChild(saved);
-      if (resource.source && resource.source.provider === "local_picker")
-        section.appendChild(el("div", "ob-hint", "Files stay local. Select this folder again when Engelbart opens."));
     } else section.appendChild(choose);
-    var link = el("div", "ob-dataset-controls"), input = el("input"); input.type = "url"; input.placeholder = "Dataset or repository URL"; input.value = state.url; input.disabled = state.busy;
-    attr(input, "aria-label", "Dataset or repository URL"); on(input, "input", function () {state.url = input.value;});
-    var attach = el("button", "ob-seed", "Attach link"); attach.type = "button"; attach.disabled = state.busy;
-    on(attach, "click", function () {datasetChange({op:"link", url:state.url});});
-    link.appendChild(input); link.appendChild(attach); section.appendChild(link);
     if (state.busy || state.error) {
       var message = el("div", "ob-hint", state.error || "Saving dataset selection…");
       attr(message, "role", state.error ? "alert" : "status"); section.appendChild(message);

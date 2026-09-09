@@ -62,7 +62,7 @@ test("navigation collapses, remembers its width, and expands with the keyboard",
 });
 
 
-test("Paper step accepts dataset files, folders and links and retains the attachment on reload", async ({page}) => {
+test("Paper step accepts dataset folders and retains the selection on reload", async ({page}) => {
   const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'onboarding-dataset-'));
   const folder=path.join(root,'Research dataset');fs.mkdirSync(path.join(folder,'nested'),{recursive:true});
@@ -97,10 +97,6 @@ test("Paper step accepts dataset files, folders and links and retains the attach
     });
     await expect(dataset).toContainText('Dropped data');
     expect(stack.datasetFiles.size).toBe(0);
-    await page.getByLabel('Dataset or repository URL',{exact:true}).fill('https://data.example/metrics.csv');
-    await page.getByRole('button',{name:'Attach link',exact:true}).click();
-    await expect.poll(()=>stack.row.dataset_resource.source.url).toBe('https://data.example/metrics.csv');
-    expect(stack.row.dataset_resource.source.url).toBe('https://data.example/metrics.csv');
   } finally {await stack.stop();fs.rmSync(root,{recursive:true,force:true});}
 });
 
