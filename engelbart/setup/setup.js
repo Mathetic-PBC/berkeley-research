@@ -858,16 +858,27 @@
     // Open synchronously from the gesture, just like the Paper file input.
     on(choose, "click", function () {picker.click();});
     on(choose, "dragover", function(e) {e.preventDefault();});
-    on(choose, "drop", function(e) {
+    function dropDataset(e) {
       e.preventDefault(); if (state.busy) return;
       droppedDatasetFiles(e.dataTransfer).then(selectLocalDataset).catch(function(error) {state.error=error.message;draw();});
-    });
-    section.appendChild(choose); section.appendChild(picker);
-    if (resource && resource.name !== "Local dataset") {
-      section.appendChild(el("div", "ob-file-name", resource.name));
+    }
+    on(choose, "drop", dropDataset);
+    section.appendChild(picker);
+    if (resource && (resource.name !== "Local dataset" || resource.manifest)) {
+      var saved = el("div", "ob-file ob-dataset-saved ob-dataset-drop"); saved.appendChild(fileIcon());
+      var detail = el("div", "ob-file-text");
+      detail.appendChild(el("div", "ob-file-name", resource.name || "Dataset"));
+      var count = resource.manifest && resource.manifest.fileCount;
+      detail.appendChild(el("div", "ob-file-meta", "Dataset" + (count ? " · " + count + (count === 1 ? " file" : " files") : "") + " · Selection saved"));
+      saved.appendChild(detail);
+      var replace = el("button", "ob-link", "Replace"); replace.type = "button"; replace.disabled = state.busy;
+      attr(replace, "aria-label", "Replace dataset");
+      on(replace, "click", function () {picker.click();}); saved.appendChild(replace);
+      on(saved, "dragover", function(e) {e.preventDefault();}); on(saved, "drop", dropDataset);
+      section.appendChild(saved);
       if (resource.source && resource.source.provider === "local_picker")
         section.appendChild(el("div", "ob-hint", "Files stay local. Select this folder again when Engelbart opens."));
-    }
+    } else section.appendChild(choose);
     var link = el("div", "ob-dataset-controls"), input = el("input"); input.type = "url"; input.placeholder = "Dataset or repository URL"; input.value = state.url; input.disabled = state.busy;
     attr(input, "aria-label", "Dataset or repository URL"); on(input, "input", function () {state.url = input.value;});
     var attach = el("button", "ob-seed", "Attach link"); attach.type = "button"; attach.disabled = state.busy;
