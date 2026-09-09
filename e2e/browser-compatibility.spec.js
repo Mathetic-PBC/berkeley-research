@@ -119,3 +119,16 @@ test('local dataset path is saved without a browser file upload',async({page})=>
   await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('~/Desktop/Dataset/dataset');
  } finally {await stack.stop();}
 });
+
+test('Paper can queue a native dataset picker without typing a path',async({page})=>{
+ const stack=new SimulationStack();await stack.start();
+ try {
+  await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
+  await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+  await page.getByRole('button',{name:'Choose local folder in Engelbart',exact:true}).click();
+  await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Folder selection queued');
+  expect(stack.row.dataset_resource.source.provider).toBe('local_picker');expect(stack.datasetFiles.size).toBe(0);
+  await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+  await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Folder selection queued');
+ } finally {await stack.stop();}
+});

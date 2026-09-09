@@ -47,3 +47,9 @@ Enter an absolute path or `~/Desktop/...` in **Local dataset folder path**, then
 Engelbart 0.20.2 resolves the path on the installed computer, enumerates the collection, inspects bounded samples and activates it through the existing Dataset/Build pipeline. Files stay in their original directory; only the manifest and previews are persisted in workspace metadata. Missing folders need user action; unsafe entries fail without replacing the prior active dataset. The folder must remain available at its original path on that computer. Data bytes never pass through Supabase, though the path itself is saved with the hosted project. Existing cloud and remote-resource options remain available.
 
 No additional schema migration is required beyond the existing dataset attachment migration. Release the 0.20.2 installed runtime before deploying the hosted path option.
+
+## Native selection without typing a path
+
+**Choose local folder in Engelbart** queues a native picker instead of requiring a path. The hosted Paper page cannot launch an uninstalled application or read an absolute directory path from a browser file input. Its copy therefore states that the picker opens when installed Engelbart prepares the project. No file data is uploaded. Runtime 0.20.3 opens the existing OS dialog once, links the selected folder in place and saves it as the active dataset. Canceling produces a needs-user resource; the installed Dataset pane's **Choose local folder** button opens the picker immediately for retry or replacement. Manual path entry remains an optional fallback.
+
+Release runtime 0.20.3 before deploying this button. The existing dataset attachment columns suffice; no new schema migration or browser-to-loopback security exception is required.

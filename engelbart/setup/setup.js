@@ -865,6 +865,7 @@
       section.appendChild(el("div", "ob-file-name", resource.name));
       var manifest = resource.manifest;
       section.appendChild(el("div", "ob-hint", manifest ? manifest.fileCount + " files · " + ((manifest.totalBytes || 0) / 1024 / 1024).toFixed(1) + " MB · Attached to project" : "Attached to project"));
+      if (resource.source && resource.source.provider === "local_picker") section.appendChild(el("div", "ob-hint", "Folder selection queued — choose it when Engelbart opens locally."));
       if (resource.source && resource.source.provider === "local_path") section.appendChild(el("div", "ob-hint", resource.source.path + " · Inspected when Engelbart opens locally"));
       if (resource.error) section.appendChild(el("div", "ob-hint", resource.error));
     }
@@ -889,6 +890,9 @@
       controls.appendChild(on(remove, "click", function () {datasetChange({op:"remove"});}));
     }
     section.appendChild(controls);
+    var chooseLocal = el("button", "ob-seed", "Choose local folder in Engelbart"); chooseLocal.type = "button"; chooseLocal.disabled = state.busy;
+    on(chooseLocal, "click", function () {datasetChange({op:"local_picker"});}); section.appendChild(chooseLocal);
+    section.appendChild(el("div", "ob-hint", "A folder picker will open on your computer when installed Engelbart prepares this project. No path to type and no data uploaded."));
     var local = el("div", "ob-dataset-controls"), localInput = el("input"); localInput.type = "text";
     localInput.placeholder = "~/Desktop/Dataset/dataset"; localInput.value = state.localPath || ""; localInput.disabled = state.busy;
     attr(localInput, "aria-label", "Local dataset folder path");

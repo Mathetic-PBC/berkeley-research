@@ -46,6 +46,12 @@ async function handle(user,row,body,options={}) {
   if(row.status!=='open')throw fail('This setup is already finished',409);
   const op=body.op, storage=options.datasetStorage || Storage;
   if(op==='remove')return write(user,row,{dataset_resource:null,dataset_upload:null},options);
+  if(op==='local_picker') {
+    const resource={id:'dataset-local-picker-'+row.id,kind:'dataset',name:'Local dataset',status:'selected',error:'',
+      source:{type:'local_folder',provider:'local_picker'},metadata:{},
+      provenance:{onboardingId:row.id,providedBy:'user',selectedBy:'paper-step'}};
+    return write(user,row,{dataset_resource:resource,dataset_upload:null},options);
+  }
   if(op==='local_path') {
     const path=String(body.path || '').trim().replace(/^(["'])(.*)\1$/, '$2');
     if(path.length>2000 || /[\x00-\x1f]/.test(path) || !/^(?:\/|~\/|[A-Za-z]:[\\/])/.test(path) || path.split(/[\\/]/).includes('..'))

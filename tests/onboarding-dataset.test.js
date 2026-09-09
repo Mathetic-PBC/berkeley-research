@@ -98,3 +98,10 @@ test('local folder path attaches without storage or provider access and survives
  assert.deepEqual(payload.resources[0],resource);
  for(const path of ['relative/path','/tmp/../etc','https://example.org/data','/tmp/\nsecret'])await assert.rejects(D.handle(user,f.row,{op:'local_path',path},f.options),/full local folder path/);
 });
+
+test('native picker can be queued without a local path, file manifest, or cloud transfer',async()=>{
+ const f=fixture();await D.handle(user,f.row,{op:'local_picker'},f.options);
+ assert.equal(f.row.dataset_resource.source.provider,'local_picker');assert.equal(f.row.dataset_resource.source.path,undefined);
+ assert.equal(f.row.dataset_upload,null);assert.equal(f.calls.length,1);
+ const payload=await R.forClaim({resources:R.fromOnboarding(f.row)});assert.equal(payload.resources[0].source.provider,'local_picker');
+});
