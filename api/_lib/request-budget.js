@@ -9,7 +9,7 @@ function start(options = {}, duration = REQUEST_MS) {
   return { ...options, deadlineAt: options.deadlineAt || Date.now() + duration };
 }
 function forAction(options = {}, action) {
-  return start(options, ['plan', 'paper_grounding'].includes(action) ? PLANNING_REQUEST_MS : REQUEST_MS);
+  return start(options, action === 'plan' ? PLANNING_REQUEST_MS : REQUEST_MS);
 }
 function timeout(options = {}, cap = 90000, reserve = SAVE_MS) {
   const remaining = options.deadlineAt ? options.deadlineAt - Date.now() - reserve : cap;

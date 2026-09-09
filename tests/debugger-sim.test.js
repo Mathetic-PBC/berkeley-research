@@ -189,7 +189,6 @@ test("the simulated planner persists a draft and reviews it on the next request"
   Object.assign(seed.onboardings[0],{paper_id:'paper',analysis:w.EGB_FIXTURE.PAPER,asset_chosen:{title:'Code',type:'code'},step:9});
   sim = w.EngelbartSim.create({emit() {},speed:0,seed});
   async function advance(){return (await sim.handle('/api/engelbart-onboarding',{method:'POST',body:JSON.stringify({action:'plan',kind:'direction'})})).json();}
-  assert.equal((await advance()).stage,'draft');
   assert.equal((await advance()).stage,'review');
   assert.equal(sim.state().onboardings[0].direction,undefined);
   sim = w.EngelbartSim.create({emit() {},speed:0,seed:sim.state()});

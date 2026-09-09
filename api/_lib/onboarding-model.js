@@ -8,7 +8,7 @@ const Budget = require("./request-budget");
 
 const { pickModel } = require("./setup-chat");
 const P = require("./onboarding-prompts");
-const Grounding = require("./paper-grounding");
+const Evidence = require("./plan-evidence");
 const { telemetry } = require("./telemetry");
 const { hostOf, safeUrl } = require("./telemetry/redaction");
 const { resolveUpstream } = require("./upstream");
@@ -374,11 +374,11 @@ async function generate(key, input, normalize, credentials, options, what, purpo
   const pr = promptFor(key, input, options);
   const synthetic = input.asset?.fallbackOf?.kind === "synthetic_fallback" || input.resources?.some(r => r.fallbackOf?.kind === "synthetic_fallback");
   const resourceRule = synthetic ? "The selected resource is a SYNTHETIC STAND-IN. Explicitly call it synthetic or a stand-in in the Direction description. Scope the first subgoals/todos to testing or learning the mechanism on invented examples. Never imply observations or research conclusions about the inaccessible original. Do not make acquiring the original a human prerequisite." : "";
-  const grounded = Grounding.normalize(input.paper?.grounding);
+  const grounded = Evidence.normalize(input.paper?.grounding);
   const checked = grounded && ["direction", "subgoals", "todos"].includes(purpose);
   let correction = "", accessError = null;
   for (let attempt = 0; attempt < (checked ? 2 : 1); attempt++) {
-    const raw = await callModel({ content: [text([pr.text, resourceRule, (["direction","subgoals","todos","brainstorm","goals"].includes(purpose) ? Grounding.rules(input,purpose) : ""), correction].filter(Boolean).join("\n\n"))], family: input.opening ? "haiku" : "sonnet", ...(input.opening ? { maxTokens: 1500, timeoutMs: 25000 } : {}), purpose, reads, template: pr.template, templateEdited: pr.edited }, credentials, options);
+    const raw = await callModel({ content: [text([pr.text, resourceRule, (["direction","subgoals","todos","brainstorm","goals"].includes(purpose) ? Evidence.rules(input,purpose) : ""), correction].filter(Boolean).join("\n\n"))], family: input.opening ? "haiku" : "sonnet", ...(input.opening ? { maxTokens: 1500, timeoutMs: 25000 } : {}), purpose, reads, template: pr.template, templateEdited: pr.edited }, credentials, options);
     const out = await normalized(purpose, raw, normalize);
     accessError = null;
     if (out && purpose === "direction") {
@@ -392,11 +392,11 @@ async function generate(key, input, normalize, credentials, options, what, purpo
     }
     if (out && !checked) return out;
     if (out && checked) {
-      out.paperBasis = Grounding.basis(raw,input);
-      correction = Grounding.structuralIssue(out,purpose,input);
+      out.paperBasis = Evidence.basis(raw,input);
+      correction = Evidence.structuralIssue(out,purpose,input);
       if (!correction) {
-        const review = await callModel({content:[text(Grounding.reviewPrompt(out,input,purpose))],family:"sonnet",purpose:"paper_plan_check",maxTokens:1200},credentials,options);
-        if (Grounding.reviewPass(review)) return out;
+        const review = await callModel({content:[text(Evidence.reviewPrompt(out,input,purpose))],family:"sonnet",purpose:"paper_plan_check",maxTokens:1200},credentials,options);
+        if (Evidence.reviewPass(review)) return out;
         correction = one(review?.reason,600) || "The plan does not establish a paper-grounded runnable progression";
       }
     } else correction = "The reply did not match the requested JSON shape";
@@ -411,19 +411,19 @@ async function generate(key, input, normalize, credentials, options, what, purpo
 // One planning stage only: the caller persists the draft/review between requests.
 async function planStage(kind, stage, input, draft, correction, credentials, options) {
   if (stage === "review") {
-    const review = await callModel({ content: [text(Grounding.reviewPrompt(draft, input, kind))],
+    const review = await callModel({ content: [text(Evidence.reviewPrompt(draft, input, kind))],
       family: "sonnet", timeoutMs: Budget.PLANNING_MODEL_MS, purpose: "paper_plan_check", maxTokens: 1200 }, credentials, options);
-    return { passed: Grounding.reviewPass(review), reason: one(review?.reason, 600) || "The proposal needs a better-supported runnable progression." };
+    return { passed: Evidence.reviewPass(review), reason: one(review?.reason, 600) || "The proposal needs a better-supported runnable progression." };
   }
   const key = { direction: "directionPrompt", subgoals: "subgoalsPrompt", todos: "todosPrompt" }[kind];
   const normalize = { direction: normalizeDirection, subgoals: normalizeSubgoals, todos: normalizeTodos }[kind];
   const pr = promptFor(key, input, options);
-  const raw = await callModel({ content: [text([pr.text, Grounding.rules(input, kind), correction].filter(Boolean).join("\n\n"))],
+  const raw = await callModel({ content: [text([pr.text, Evidence.rules(input, kind), correction].filter(Boolean).join("\n\n"))],
     family: "sonnet", timeoutMs: Budget.PLANNING_MODEL_MS, purpose: kind, template: key, templateEdited: pr.edited }, credentials, options);
   const made = await normalized(kind, raw, normalize);
   if (!made) return { draft: null, reason: "The reply did not match the requested JSON shape." };
-  made.paperBasis = Grounding.basis(raw, input);
-  let reason = Grounding.structuralIssue(made, kind, input);
+  made.paperBasis = Evidence.basis(raw, input);
+  let reason = Evidence.structuralIssue(made, kind, input);
   if (!reason && kind === "direction") {
     try { require("./project-resources").assertUsable(made, input.asset, []); }
     catch (error) { reason = error.message; }
@@ -467,13 +467,6 @@ function paperPrefix(input) {
   }
   return [{ type: "text", text: P.PAPER_PREFIX + "\n\n<paper_text>\n" + long(input.pdfText, 400000) + "\n</paper_text>",
     cache_control: { type: "ephemeral" } }];
-}
-
-async function paperGrounding(input, credentials, options = {}) {
-  const raw = await callModel({content:[...paperPrefix(input),text(Grounding.EXTRACTION + " Return only {grounding: ...} as JSON.")],family:"sonnet",purpose:"paper_grounding",maxTokens:4000,timeoutMs:Budget.PLANNING_MODEL_MS},credentials,options);
-  const result=Grounding.normalize(raw?.grounding);
-  if (!result) {const error=new Error("Could not identify a supported runnable contribution in this paper");error.statusCode=502;throw error;}
-  return result;
 }
 
 // --- assets ---------------------------------------------------------------------
@@ -682,7 +675,7 @@ module.exports = {
   planStage, LEVELS, LINEAGE, MAX_PAGE_TEXT,
   callModel, pickModel, extractJson, promptFor,
   analyze, grade, followUp, rewrite, details, goals, todos, ask, assets, levelAssets, resourceFallback, brainstorm, assetAsk, direction, subgoals,
-  paperPrefix, paperGrounding, briefOf,
+  paperPrefix, briefOf,
   normalizeAnalysis, normalizeGrade, normalizeFollowUp, normalizeRewrite, normalizeDetails, normalizeGoals, normalizeTodos, normalizeAsk,
   normalizeAssets, normalizeLeveled, normalizeBrainstorm, normalizeDirection, normalizeSubgoals,
 };

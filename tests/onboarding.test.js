@@ -50,7 +50,7 @@ function fake({ model = {}, pdf = Buffer.from("%PDF-1.4 fake"), emptyPatch = fal
     if (u.pathname.endsWith("/rpc/engelbart_grounding_transition")) {
       const row=tables.engelbart_onboardings.find(r=>r.id===body.p_id);
       if (!row || row.paper_id!==body.p_paper) return json({status:"superseded"});
-      if (require("../api/_lib/paper-grounding").normalize(row.analysis?.grounding)) return json({status:"done",grounding:row.analysis.grounding});
+      if (require("../api/_lib/plan-evidence").normalize(row.analysis?.grounding)) return json({status:"done",grounding:row.analysis.grounding});
       row.planning ||= {};
       if (!body.p_run) return json({status:row.planning.paper_grounding?.status || "none"});
       if (!body.p_save) { row.planning.paper_grounding={status:"running"}; return json({status:"claimed"}); }
@@ -605,9 +605,9 @@ test("todos serves the stored rows and regenerates only when asked; it needs the
   assert.equal(first.name, "zebra tuner");
   assert.equal(row.goal_chosen, "G2");
   await OB.todos(USER, row, [], {}, CREDS, db.options);
-  assert.equal(modelCalls(db), 3);
+  assert.equal(modelCalls(db), 1);
   await OB.todos(USER, row, [], { regenerate: true }, CREDS, db.options);
-  assert.equal(modelCalls(db), 5);
+  assert.equal(modelCalls(db), 2);
   row.subgoals = null;
   await assert.rejects(OB.todos(USER, row, [], {}, CREDS, db.options), (e) => e.statusCode === 409);
 });
@@ -1044,7 +1044,7 @@ test('Direction discovers an access fallback without leveled children and persis
   assert.match(directionRequest.messages[0].content[0].text,/Authors public subset/);
   assert.match(directionRequest.messages[0].content[0].text,/fallbackOf/);
   const cached=await OB.direction(USER,row,[],{},CREDS,db.options);
-  assert.equal(modelCalls(db),4,'fallback discovery, legacy grounding, direction and review run once; reload reuses them');
+  assert.equal(modelCalls(db),2,'fallback discovery and legacy direction run once; no extraction; reload reuses them');
   assert.deepEqual(cached.direction.uses,[candidate.title]);
   await OB.subgoals(USER,row,[],{},CREDS,db.options);
   assert.equal(row.subgoals.length,3);
@@ -1126,17 +1126,6 @@ test("migrated sessions keep their current step, interest, and calibration answe
   }
 });
 
-
-test("the deferred grounding endpoint caches its full-paper extraction", async () => {
-  const db = fake();
-  const row = await ready(db, { analysis: { ...ANALYSIS }, direction: null });
-  const first = await OB.paperGrounding(USER, row, {run:true}, CREDS, db.options);
-  assert.ok(first.grounding.contribution);
-  assert.equal(modelCalls(db), 1);
-  assert.deepEqual(await OB.paperGrounding(USER, row, {}, CREDS, db.options), first);
-  assert.equal(modelCalls(db), 1);
-  assert.equal(row.direction, null);
-});
 
 test("the opening uses profile and familiarity; later turns use fresh partial evidence without restarting", async () => {
   const prompts = [];

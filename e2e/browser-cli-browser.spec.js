@@ -210,6 +210,7 @@ test("a dataset uploaded beneath Paper is automatically present in the installed
     stack.codeIssued=true;await machine.install(SETUP_CODE);
     await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
     await page.locator('.ob-row').filter({hasText:'Paper'}).click();
+    await page.getByText('Upload files instead',{exact:true}).click();
     await page.getByLabel('Choose project dataset file',{exact:true}).setInputFiles({name:'uploaded-with-paper.csv',mimeType:'text/csv',buffer:Buffer.from('metric,value\nlatency,1\n')});
     await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Attached to project');
     await page.locator('.ob-row').filter({hasText:'Todos'}).click();

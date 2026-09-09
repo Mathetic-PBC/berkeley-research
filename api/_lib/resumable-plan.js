@@ -1,12 +1,10 @@
 "use strict";
 const crypto = require("node:crypto");
 const OM = require("./onboarding-model");
-const Grounding = require("./paper-grounding");
 const Resources = require("./project-resources");
-const GroundingJob = require("./grounding-job");
 const Budget = require("./request-budget");
 const { rpc } = require("./supabase");
-const LABELS = { resources: "Checking the selected resource", grounding: "Reading the paper", draft: "Drafting the proposal", review: "Checking the proposal", correction: "Revising the proposal", ready: "Ready" };
+const LABELS = { resources: "Checking the selected resource", draft: "Drafting the proposal", review: "Checking the proposal", correction: "Revising the proposal", ready: "Ready" };
 const fields = ["paper_id", "analysis", "asset_chosen", "assets", "leveled", "interest", "assessment", "name", "year", "major", "depth", "project_url", "repo_url", "direction", "subgoals", "todos"];
 const fail = (message, statusCode = 409) => Object.assign(new Error(message), { statusCode });
 function contextOf(row, kind) {
@@ -31,7 +29,7 @@ async function advance(user, row, body, input, credentials, options = {}) {
     return { status: "complete", [kind]: row[kind], name: row.project_name, asset_chosen: row.asset_chosen, leveled: row.leveled };
   }
   if (revising && !/^[a-zA-Z0-9_-]{8,100}$/.test(body.request_id || "")) throw fail("A revision needs a request ID", 400);
-  const initial = { status: "pending", stage: kind === 'direction' ? 'resources' : 'grounding', attempt: 0,
+  const initial = { status: "pending", stage: kind === 'direction' ? 'resources' : 'draft', attempt: 0,
     fingerprint, request_id: body.request_id || "", input, assets: structuredClone(row.leveled?.assets || row.assets?.assets || []) };
   const token = crypto.randomUUID();
   const args = { p_user: user.id, p_id: row.id, p_kind: kind, p_context: context, p_initial: initial, p_token: token, p_retry: body.retry === true };
@@ -45,18 +43,11 @@ async function advance(user, row, body, input, credentials, options = {}) {
     if (job.stage === "resources") {
       job.input.asset = await Resources.resolveChosen(job.input.asset, job.assets, { ...options, paper: job.input.paper, propagateDiscoveryErrors: true,
         discoverFallback: value => OM.resourceFallback(value, credentials, { ...options, singleModelCall: true, withoutSearch: job.withoutSearch }) });
-      job.stage = "grounding";
+      job.stage = "draft";
     } else if (job.stage === "grounding") {
-      const grounded = await GroundingJob.run(user, row, { run: true, retry: body.grounding_retry === true || (body.grounding_retry == null && body.retry === true && old?.status === "error" && old?.stage === "grounding"), caller: kind }, credentials, options);
-      if (grounded.grounding_status === "done") {
-        job.input.paper.grounding = grounded.grounding; job.stage = "draft";
-      } else if (grounded.grounding_status === "error") {
-        job.status = "error"; job.error = grounded.grounding_error;
-      } else if (grounded.grounding_status === "superseded") {
-        throw fail("The paper changed. The old result was discarded.");
-      } else job.waitingGrounding = true;
+      // Resume rows saved by the retired full-paper job without another PDF read.
+      job.stage = "draft"; delete job.waitingGrounding; delete job.error;
     } else {
-      if (!Grounding.normalize(job.input.paper.grounding)) throw fail("Valid paper grounding is required before drafting");
       const result = await OM.planStage(kind, job.stage === "review" ? "review" : "draft", job.input, job.draft,
         job.correction || "", credentials, options);
       if (job.stage === "review" && result.passed) {
@@ -92,6 +83,6 @@ async function advance(user, row, body, input, credentials, options = {}) {
   }
   const saved = await rpc("engelbart_plan_transition", { ...args, p_save: job, p_updates: updates }, options);
   if (saved.status === "superseded") throw fail("The paper or planning inputs changed. The old result was discarded.");
-  return reply(saved.job, saved.job.waitingGrounding && saved.job.stage === "grounding" && saved.status === "pending" ? "running" : saved.status);
+  return reply(saved.job, saved.status);
 }
 module.exports = { advance, contextOf, LABELS };

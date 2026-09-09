@@ -76,6 +76,7 @@ test("Paper step accepts dataset files, folders and links and retains the attach
     await expect(dataset).toBeVisible();
     let release;const paused=new Promise(resolve=>{release=resolve;});
     await page.route('**/fixture/dataset-upload?*',async route=>{await paused;await route.continue();},{times:1});
+    await page.getByText('Upload files instead',{exact:true}).click();
     await page.getByLabel('Choose project dataset folder',{exact:true}).setInputFiles(folder);
     await expect(page.getByRole('button',{name:/^Continue/})).toBeEnabled();
     release();
@@ -126,7 +127,12 @@ test('Paper can queue a native dataset picker without typing a path',async({page
  try {
   await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
   await page.locator('.ob-row').filter({hasText:'Paper'}).click();
-  await page.getByRole('button',{name:'Choose local folder in Engelbart',exact:true}).click();
+  const picker=page.getByRole('button',{name:'Choose local folder in Engelbart',exact:true});
+  await expect(picker).toHaveClass(/ob-drop/);
+  await expect(picker.locator('.ob-drop-icon')).toHaveText('+');
+  await expect(picker.locator('.ob-drop-title')).toHaveText('Add your dataset');
+  await expect(page.getByRole('button',{name:'Upload folder',exact:true})).not.toBeVisible();
+  await picker.click();
   await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Folder selection queued');
   expect(stack.row.dataset_resource.source.provider).toBe('local_picker');expect(stack.datasetFiles.size).toBe(0);
   await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
