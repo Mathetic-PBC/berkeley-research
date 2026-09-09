@@ -74,16 +74,13 @@ test("Paper step accepts dataset files, folders and links and retains the attach
     await page.locator('.ob-row').filter({hasText:'Paper'}).click();
     const dataset=page.getByRole('region',{name:'Project dataset'});
     await expect(dataset).toBeVisible();
-    let release;const paused=new Promise(resolve=>{release=resolve;});
-    await page.route('**/fixture/dataset-upload?*',async route=>{await paused;await route.continue();},{times:1});
-    await page.getByText('Upload files instead',{exact:true}).click();
-    await page.getByLabel('Choose project dataset folder',{exact:true}).setInputFiles(folder);
-    await expect(page.getByRole('button',{name:/^Continue/})).toBeEnabled();
-    release();
-    await expect(dataset).toContainText('Attached to project');
+    const chooserEvent=page.waitForEvent('filechooser');
+    await page.getByRole('button',{name:'Choose dataset folder',exact:true}).click();
+    const chooser=await chooserEvent;await chooser.setFiles(folder);
+    await expect(dataset).toContainText('Research dataset');
     expect(stack.row.dataset_resource.manifest.fileCount).toBe(2);
     expect(stack.row.dataset_resource.manifest.files.map(f=>f.path)).toContain('nested/測定.csv');
-    expect(stack.datasetFiles.size).toBe(2);
+    expect(stack.datasetFiles.size).toBe(0);
     await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
     await expect(dataset).toContainText('Research dataset');
     await page.evaluate(()=>{
@@ -94,48 +91,29 @@ test("Paper step accepts dataset files, folders and links and retains the attach
       document.querySelector('.ob-dataset-drop').dispatchEvent(event);
     });
     await expect(dataset).toContainText('Dropped data');
-    await expect(dataset).toContainText('Attached to project');
-    await page.getByLabel('Choose project dataset file',{exact:true}).setInputFiles({name:'single.csv',mimeType:'text/csv',buffer:Buffer.from('x,y\n1,2\n')});
-    await expect(dataset).toContainText('single.csv');
-    await expect(dataset).toContainText('Attached to project');
-    await page.getByRole('button',{name:'Remove dataset',exact:true}).click();
-    await expect(dataset).not.toContainText('Attached to project');
+    expect(stack.datasetFiles.size).toBe(0);
     await page.getByLabel('Dataset or repository URL',{exact:true}).fill('https://data.example/metrics.csv');
     await page.getByRole('button',{name:'Attach link',exact:true}).click();
-    await expect(dataset).toContainText('Attached to project');
+    await expect.poll(()=>stack.row.dataset_resource.source.url).toBe('https://data.example/metrics.csv');
     expect(stack.row.dataset_resource.source.url).toBe('https://data.example/metrics.csv');
   } finally {await stack.stop();fs.rmSync(root,{recursive:true,force:true});}
 });
 
-test('local dataset path is saved without a browser file upload',async({page})=>{
+test('dataset plus opens a folder chooser without saving a selection on click or cancel',async({page})=>{
  const stack=new SimulationStack();await stack.start();
  try {
   await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
   await page.locator('.ob-row').filter({hasText:'Paper'}).click();
-  await page.getByText('Enter a path manually instead',{exact:true}).click();
-    await page.getByLabel('Local dataset folder path',{exact:true}).fill('~/Desktop/Dataset/dataset');
-  await page.getByRole('button',{name:'Use local folder',exact:true}).click();
-  await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Inspected when Engelbart opens locally');
-  expect(stack.datasetFiles.size).toBe(0);expect(stack.row.dataset_resource.source.provider).toBe('local_path');
-  await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
-  await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('~/Desktop/Dataset/dataset');
- } finally {await stack.stop();}
-});
-
-test('Paper can queue a native dataset picker without typing a path',async({page})=>{
- const stack=new SimulationStack();await stack.start();
- try {
-  await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
-  await page.locator('.ob-row').filter({hasText:'Paper'}).click();
-  const picker=page.getByRole('button',{name:'Choose local folder in Engelbart',exact:true});
-  await expect(picker).toHaveClass(/ob-drop/);
-  await expect(picker.locator('.ob-drop-icon')).toHaveText('+');
-  await expect(picker.locator('.ob-drop-title')).toHaveText('Add your dataset');
-  await expect(page.getByRole('button',{name:'Upload folder',exact:true})).not.toBeVisible();
-  await picker.click();
-  await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Folder selection queued');
-  expect(stack.row.dataset_resource.source.provider).toBe('local_picker');expect(stack.datasetFiles.size).toBe(0);
-  await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
-  await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Folder selection queued');
+  const picker=page.getByRole('button',{name:'Choose dataset folder',exact:true});
+  await expect(picker.locator('.ob-drop-title')).toHaveText('Add your dataset (optional)');
+  const before=JSON.stringify(stack.row.dataset_resource);
+  const event=page.waitForEvent('filechooser');await picker.click();await event;
+  expect(JSON.stringify(stack.row.dataset_resource)).toBe(before);
+  expect(stack.datasetFiles.size).toBe(0);
+  const section=page.getByRole('region',{name:'Project dataset'});
+  await expect(section).not.toContainText('Upload files instead');
+  await expect(section).not.toContainText('Enter a path manually instead');
+  await expect(section).not.toContainText('Folder selection queued');
+  await expect(section).not.toContainText('Remove dataset');
  } finally {await stack.stop();}
 });
