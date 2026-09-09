@@ -81,6 +81,11 @@ test("Paper step accepts dataset files, folders and links and retains the attach
     expect(stack.row.dataset_resource.manifest.fileCount).toBe(2);
     expect(stack.row.dataset_resource.manifest.files.map(f=>f.path)).toContain('nested/測定.csv');
     expect(stack.datasetFiles.size).toBe(0);
+    await expect(dataset.locator('.ob-dataset-saved')).toContainText('2 files · Selection saved');
+    await expect(page.getByRole('button',{name:'Choose dataset folder',exact:true})).not.toBeVisible();
+    const replaceEvent=page.waitForEvent('filechooser');
+    await page.getByRole('button',{name:'Replace dataset',exact:true}).click();await replaceEvent;
+    await expect(dataset.locator('.ob-dataset-saved')).toContainText('Research dataset');
     await page.reload();await page.locator('.ob-row').filter({hasText:'Paper'}).click();
     await expect(dataset).toContainText('Research dataset');
     await page.evaluate(()=>{

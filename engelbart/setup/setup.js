@@ -577,7 +577,12 @@
     app.setAttribute("data-still", still ? "1" : "0");
     app.setAttribute("data-test", st.test ? "1" : "0");
     app.textContent = "";
-    if (st.screen === "loading") { app.appendChild(el("div", "ob-wait", st.error || "Waking up…")); return; }
+    if (st.screen === "loading") {
+      var loading = el("div", "ob-loading"); attr(loading, "role", "status"); attr(loading, "aria-live", "polite");
+      var ring = el("div", "ob-loading-ring"); attr(ring, "aria-hidden", "true"); loading.appendChild(ring);
+      loading.appendChild(el("div", "ob-loading-label", "Loading your setup…"));
+      app.appendChild(loading); return;
+    }
     if (st.screen === "signin") { window.location.href = "/engelbart/signin"; return; }
     if (st.screen === "error") { var e = el("div", "ob-wait"); e.appendChild(el("div", "ob-err", st.error)); app.appendChild(e); return; }
     if (st.row && st.row.status === "open") { warmBrainstorm(); if (st.row.analysis_status === "running") pollAnalysis(); }
@@ -853,16 +858,27 @@
     // Open synchronously from the gesture, just like the Paper file input.
     on(choose, "click", function () {picker.click();});
     on(choose, "dragover", function(e) {e.preventDefault();});
-    on(choose, "drop", function(e) {
+    function dropDataset(e) {
       e.preventDefault(); if (state.busy) return;
       droppedDatasetFiles(e.dataTransfer).then(selectLocalDataset).catch(function(error) {state.error=error.message;draw();});
-    });
-    section.appendChild(choose); section.appendChild(picker);
-    if (resource && resource.name !== "Local dataset") {
-      section.appendChild(el("div", "ob-file-name", resource.name));
+    }
+    on(choose, "drop", dropDataset);
+    section.appendChild(picker);
+    if (resource && (resource.name !== "Local dataset" || resource.manifest)) {
+      var saved = el("div", "ob-file ob-dataset-saved ob-dataset-drop"); saved.appendChild(fileIcon());
+      var detail = el("div", "ob-file-text");
+      detail.appendChild(el("div", "ob-file-name", resource.name || "Dataset"));
+      var count = resource.manifest && resource.manifest.fileCount;
+      detail.appendChild(el("div", "ob-file-meta", "Dataset" + (count ? " · " + count + (count === 1 ? " file" : " files") : "") + " · Selection saved"));
+      saved.appendChild(detail);
+      var replace = el("button", "ob-link", "Replace"); replace.type = "button"; replace.disabled = state.busy;
+      attr(replace, "aria-label", "Replace dataset");
+      on(replace, "click", function () {picker.click();}); saved.appendChild(replace);
+      on(saved, "dragover", function(e) {e.preventDefault();}); on(saved, "drop", dropDataset);
+      section.appendChild(saved);
       if (resource.source && resource.source.provider === "local_picker")
         section.appendChild(el("div", "ob-hint", "Files stay local. Select this folder again when Engelbart opens."));
-    }
+    } else section.appendChild(choose);
     var link = el("div", "ob-dataset-controls"), input = el("input"); input.type = "url"; input.placeholder = "Dataset or repository URL"; input.value = state.url; input.disabled = state.busy;
     attr(input, "aria-label", "Dataset or repository URL"); on(input, "input", function () {state.url = input.value;});
     var attach = el("button", "ob-seed", "Attach link"); attach.type = "button"; attach.disabled = state.busy;
