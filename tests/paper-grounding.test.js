@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test');const assert=require('node:assert/strict');
-const OM=require('../api/_lib/onboarding-model');const G=require('../api/_lib/paper-grounding');const R=require('../api/_lib/project-resources');
+const OM=require('../api/_lib/onboarding-model');const G=require('../api/_lib/plan-evidence');const R=require('../api/_lib/project-resources');
 const credentials={apiKey:'fixture',baseUrl:'https://fixture.invalid',models:['all-proxy-models']};
 const positive={grounded:true,actionable:true,mechanismFirst:true,resourceHonest:true,progression:true};
 const grounding=G.normalize({contribution:'Map therapist instructions to rehabilitation software.',evidence:[
@@ -12,23 +12,21 @@ const direction={title:'Reconstruct one instruction-to-software example',what_yo
 function input(extra={}) {return {reader:{},paper:{title:'Instruction mapping',one_liner:'Instructions generate exercises',grounding},asset:{type:'dataset',title:'Released examples',access:{state:'available'},links:[]},...extra};}
 function boundary(replies,calls=[]) {return {fetchImpl:async(url,init)=>{calls.push(JSON.parse(init.body));assert.ok(replies.length,'bounded expected model calls');return {ok:true,status:200,json:async()=>({content:[{type:'text',text:JSON.stringify(replies.shift())}]})};}};}
 
-test('Topics analysis stays lightweight; a separate full-paper call supplies the claim manifest',async()=>{
+test('Analysis stays lightweight and no separate full-paper extractor exists',async()=>{
  const q=[0,25,50,75,100].map(level=>({level,question:'Question',sample_response:'Answer'}));
  const calls=[];const out=await OM.analyze({pdfText:'Methods §3: We map the action and repetition count to the exercise template.',familiarityLabel:'Unfamiliar',depthLabel:'Everyday'},credentials,boundary([{title:'Instructions',one_liner:'Mapping',areas:[{area:'Templates',questions:q},{area:'Programming',questions:q}],grounding}],calls));
  assert.equal(out.grounding,undefined);
  assert.doesNotMatch(calls[0].messages[0].content.at(-1).text,/short verbatim supporting passage/);
- out.grounding=await OM.paperGrounding({pdfText:'Full paper methods and experiments'},credentials,boundary([{grounding}],calls));
- assert.deepEqual(out.grounding,grounding);
- assert.match(calls[1].messages[0].content.at(-1).text,/contribution, methods, experiments, evidence, and limitations/);
- assert.match(JSON.stringify(calls[1]),/Full paper methods and experiments/);
- assert.deepEqual(R.fromOnboarding({paper_id:'paper',analysis:out})[0].metadata.grounding,grounding);
+ assert.equal(OM.paperGrounding,undefined);
+ assert.equal(calls.length,1);
+ assert.deepEqual(R.fromOnboarding({paper_id:'paper',analysis:{...out,grounding}})[0].metadata.grounding,grounding);
  assert.ok(JSON.stringify(G.normalize({...grounding,evidence:Array(100).fill(grounding.evidence[0])})).length<10000);
 });
 test('paper-dependent Direction uses paper mechanism and actual verified resource',async()=>{
  const calls=[];const out=await OM.direction(input(),credentials,boundary([direction,positive],calls));
  assert.deepEqual(out.paperBasis,paperBasis);assert.equal(calls.length,2);
  assert.match(calls[0].messages[0].content[0].text,/Figure 4/);assert.match(calls[0].messages[0].content[0].text,/Released examples/);
- assert.match(calls[1].messages[0].content[0].text,/cited ID alone is not enough/);
+ assert.match(calls[1].messages[0].content[0].text,/do not demand missing quotes or evidence IDs/);
 });
 test('topic-adjacent browser is rejected even with superficially valid paper citations; one bounded correction',async()=>{
  const weak={...direction,title:'Build an instruction/code browser',what_you_would_make:'Navigate examples and highlight metadata.'};
@@ -80,4 +78,16 @@ test('captured ML, HCI and biology plans cite real fixture passages and retain a
   assert.match(c.direction.paperBasis.interrogate,/vary|change|compare/i);
   assert.ok(c.direction.paperBasis.extend.length>20);
  }
+});
+
+test('Analysis-only planning retains review without requiring invented citations',async()=>{
+ const summary={title:'Instruction mapping',one_liner:'Map action and repetition count to an exercise template.'};
+ const args=input({paper:summary}),calls=[];
+ const made=await OM.planStage('direction','draft',args,null,'',credentials,boundary([direction],calls));
+ assert.equal(made.reason,''); assert.equal(made.draft.paperBasis,null);
+ const reviewed=await OM.planStage('direction','review',args,made.draft,'',credentials,boundary([positive],calls));
+ assert.equal(reviewed.passed,true);assert.equal(calls.length,2);
+ assert.match(calls[1].messages[0].content[0].text,/Map action and repetition count/);
+ assert.match(calls[1].messages[0].content[0].text,/do not demand missing quotes or evidence IDs/);
+ assert.equal(G.structuralIssue({...direction,title:'Read the paper'},'direction',args),'Use concrete research actions, not studying or infrastructure prerequisites');
 });

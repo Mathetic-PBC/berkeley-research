@@ -16,17 +16,17 @@ module.exports = defineConfig({
   projects: [
     {
       name: "chromium-e2e",
-      testMatch: ["browser-cli-browser.spec.js", "browser-compatibility.spec.js", "background-grounding.spec.js", "mockup-previews.spec.js", "debugger.spec.js"],
+      testMatch: ["browser-cli-browser.spec.js", "browser-compatibility.spec.js", "analysis-planning.spec.js", "mockup-previews.spec.js", "debugger.spec.js"],
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "firefox-compat",
-      testMatch: ["browser-compatibility.spec.js", "background-grounding.spec.js", "mockup-previews.spec.js"],
+      testMatch: ["browser-compatibility.spec.js", "analysis-planning.spec.js", "mockup-previews.spec.js"],
       use: { ...devices["Desktop Firefox"] },
     },
     {
       name: "webkit-compat",
-      testMatch: ["browser-compatibility.spec.js", "background-grounding.spec.js", "mockup-previews.spec.js"],
+      testMatch: ["browser-compatibility.spec.js", "analysis-planning.spec.js", "mockup-previews.spec.js"],
       use: { ...devices["Desktop Safari"] },
     },
   ],

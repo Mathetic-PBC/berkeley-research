@@ -136,8 +136,7 @@
 
   function advancePlan(kind, body) {
     var paper = st.row.paper_id, chosen = JSON.stringify(st.row.asset_chosen), generation = st.row.id;
-    var request = Object.assign({ action: "plan", kind: kind, retry: true, grounding_retry: st.ui.retryGrounding === true }, body);
-    st.ui.retryGrounding = false;
+    var request = Object.assign({ action: "plan", kind: kind, retry: true }, body);
     st.ui.planRequests = st.ui.planRequests || {};
     if (body.revise || body.regenerate) {
       var key = JSON.stringify(body), saved = st.ui.planRequests[kind];
@@ -581,7 +580,7 @@
     if (st.screen === "loading") { app.appendChild(el("div", "ob-wait", st.error || "Waking up…")); return; }
     if (st.screen === "signin") { window.location.href = "/engelbart/signin"; return; }
     if (st.screen === "error") { var e = el("div", "ob-wait"); e.appendChild(el("div", "ob-err", st.error)); app.appendChild(e); return; }
-    if (st.row && st.row.status === "open") { warmBrainstorm(); maybeWarmGrounding(); if (st.row.analysis_status === "running") pollAnalysis(); }
+    if (st.row && st.row.status === "open") { warmBrainstorm(); if (st.row.analysis_status === "running") pollAnalysis(); }
     app.appendChild(railView());
     var main = el("div", "ob-main"), body = el("div", "ob-body"), content = el("div", "ob-content");
     attr(main, "data-mockups", st.step === 6 ? "1" : "0");
@@ -869,15 +868,28 @@
       if (resource.source && resource.source.provider === "local_path") section.appendChild(el("div", "ob-hint", resource.source.path + " · Inspected when Engelbart opens locally"));
       if (resource.error) section.appendChild(el("div", "ob-hint", resource.error));
     }
-    var chooseLocal = el("button", "ob-seed", "Choose local folder in Engelbart"); chooseLocal.type = "button"; chooseLocal.disabled = state.busy;
+    var chooseLocal = el("button", "ob-drop ob-dataset-pick"); chooseLocal.type = "button"; chooseLocal.disabled = state.busy;
+    attr(chooseLocal, "aria-label", "Choose local folder in Engelbart");
+    chooseLocal.appendChild(el("span", "ob-drop-icon", "+"));
+    var localText = el("span", "ob-drop-text");
+    localText.appendChild(el("span", "ob-drop-title", "Add your dataset"));
+    localText.appendChild(el("span", "ob-drop-sub", "Click to choose a local folder in Engelbart"));
+    chooseLocal.appendChild(localText);
     on(chooseLocal, "click", function () {datasetChange({op:"local_picker"});}); section.appendChild(chooseLocal);
     section.appendChild(el("div", "ob-hint", "A folder picker will open on your computer when installed Engelbart prepares this project. No path to type and no data uploaded."));
-    var drop = el("div", "ob-dataset-drop", "Drop a dataset file or folder here");
+    var uploads = el("details", "ob-dataset-uploads");
+    uploads.appendChild(el("summary", "ob-hint", "Upload files instead"));
+    var drop = el("div", "ob-drop ob-dataset-drop");
+    drop.appendChild(el("div", "ob-drop-icon", "+"));
+    var uploadText = el("div", "ob-drop-text");
+    uploadText.appendChild(el("div", "ob-drop-title", "Upload your dataset"));
+    uploadText.appendChild(el("div", "ob-drop-sub", "Drop a file or folder, or choose below"));
+    drop.appendChild(uploadText);
     on(drop, "dragover", function (e) {e.preventDefault();});
     on(drop, "drop", function (e) {
       e.preventDefault(); if (state.busy) return;
       droppedDatasetFiles(e.dataTransfer).then(uploadDataset).catch(function (error) {state.error = error.message; draw();});
-    }); section.appendChild(drop);
+    }); uploads.appendChild(drop);
     var controls = el("div", "ob-dataset-controls");
     [{label:"Upload file", folder:false}, {label:"Upload folder", folder:true}].forEach(function (choice) {
       var label = el("span"), button = el("button", "ob-seed", choice.label), input = el("input", "ob-hide"); input.type = "file"; input.disabled = state.busy;
@@ -890,9 +902,9 @@
     });
     if (resource || pending) {
       var remove = el("button", "ob-tiny", "Remove dataset"); remove.type = "button"; remove.disabled = state.busy;
-      controls.appendChild(on(remove, "click", function () {datasetChange({op:"remove"});}));
+      section.appendChild(on(remove, "click", function () {datasetChange({op:"remove"});}));
     }
-    section.appendChild(controls);
+    uploads.appendChild(controls); section.appendChild(uploads);
     var local = el("div", "ob-dataset-controls"), localInput = el("input"); localInput.type = "text";
     localInput.placeholder = "~/Desktop/Dataset/dataset"; localInput.value = state.localPath || ""; localInput.disabled = state.busy;
     attr(localInput, "aria-label", "Local dataset folder path");
@@ -1054,7 +1066,7 @@
     st.row.analysis_status = read.analysis_status;
     if (read.analysis) st.row.analysis = Object.assign({}, read.analysis, st.row.analysis && st.row.analysis.grounding ? { grounding: st.row.analysis.grounding } : {});
     st.row.analysis_error = read.analysis_error || "";
-    warmBrainstorm(); maybeWarmGrounding();
+    warmBrainstorm();
     // Not while the comparison is up: a redraw reloads both frames, and the
     // only thing here it would change is a line in the header.
     if (changed || st.step === 7 || st.step === 8) draw();
@@ -1247,46 +1259,6 @@
     // each; only the prose is shown, the card draws the rest.
     var text = str(turn.content);
     return turn.role === "assistant" ? text.split(/(?:^|\n)\((?:asked|offered)\)/)[0] : text;
-  }
-
-  // Full PDF grounding is independent of the visible screen and all user choices.
-  // The browser explicitly owns each request; nothing runs after its HTTP response.
-  var groundingWarm = { key: "", pending: false, timer: null, stopped: false };
-  function hasGrounding() {
-    var g = st.row && st.row.analysis && st.row.analysis.grounding;
-    return g && typeof g.contribution === "string" && g.contribution.trim() &&
-      Array.isArray(g.evidence) && g.evidence.slice(0,10).some(function(e) {
-        return ["method","experiment","artifact"].indexOf(e.kind)>=0 &&
-          ["claim","quote","location"].every(function(k) { return typeof e[k] === "string" && e[k].trim(); });
-      });
-  }
-  function maybeWarmGrounding() {
-    var r = st.row;
-    if (!r || r.status !== "open" || !r.paper_id || r.analysis_status !== "done" || hasGrounding()) return;
-    var key = r.id + ":" + r.paper_id;
-    if (groundingWarm.key !== key) {
-      clearTimeout(groundingWarm.timer);
-      groundingWarm = { key:key, pending:false, timer:null, stopped:false };
-    }
-    var job = r.planning && r.planning.paper_grounding || {};
-    if (groundingWarm.pending || groundingWarm.timer || groundingWarm.stopped || job.status === "error") return;
-    groundingWarm.pending = true;
-    api("paper_grounding", job.status === "running" ? {} : {run:true}).then(function(out) {
-      if (!st.row || st.row.id + ":" + st.row.paper_id !== key) return;
-      groundingWarm.pending = false;
-      if (out.grounding_status === "superseded") { groundingWarm.stopped = true; return; }
-      st.row.planning = st.row.planning || {};
-      st.row.planning.paper_grounding = {status:out.grounding_status, error:out.grounding_error, started_at:out.grounding_started_at};
-      if (out.grounding) st.row.analysis = Object.assign({}, st.row.analysis, {grounding:out.grounding});
-      if (out.grounding_status === "running" || out.grounding_status === "none") {
-        groundingWarm.timer = setTimeout(function() { groundingWarm.timer = null; maybeWarmGrounding(); },3000);
-      } else if (out.grounding_status !== "done") groundingWarm.stopped = true;
-      // No redraw: background status must not interrupt typing or the install handoff.
-    }).catch(function() {
-      if (st.row && st.row.id + ":" + st.row.paper_id === key) {
-        groundingWarm.pending = false; groundingWarm.stopped = true;
-      }
-    });
   }
 
   // One request per paper, independent of the visible step. The server owns
@@ -1954,14 +1926,14 @@
 
   function planRetry(content, step) {
     var box = stepBox(content, count(step), "Couldn’t prepare the proposal");
-    box.appendChild(cta(st.ui.planRejected ? "Try a new proposal" : "Try again", false, function () { st.ui.retryGrounding = true; st.error = ""; st.busy = ""; draw(); }));
+    box.appendChild(cta(st.ui.planRejected ? "Try a new proposal" : "Try again", false, function () { st.error = ""; st.busy = ""; draw(); }));
   }
 
   function drawDirection(content) {
     var r = st.row;
     if (!r.asset_chosen) { stepBox(content, count(10), "Pick what to build on first"); return; }
     if (!r.direction || activePlan("direction")) {
-      if (st.error) { var blocked = stepBox(content, count(10), "Couldn’t prepare the direction"); blocked.appendChild(cta("Try again", false, function () { st.ui.retryGrounding = true; st.error = ""; st.busy = ""; draw(); })); blocked.appendChild(cta("Back to Assets", false, function () { go(9); })); return; }
+      if (st.error) { var blocked = stepBox(content, count(10), "Couldn’t prepare the direction"); blocked.appendChild(cta("Try again", false, function () { st.error = ""; st.busy = ""; draw(); })); blocked.appendChild(cta("Back to Assets", false, function () { go(9); })); return; }
       if (st.busy !== "direction") { st.busy = "direction"; api("direction", st.ui.planRejected ? { regenerate: true } : {}).then(function (out) { st.busy = ""; st.row.direction = out.direction; if (out.asset_chosen) { st.row.asset_chosen = out.asset_chosen; if (out.leveled) st.row.leveled = out.leveled; st.ui.as.picked = out.asset_chosen.key; } draw(); }).catch(fail); }
       generating(content, st.ui.planMessage || "Drafting your direction"); return;
     }

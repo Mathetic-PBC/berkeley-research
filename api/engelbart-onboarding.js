@@ -21,11 +21,11 @@ const { verifyUser } = require("./_lib/supabase");
 const { telemetry, userHash } = require("./_lib/telemetry");
 
 const Budget = require("./_lib/request-budget");
-const MODEL_ACTIONS = new Set(["plan", "sources", "analysis", "paper_grounding", "assets", "leveled", "answer", "brainstorm", "asset_ask",
+const MODEL_ACTIONS = new Set(["plan", "sources", "analysis", "assets", "leveled", "answer", "brainstorm", "asset_ask",
   "direction", "subgoals", "details", "goals", "todos", "ask", "rewrite"]);
 // The three background readers are polled for free; only starting or
 // retrying one bills the key.
-const POLLED = new Set(["paper_grounding", "analysis", "assets", "leveled"]);
+const POLLED = new Set(["analysis", "assets", "leveled"]);
 const TEST_RUN_HEADER = "x-engelbart-test-run";
 // The reply names the trace it produced, so a page that made the request can
 // ask /api/engelbart-telemetry?trace= for exactly what the server did to
@@ -153,7 +153,6 @@ async function route(user, body, d, action) {
   if (action === "brainstorm") return OB.brainstorm(user, row, calibrations, body, credentials, options);
   if (action === "asset_ask") return OB.assetAsk(user, row, calibrations, body, credentials, options);
   if (action === "choose_asset") return OB.chooseAsset(user, row, body, options);
-  if (action === "paper_grounding") return OB.paperGrounding(user, row, body, credentials, options);
   if (action === "plan") return OB.plan(user, row, calibrations, body, credentials, options);
   if (action === "direction") return OB.direction(user, row, calibrations, body, credentials, options);
   if (action === "subgoals") return OB.subgoals(user, row, calibrations, body, credentials, options);

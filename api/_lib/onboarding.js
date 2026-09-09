@@ -768,7 +768,6 @@ async function directionAction(user, row, calibrations, body, credentials, optio
     return { direction: row.direction, asset_chosen: row.asset_chosen, leveled: row.leveled };
   }
   const turns = await turnsOf(row, "brainstorm", "", options);
-  await ensurePaperGrounding(user, row, credentials, options);
   const made = await OM.direction({ reader: readerOf(row, calibrations), paper: paperOf(row), interest: row.interest || "",
     assessment: latestAssessment(row, calibrations), turns: turns.map((t) => ({ role: t.role, content: t.content })), asset: row.asset_chosen,
     leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
@@ -786,7 +785,6 @@ async function subgoalsAction(user, row, calibrations, body, credentials, option
   Resources.assertUsable(row.direction, row.asset_chosen, row.leveled?.assets || row.assets?.assets || []);
   const feedback = long(body && body.revise, 1000);
   if (row.subgoals && !feedback && !(body && body.regenerate)) return { subgoals: row.subgoals };
-  await ensurePaperGrounding(user, row, credentials, options);
   const made = await OM.subgoals({ reader: readerOf(row, calibrations), paper: paperOf(row), direction: row.direction,
     asset: row.asset_chosen, leveled: row.leveled ? { locus: row.leveled.locus, sticky: row.leveled.sticky } : null,
     previous: feedback ? row.subgoals : null, feedback }, credentials, options);
@@ -981,15 +979,6 @@ function paperOf(row) {
     ...(a.grounding ? {grounding: a.grounding} : {}) };
 }
 
-// All callers share the durable paper-scoped job.
-async function paperGrounding(user, row, body, credentials, options = {}) {
-  return require("./grounding-job").run(user, row, body, credentials, options);
-}
-async function ensurePaperGrounding(user, row, credentials, options) {
-  const out = await paperGrounding(user, row, { run: true, caller: "legacy-planning" }, credentials, options);
-  if (out.grounding_status !== "done") throw fail(out.grounding_error?.message || "Reading the paper. Try again shortly.", 409);
-}
-
 // --- generation ---------------------------------------------------------------
 
 async function details(user, row, calibrations, body, credentials, options = {}) {
@@ -1019,7 +1008,6 @@ async function todos(user, row, calibrations, body, credentials, options = {}) {
   if (!row.direction || !Array.isArray(row.subgoals) || !row.subgoals.length) throw fail("Settle the subgoals first", 409);
   if (Array.isArray(row.todos) && row.todos.length && !(body && body.regenerate)) return { todos: row.todos, name: row.project_name };
   const reader = readerOf(row, calibrations);
-  await ensurePaperGrounding(user, row, credentials, options);
   const made = await OM.todos({ reader, paper: paperOf(row), direction: row.direction, subgoal: row.subgoals[0],
     resources: row.asset_chosen ? [row.asset_chosen] : [] }, credentials, options);
   await patch(row, { todos: made.todos, goal_chosen: row.direction.title, project_name: row.project_name || made.name,
@@ -1149,7 +1137,7 @@ async function create(user, row, calibrations, body, options = {}) {
 
 module.exports = {
   STEP, STEP_FIELDS, RUNNING_STALE_MS, MAX_PDF_BYTES,
-  plan, paperGrounding, open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
+  plan, open, reset, step, sources, analysis, answer, details, goals, todos, ask, rewrite, create,
   assets: assetsAction, topicsDone, leveled: leveledAction, brainstorm: brainstormAction, assetAsk, chooseAsset,
   direction: directionAction, subgoals: subgoalsAction,
   latestAssessment, areaLevels, knowledgeOf, assessedDepth, readerOf, toPayload, analysisRunning, publicRow,

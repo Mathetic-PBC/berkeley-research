@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { PGlite } = require('@electric-sql/pglite');
 const Plan = require('../api/_lib/resumable-plan');
-const G = require('../api/_lib/paper-grounding');
+const G = require('../api/_lib/plan-evidence');
 const Budget = require('../api/_lib/request-budget');
 let db;
 const user = { id: '11111111-1111-1111-1111-111111111111' };
@@ -36,16 +36,12 @@ async function fixture({ grounded=true, model }={}) {
   const options={ env:{ SUPABASE_URL:'https://db.invalid',SUPABASE_SERVICE_ROLE_KEY:'service',SUPABASE_ANON_KEY:'anon' }, fetchImpl:async(url,init)=>{
     if (url.includes('/rpc/')) {
       const b=JSON.parse(init.body);
-      if (url.includes('engelbart_grounding_transition')) {
-        const result=await db.query('select engelbart_grounding_transition($1,$2,$3,$4,$5,$6,$7) as value',
-          [b.p_user,b.p_id,b.p_paper,b.p_token,b.p_run,b.p_retry,b.p_save]);
-        return {ok:true,status:200,text:async()=>JSON.stringify(result.rows[0].value)};
-      }
+      assert.ok(!url.includes('engelbart_grounding_transition'), 'no retired job RPC');
       const result=await db.query('select engelbart_plan_transition($1,$2,$3,$4,$5,$6,$7,$8,$9) as value',
         [b.p_user,b.p_id,b.p_kind,b.p_context,b.p_initial,b.p_token,b.p_save??null,b.p_updates??{},b.p_retry??false]);
       return {ok:true,status:200,text:async()=>JSON.stringify(result.rows[0].value)};
     }
-    if (url.includes('/storage/')) return {ok:true,status:200,arrayBuffer:async()=>Buffer.from('%PDF fixture')};
+    assert.ok(!url.includes('/storage/'), 'planning never downloads the full PDF');
     const b=JSON.parse(init.body);calls.push(b);
     const prompt=b.messages[0].content.map(v=>v.text||'').join('\n');
     const answer = model ? await model(prompt,calls.length) : /Return only \{grounding:/.test(prompt) ? {grounding} : /Validate this/.test(prompt) ? positive : draft;
@@ -56,18 +52,18 @@ async function fixture({ grounded=true, model }={}) {
     {reader:{},paper:{...r.analysis},asset:r.asset_chosen,turns:[],direction:r.direction,subgoal:r.subgoals?.[0],resources:[r.asset_chosen]},credentials,options);};
   return {id,calls,row,step,options};
 }
-test('one call per request; grounding, draft and review persist and completion is cached',async()=>{
+test('Analysis-only planning persists draft and review with zero full-PDF reads',async()=>{
   const f=await fixture({grounded:false});
-  for (const stage of ['grounding','draft','review','ready']) {
+  for (const stage of ['draft','review','ready']) {
     const count=f.calls.length;const out=await f.step();assert.equal(out.stage,stage);assert.ok(f.calls.length-count<=1);
   }
-  assert.equal(f.calls.length,3);assert.deepEqual((await f.row()).direction,draft);
-  assert.equal((await f.step()).status,'complete');assert.equal(f.calls.length,3);
+  assert.equal(f.calls.length,2);assert.deepEqual((await f.row()).direction,{...draft,paperBasis:null});
+  assert.equal((await f.step()).status,'complete');assert.equal(f.calls.length,2);
 });
 test('a review timeout preserves the draft and retries only review',async()=>{
   let timeout=true;
   const f=await fixture({model:prompt=>{if(/Validate this/.test(prompt)){if(timeout)throw new DOMException('slow','TimeoutError');return positive;}return draft;}});
-  await f.step();await f.step();await f.step();
+  await f.step();await f.step();
   const error=await f.step();assert.equal(error.error.type,'timeout');assert.equal(error.stage,'review');
   assert.equal((await f.row()).planning.direction.draft.title,draft.title);
   timeout=false;assert.equal((await f.step({retry:true})).status,'complete');
@@ -77,7 +73,7 @@ test('a review timeout preserves the draft and retries only review',async()=>{
 test('concurrent duplicate requests share a lease; stale paper results cannot commit',async()=>{
   let release,arrive;const hold=new Promise(r=>release=r),arrived=new Promise(r=>arrive=r);
   const f=await fixture({model:async()=>{arrive();await hold;return draft;}});
-  await f.step();await f.step();const running=f.step();await arrived;
+  await f.step();const running=f.step();await arrived;
   assert.ok(Date.parse((await f.row()).planning.direction.lease_until)-Date.now()>300000);
   assert.equal((await f.step()).status,'running');assert.equal(f.calls.length,1);
   await db.query('update engelbart_onboardings set paper_id=$2 where id=$1',[f.id,crypto.randomUUID()]);
@@ -89,17 +85,17 @@ test('expired leases resume; an old lease token cannot overwrite a newer draft',
   const first=(await db.query('select engelbart_plan_transition($1,$2,$3,$4,$5,$6,$7,$8,$9) as j',args)).rows[0].j;
   assert.equal(first.status,'claimed');
   await db.query("update engelbart_onboardings set planning=jsonb_set(planning,'{direction,lease_until}',to_jsonb((now()-interval '1 minute')::text)) where id=$1",[r.id]);
-  assert.equal((await f.step()).stage,'draft');
+  assert.equal((await f.step()).stage,'review');
   args[6]={...first.job,status:'complete',stage:'ready'};args[7]={direction:{title:'stale'}};
   const saved=(await db.query('select engelbart_plan_transition($1,$2,$3,$4,$5,$6,$7,$8,$9) as j',args)).rows[0].j;
   assert.equal(saved.status,'superseded');assert.equal((await f.row()).direction,null);
 });
 test('rejections allow one saved correction, then require a new proposal',async()=>{
   const f=await fixture({model:p=>/Validate this/.test(p)?{...positive,grounded:false,reason:'Unsupported outcome'}:draft});
-  await f.step();await f.step();await f.step();assert.equal((await f.step()).stage,'correction');
+  await f.step();await f.step();assert.equal((await f.step()).stage,'correction');
   await f.step();assert.equal((await f.step()).error.type,'rejected');
   const count=f.calls.length;assert.equal((await f.step({retry:true})).status,'error');assert.equal(f.calls.length,count);
-  assert.equal((await f.step({regenerate:true,request_id:'new-proposal-1'})).stage,'grounding');
+  assert.equal((await f.step({regenerate:true,request_id:'new-proposal-1'})).stage,'draft');
 });
 test('SQL ownership prevents claiming another member’s job',async()=>{
   const f=await fixture();const r=await f.row();
@@ -113,7 +109,7 @@ test('request budgets reserve persistence time and never extend a caller deadlin
 });
 
 test('a real deadline abort leaves enough time to persist a retryable review',async()=>{
-  const f=await fixture();await f.step();await f.step();await f.step();
+  const f=await fixture();await f.step();await f.step();
   const base=f.options.fetchImpl;
   f.options.deadlineAt=Date.now()+10100;
   f.options.fetchImpl=(url,init)=>url.endsWith('/v1/messages')?new Promise((resolve,reject)=>{
@@ -130,7 +126,7 @@ test('a real deadline abort leaves enough time to persist a retryable review',as
 test('changing the selected resource invalidates an in-flight draft',async()=>{
   let release,arrive;const hold=new Promise(r=>release=r),arrived=new Promise(r=>arrive=r);
   const f=await fixture({model:async()=>{arrive();await hold;return draft;}});
-  await f.step();await f.step();const running=f.step();await arrived;
+  await f.step();const running=f.step();await arrived;
   assert.ok(Date.parse((await f.row()).planning.direction.lease_until)-Date.now()>300000);
   await db.query('update engelbart_onboardings set asset_chosen=$2 where id=$1',[f.id,{title:'Other code',type:'code'}]);
   release();await assert.rejects(running,/discarded/);
@@ -143,7 +139,7 @@ test('Subgoals and TODOs use the same persisted review boundary',async()=>{
   const f=await fixture({model:p=>/Validate this/.test(p)?positive:/Write the TODO rows/.test(p)?{todos:['Render one instruction','Generate the loop'],name:'loop-workbench',paperBasis:basis}:{subgoals,paperBasis:basis}});
   await db.query('update engelbart_onboardings set direction=$2 where id=$1',[f.id,draft]);
   for(const kind of ['subgoals','todos']){
-    for(const stage of ['draft','review','ready']){
+    for(const stage of ['review','ready']){
       const count=f.calls.length;const out=await f.step({kind});assert.equal(out.stage,stage);assert.ok(f.calls.length-count<=1);
     }
   }
@@ -160,131 +156,6 @@ test('the order migration keeps existing readers on their current screen',async(
   }
 });
 
-const GroundingJob = require('../api/_lib/grounding-job');
-async function warm(f, body={run:true}) {
-  return GroundingJob.run(user,await f.row(),body,credentials,f.options);
-}
-test('background grounding owns one call; reload and Direction join it, then all plans reuse the saved evidence',async()=>{
-  let release,arrive; const hold=new Promise(r=>release=r),arrived=new Promise(r=>arrive=r);
-  const f=await fixture({grounded:false,model:async prompt=>{
-    if(/Return only \{grounding:/.test(prompt)){arrive();await hold;return {grounding};}
-    return /Validate this/.test(prompt)?positive:draft;
-  }});
-  const first=warm(f);await arrived;
-  assert.ok(Date.parse((await f.row()).planning.paper_grounding.lease_until)-Date.now()>300000);
-  assert.equal((await warm(f)).grounding_status,'running');
-  assert.equal((await warm(f,{})).grounding_status,'running');
-  assert.equal((await f.step()).stage,'grounding');
-  const waiting=await f.step();assert.equal(waiting.status,'running');assert.equal(waiting.stage,'grounding');
-  assert.equal(f.calls.length,1);
-  release();assert.equal((await first).grounding_status,'done');
-  assert.deepEqual((await f.row()).analysis.grounding,grounding);
-  assert.equal((await f.step()).stage,'draft','background completion must not restart resources');
-  await f.step();await f.step();
-  assert.equal((await warm(f)).grounding_status,'done');
-  assert.equal(f.calls.filter(c=>/Return only \{grounding:/.test(JSON.stringify(c))).length,1);
-});
-test('legacy grounding is done without a model call; polling missing grounding never claims it',async()=>{
-  const legacy=await fixture();
-  assert.equal((await warm(legacy,{})).grounding_status,'done');
-  assert.equal((await warm(legacy,{retry:true})).grounding_status,'done');
-  assert.equal(legacy.calls.length,0);
-  const missing=await fixture({grounded:false});
-  assert.equal((await warm(missing,{})).grounding_status,'none');
-  assert.equal(missing.calls.length,0);
-  assert.equal((await missing.row()).planning.paper_grounding,undefined);
-});
-test('grounding timeout persists, does not erase context, and requires explicit retry',async()=>{
-  let timeout=true;
-  const f=await fixture({grounded:false,model:p=>{
-    if(/Return only \{grounding:/.test(p)){if(timeout)throw new DOMException('slow','TimeoutError');return {grounding};}
-    return draft;
-  }});
-  const before=await f.row();
-  const error=await warm(f);assert.equal(error.grounding_status,'error');assert.equal(error.grounding_error.type,'timeout');
-  for(const key of ['analysis','asset_chosen','interest','assessment','direction','subgoals','todos']) assert.deepEqual((await f.row())[key],before[key]);
-  assert.equal((await warm(f)).grounding_status,'error');assert.equal(f.calls.length,1);
-  await f.step();
-  const planError=await f.step({retry:true});
-  assert.equal(planError.status,'error','merely reaching Direction must not silently retry a background failure');
-  assert.equal(f.calls.length,1);
-  timeout=false;
-  assert.equal((await f.step({retry:true})).stage,'draft');
-  assert.equal(f.calls.length,2);
-});
-test('expired grounding claim recovers, and stale token or replaced paper cannot persist',async()=>{
-  const f=await fixture({grounded:false}), row=await f.row(), token=crypto.randomUUID();
-  const claim=await db.query('select engelbart_grounding_transition($1,$2,$3,$4,true,false,null) as j',[user.id,row.id,row.paper_id,token]);
-  assert.equal(claim.rows[0].j.status,'claimed');
-  await db.query("update engelbart_onboardings set planning=jsonb_set(planning,'{paper_grounding,lease_until}',to_jsonb('2000-01-01'::text)) where id=$1",[row.id]);
-  assert.equal((await warm(f,{})).grounding_status,'none');
-  assert.equal((await warm(f)).grounding_status,'done');
-  await db.query('update engelbart_onboardings set paper_id=$2 where id=$1',[row.id,crypto.randomUUID()]);
-  const changed=await f.row();
-  assert.equal(changed.analysis.grounding,undefined);
-  assert.equal(changed.planning.paper_grounding,undefined);
-  const late=await db.query('select engelbart_grounding_transition($1,$2,$3,$4,true,false,$5) as j',[user.id,row.id,row.paper_id,token,{status:'done',grounding}]);
-  assert.equal(late.rows[0].j.status,'superseded');
-  assert.equal((await warm(f)).grounding_status,'done','new paper owns its own lifecycle');
-});
-test('an in-flight grounding result is discarded after paper replacement',async()=>{
-  let release,arrive;const hold=new Promise(r=>release=r),arrived=new Promise(r=>arrive=r);
-  const f=await fixture({grounded:false,model:async()=>{arrive();await hold;return {grounding};}});
-  const pending=warm(f);await arrived;
-  await db.query('update engelbart_onboardings set paper_id=$2 where id=$1',[f.id,crypto.randomUUID()]);
-  release();assert.equal((await pending).grounding_status,'superseded');
-  assert.equal((await f.row()).analysis.grounding,undefined);
-});
-test('re-reading Analysis for the same canonical PDF preserves completed grounding',async()=>{
-  const f=await fixture();
-  await db.query('update engelbart_onboardings set analysis=$2 where id=$1',[f.id,{title:'Fresh lightweight summary'}]);
-  assert.deepEqual((await f.row()).analysis.grounding,grounding);
-  assert.equal((await warm(f)).grounding_status,'done');assert.equal(f.calls.length,0);
-});
-
-test('grounding honors a real application abort and persists its timeout within the reserved save budget',async()=>{
-  const f=await fixture({grounded:false});const base=f.options.fetchImpl;
-  f.options.deadlineAt=Date.now()+10200;
-  f.options.fetchImpl=(url,init)=>url.endsWith('/v1/messages')?new Promise((resolve,reject)=>{
-    if(init.signal.aborted)reject(init.signal.reason);
-    else init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true});
-  }):base(url,init);
-  const keepAlive=setInterval(()=>{},1000);
-  try {
-    const result=await warm(f);
-    assert.equal(result.grounding_error.type,'timeout');
-    assert.equal((await f.row()).planning.paper_grounding.status,'error');
-  }finally{clearInterval(keepAlive);}
-});
-test('grounding ownership and invalid legacy evidence cannot bypass the job or validation',async()=>{
-  const f=await fixture({grounded:false});
-  const other=await GroundingJob.run({id:crypto.randomUUID()},await f.row(),{run:true},credentials,f.options);
-  assert.equal(other.grounding_status,'superseded');assert.equal(f.calls.length,0);
-  await db.query('update engelbart_onboardings set analysis=$2 where id=$1',[f.id,{grounding:{contribution:'\n',evidence:grounding.evidence}}]);
-  assert.equal((await warm(f,{})).grounding_status,'none');
-  assert.equal((await warm(f)).grounding_status,'done');
-  assert.equal(f.calls.length,1);
-});
-test('a stale token cannot replace the owner of a recovered grounding claim',async()=>{
-  const f=await fixture({grounded:false}),r=await f.row(),old=crypto.randomUUID(),next=crypto.randomUUID();
-  const call=(token,save=null)=>db.query('select engelbart_grounding_transition($1,$2,$3,$4,true,false,$5) as j',[user.id,r.id,r.paper_id,token,save]);
-  await call(old);
-  await db.query("update engelbart_onboardings set planning=jsonb_set(planning,'{paper_grounding,lease_until}',to_jsonb('2000-01-01'::text)) where id=$1",[r.id]);
-  assert.equal((await call(next)).rows[0].j.status,'claimed');
-  assert.equal((await call(old,{status:'done',grounding})).rows[0].j.status,'superseded');
-  assert.equal((await f.row()).analysis.grounding,undefined);
-  assert.equal((await call(next,{status:'done',grounding})).rows[0].j.status,'done');
-});
-test('an old in-progress planning job promotes its already-extracted same-paper evidence without re-reading',async()=>{
-  const f=await fixture({grounded:false}),r=await f.row();
-  await db.query('update engelbart_onboardings set planning=$2 where id=$1',[r.id,{direction:{
-    status:'pending',stage:'draft',context:{paper_id:r.paper_id},input:{paper:{grounding}}}}]);
-  assert.equal((await warm(f)).grounding_status,'done');
-  assert.deepEqual((await f.row()).analysis.grounding,grounding);
-  assert.equal(f.calls.length,0);
-});
-
-
 test('planning gets 200-second model calls inside a bounded 300-second hosting window',async(t)=>{
  const ordinary=Budget.forAction({},'analysis'),planning=Budget.forAction({},'plan');
  assert.ok(planning.deadlineAt-ordinary.deadlineAt>=159000);
@@ -292,7 +163,17 @@ test('planning gets 200-second model calls inside a bounded 300-second hosting w
  const config=require('../vercel.json');assert.equal(config.functions['api/engelbart-onboarding.js'].maxDuration,300);
  const durations=[],original=AbortSignal.timeout;
  t.mock.method(AbortSignal,'timeout',ms=>{durations.push(ms);return original(ms);});
- const f=await fixture({grounded:false});await warm(f);await f.step();await f.step();await f.step();await f.step();
- assert.equal(durations.filter(ms=>ms===200000).length,3,'grounding, draft and review each allow 200 seconds');
+ const f=await fixture({grounded:false});await f.step();await f.step();await f.step();
+ assert.equal(durations.filter(ms=>ms===200000).length,2,'draft and review each allow 200 seconds');
  assert.ok(Budget.PLANNING_REQUEST_MS<300000);
+});
+
+for (const status of ['pending','error','running']) test('saved legacy grounding stage resumes: '+status,async()=>{
+  const f=await fixture({grounded:false}); await f.step();
+  await db.query("update engelbart_onboardings set planning=jsonb_set(planning,'{direction}',(planning->'direction') || $2::jsonb) where id=$1",[f.id,{stage:'grounding',status,error:{type:'timeout',message:'Old full-paper timeout'},lease_until:'2000-01-01'}]);
+  assert.equal((await f.step({retry:true})).stage,'draft');
+  assert.equal(f.calls.length,0);
+  assert.equal((await f.step()).stage,'review');
+  assert.equal((await f.step()).status,'complete');
+  assert.equal(f.calls.length,2);
 });
