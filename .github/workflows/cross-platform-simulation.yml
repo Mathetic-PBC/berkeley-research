@@ -51,6 +51,16 @@ jobs:
       - name: Install test dependencies
         run: npm ci
         working-directory: berkeley-research
+      - name: Check prompts, agent catalog, and JavaScript
+        if: runner.os == 'Linux'
+        run: |
+          catalog_runtime_ref=$(node -p "require('./engelbart/setup/test/agent-catalog.build.cjs').RUNTIME_SHA")
+          git -C "$CLAUDE_PLUGINS_DIR" fetch --depth=1 origin "$catalog_runtime_ref"
+          npm test
+          npm run check
+        working-directory: berkeley-research
+        env:
+          CLAUDE_PLUGINS_DIR: ${{ github.workspace }}/claude-plugins
       - name: Install Chromium and Linux dependencies
         if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
