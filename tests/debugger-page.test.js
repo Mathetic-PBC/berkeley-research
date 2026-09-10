@@ -142,7 +142,7 @@ function page(options = {}) {
   Object.entries(options.seed || {}).forEach(([k, v]) => store.set(k, typeof v === "string" ? v : JSON.stringify(v)));
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  for (const file of ["fixture.js", "prompts.js", "sim-backend.js", "real-runs.js", "debugger.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), sandbox, { filename: file });
+  for (const file of ["fixture.js", "prompts.js", "sim-backend.js", "real-runs.js", "agent-catalog.js", "agent-graph.js", "debugger.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), sandbox, { filename: file });
   assert.ok(mounted, "the page mounted");
   mounted.frameRef.current = { contentWindow: frameWindow };
   const send = (data, from) => listeners.message(Object.assign({ origin: ORIGIN, source: frameWindow, data }, from || {}));
@@ -167,7 +167,7 @@ test("the URL decides the mode; Real mode never hands the frame the product's te
   assert.equal(P.d.setMode, undefined, "and no way to switch");
   assert.ok(texts(P.d.render()).includes("Engelbart setup, running against the real backend"), "the frame is on the page in Real mode");
   assert.equal(find(P.d.render(), (n) => n.type === "iframe").length, 1);
-  assert.equal(V.isRequestsView, true, "Real mode opens on Requests, where the work shows");
+  assert.equal(V.isAgentView, true, "Real mode opens on the source-backed agent map; requests remain a separate recording view");
   assert.equal(V.stages.length, 0);
   await settle();
   same((P.server.telemetry()), [{ url: "/api/engelbart-telemetry", method: "GET", auth: "Bearer " + TOKEN }], "on entering, the run list is read for the picker, with the member's token");
@@ -638,7 +638,7 @@ test("each mode keeps its own state and the URL says which one runs: a Real sess
   const VR = R.d.renderVals();
   assert.equal(VR.lineageUnavailable, false, "the recorded run names what it read and wrote");
   assert.equal(VR.flowHasNodes, true, "so the graph draws a real run from its recorded reads and writes, with nothing guessed");
-  assert.equal(VR.views[1].label, "Requests · 4");
+  assert.equal(VR.views.find(view => view.key === "requests").label, "Requests · 4");
   assert.equal(VR.frameSrc, "/engelbart/setup/test/frame?mode=real");
   R.send({ egb: "trace", event: events[0] });
   await new Promise((r) => setTimeout(r, 80));
@@ -808,7 +808,7 @@ test("the Prompts view groups the simulator's model calls by the prompt they sen
   P.d.createEnv("Lab"); await settle();
   P.send({ egb: "ready", speed: 1, mode: "sim" }); await flush();
   let V = P.d.renderVals();
-  same([V.views[2].label, V.promptsEmpty, V.promptTabs.length], ["Prompts", true, 0]);
+  same([V.views.find(view => view.key === "prompts").label, V.promptsEmpty, V.promptTabs.length], ["Prompts", true, 0]);
   assert.match(V.promptsEmptyText, /No model calls on this step yet/);
   // The events a simulated answer emits: a request, a grading call with an edited prompt, a follow-up, done.
   const at = 1_700_000_000_000;
@@ -824,7 +824,7 @@ test("the Prompts view groups the simulator's model calls by the prompt they sen
   events.forEach((ev) => P.send({ egb: "trace", event: ev }));
   await new Promise((r) => setTimeout(r, 80));
   V = P.d.renderVals();
-  assert.equal(V.views[2].label, "Prompts · 3", "three model calls");
+  assert.equal(V.views.find(view => view.key === "prompts").label, "Prompts · 3", "three model calls");
   same(V.promptTabs.map((t) => [t.key, t.label, t.count, t.edited, t.on]), [["gradePrompt", "Grade an answer", "2", true, true], ["followUpPrompt", "Write a follow-up", "1", false, false]], "grouped by prompt, in the order the reader meets them, the first open");
   assert.equal(V.promptSelLabel, "Grade an answer");
   same(V.promptCalls.map((c) => [c.when, c.where, c.badge, c.meta, c.input, JSON.parse(c.output)]), [
@@ -849,7 +849,7 @@ test("in Real mode the Prompts view reads each call's request and reply from its
   P.response("rq-1", { trace_id: TRACE.analysis, body: { onboarding: { id: OB }, analysis: { status: "running" } } });
   await settle();
   let V = P.d.renderVals();
-  assert.equal(V.views[2].label, "Prompts · 1");
+  assert.equal(V.views.find(view => view.key === "prompts").label, "Prompts · 1");
   same(V.promptTabs.map((t) => [t.key, t.label, t.count, t.edited]), [["analyzePrompt", "Read the paper", "1", false]], "named by the record's engelbart.prompt.template");
   const call = V.promptCalls[0];
   same([call.where, call.badge, call.status], ["onboarding · analysis (run) · Name", "", "ok"], "the request, and the step it was sent from");
