@@ -138,14 +138,25 @@ test('setup loader uses the shared dots at the viewport center',async({page})=>{
  } finally {await stack.stop();}
 });
 
-test('source choices share a row and a dataset alone uploads actual bytes before Continue',async({page})=>{
+test('compact source cards, nearest slider snapping, and dataset-only upload preserve actual bytes',async({page})=>{
  const stack=new SimulationStack();await stack.start();
  Object.assign(stack.row,{step:4,paper_id:null,paper_title:'',dataset_resource:null,source_article:null});
  try {
   await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
   const next=page.getByRole('button',{name:'Continue',exact:false});await expect(next).toBeDisabled();
-  const pdf=await page.locator('.ob-source-options>.ob-drop').boundingBox(),dataset=await page.getByRole('region',{name:'Project dataset'}).boundingBox(),article=await page.getByRole('region',{name:'Project article'}).boundingBox();
-  expect(Math.abs(pdf.y-dataset.y)).toBeLessThan(1);expect(Math.abs(dataset.y-article.y)).toBeLessThan(1);expect(article.x).toBeGreaterThan(dataset.x);
+  const pdf=await page.getByRole('region',{name:'Project PDF',exact:true}).boundingBox(),dataset=await page.getByRole('region',{name:'Project dataset'}).boundingBox(),article=await page.getByRole('region',{name:'Project article'}).boundingBox();
+  expect(Math.abs(pdf.y-dataset.y)).toBeLessThan(1);expect(Math.abs(dataset.y-article.y)).toBeLessThan(1);
+  expect(dataset.x-pdf.x-pdf.width).toBeGreaterThanOrEqual(12);expect(article.x-dataset.x-dataset.width).toBeGreaterThanOrEqual(12);
+  for (const bounds of [pdf,dataset,article]) expect(bounds.height).toBeLessThanOrEqual(130);
+  for (const kind of ['pdf','dataset','article']) await expect(page.locator(`[data-source-icon="${kind}"]`)).toBeVisible();
+  await expect(page.locator('.ob-rail')).toHaveCSS('width','300px');
+  const track=page.locator('.ob-track');const bounds=await track.boundingBox();
+  for (const [fraction,percent] of [[.26,'20.00%'],[.34,'40.00%']]) {
+   await page.mouse.move(bounds.x+bounds.width*.6,bounds.y+bounds.height/2);await page.mouse.down();
+   await page.mouse.move(bounds.x+bounds.width*fraction,bounds.y+bounds.height/2);await page.mouse.up();
+   await expect.poll(()=>page.locator('.ob-thumb').evaluate(node=>parseFloat(node.style.left))).toBe(parseFloat(percent));
+  }
+  await page.screenshot({path:test.info().outputPath('compact-source-cards.png')});
   const data='metric,value\nlatency,17\n';
   await page.getByLabel('Upload dataset files',{exact:true}).setInputFiles({name:'metrics.csv',mimeType:'text/csv',buffer:Buffer.from(data)});
   await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Uploaded');
@@ -153,6 +164,7 @@ test('source choices share a row and a dataset alone uploads actual bytes before
   await expect(next).toBeEnabled();await next.click();
   await expect(page.getByText('macOS',{exact:true})).toBeVisible();
   expect(stack.row.paper_id).toBeNull();expect(stack.row.dataset_resource.source.provider).toBe('supabase');
+  expect(stack.row.paper_familiarity).toBe(1);
  } finally {await page.close();await stack.stop();}
 });
 

@@ -126,7 +126,7 @@ test("a pairing reroute lands a signed-out visitor on the signup view", async ()
 
   assert.equal(
     page.elements.get("page-def").textContent,
-    "Your invite code reserves one account, and one Claude credit.",
+    "",
   );
 });
 
@@ -138,4 +138,12 @@ test("an explicit mode=login beats the pairing code's signup default", async () 
     page.elements.get("page-def").textContent,
     "Sign in to connect Engelbart.",
   );
+});
+
+
+test("the invite page omits static credit explanations and retains its error/status regions", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../engelbart/signin/index.html"), "utf8");
+  assert.doesNotMatch(html, /Your invite code reserves|The code holds this email/);
+  assert.match(html, /id="invite-status"/);
+  assert.match(html, /id="signup-status"/);
 });

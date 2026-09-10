@@ -115,7 +115,7 @@
 
   var DEF = {
     login: "Sign in to connect Engelbart.",
-    signup: "Your invite code reserves one account, and one Claude credit.",
+    signup: "",
     forgot: "Say which email, and a reset link is on its way.",
     recovery: "Choose a new password for this account.",
     session: "Use your own Claude access, or claim a Mathetic credit.",

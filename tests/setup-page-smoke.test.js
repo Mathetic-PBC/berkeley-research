@@ -425,6 +425,21 @@ test("the slider paints itself while it is dragged and only commits on release",
   assert.equal(page.row().depth, "technical");
 });
 
+test("slider release chooses the nearest stop on either side and persists it", async () => {
+  for (const [position, percent, depth] of [[0.28, "25.00%", "everyday"], [0.41, "50.00%", "some"]]) {
+    const page = mount({ row: fullRow({ step: 3 }) });
+    await settle();
+    const track = one(page.app, "ob-track");
+    track.fire("pointerdown", { clientX: position * 400 });
+    page.win.fire("pointerup", {});
+    await settle();
+    assert.equal(one(page.app, "ob-thumb").style.left, percent);
+    page.cta().fire("click");
+    await settle();
+    assert.equal(page.row().depth, depth);
+  }
+});
+
 test("typing a major narrows the seeds without replacing the field", async () => {
   const page = mount({ row: fullRow({ step: 2, major: "" }) });
   await settle();
@@ -1033,6 +1048,13 @@ test("Mock-ups is the sixth step in the rail, and each pick is between two of th
   assert.equal(page.title(), "Which of these two is better?", "the comparison is the step Install leads into");
   assert.doesNotMatch(textOf(page.app), /Semifinal|pick 1 of 4|tournament/i, "comparison mechanics stay out of the interface");
   assert.equal(picks(page).length, 2, "two mock-ups, one pick each");
+  assert.equal(byClass(page.app, "ob-mk-head").length, 0, "previews have no title/header controls");
+  assert.equal(byClass(page.app, "ob-mk-bar").length, 0, "comparison has no divider or progress line");
+  for (const pick of picks(page)) {
+    assert.equal(pick.tagName, "button", "the whole preview remains keyboard accessible");
+    assert.match(pick.attrs["aria-label"], /^Choose /);
+    assert.equal(textOf(pick), "", "no bottom This one button label");
+  }
 
   // Each frame is the endpoint's own page, sandboxed onto an opaque origin.
   const shown = frames(page);
@@ -1042,7 +1064,7 @@ test("Mock-ups is the sixth step in the rail, and each pick is between two of th
     assert.equal(f.attrs.sandbox, "allow-scripts allow-popups allow-forms");
     assert.doesNotMatch(f.attrs.sandbox, /allow-same-origin/);
   }
-  const names = visibleMockNodes(page, "ob-mk-name").map(textOf);
+  const names = frames(page).map(f => f.attrs.title);
   assert.equal(new Set(names).size, 2, "a pick is never a mock-up against itself");
   for (const n of names) assert.ok(MOCKUPS.some((m) => m.name === n), `${n} is one of the bucket's, named by the server`);
 
@@ -1060,7 +1082,7 @@ test("picking through the bracket saves the placing the member chose, then goes 
   const chosen = [];
   for (let i = 0; i < 4; i += 1) {
     assert.equal(page.title(), "Which of these two is better?", `pick ${i + 1} is still the comparison`);
-    chosen.push(textOf(visibleMockNodes(page, "ob-mk-name")[0]));
+    chosen.push(frames(page)[0].attrs.title);
     picks(page)[0].fire("click");           // always the left one
     await settle();
   }
@@ -1138,22 +1160,22 @@ test("the step fills the wait while the paper is still being read", async () => 
 test("the arrow keys pick the mock-up on that side, and are left alone once the comparison is done", async () => {
   const page = mount({ ...AT_MOCKUPS, mockups: MOCKUPS });
   await settle();
-  const left = textOf(visibleMockNodes(page, "ob-mk-name")[0]);
-  const right = textOf(visibleMockNodes(page, "ob-mk-name")[1]);
+  const left = frames(page)[0].attrs.title;
+  const right = frames(page)[1].attrs.title;
 
   page.doc.fire("keydown", { key: "ArrowRight", target: page.app });
   await settle();
-  assert.notEqual(textOf(visibleMockNodes(page, "ob-mk-name")[0]), left, "→ picked the right one and moved on");
+  assert.notEqual(frames(page)[0].attrs.title, left, "→ picked the right one and moved on");
 
   page.doc.fire("keydown", { key: "ArrowLeft", target: page.app });
   await settle();
   assert.equal(picks(page).length, 2, "← picked the left one and the bracket went on");
 
   // A modifier is a chord, not a pick.
-  const before = textOf(visibleMockNodes(page, "ob-mk-name")[0]);
+  const before = frames(page)[0].attrs.title;
   page.doc.fire("keydown", { key: "ArrowLeft", metaKey: true, target: page.app });
   await settle();
-  assert.equal(textOf(visibleMockNodes(page, "ob-mk-name")[0]), before, "⌘← is left to the browser");
+  assert.equal(frames(page)[0].attrs.title, before, "⌘← is left to the browser");
   assert.ok(right, "both sides were named");
 });
 
