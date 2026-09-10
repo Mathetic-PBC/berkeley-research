@@ -322,6 +322,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(page.getByRole("button", { name: "Reset test environment" })).toBeVisible();
     await expect(realFrame.locator(".ob-title", { hasText: "What year are you?" })).toBeVisible();
     await expect.poll(() => onboardingCalls.length).toBeGreaterThan(calls);
+    await page.getByRole("button", { name: /^Requests/ }).click();
     await expect(page.locator("[id^=stage-]", { hasText: "onboarding · open" }).last()).toContainText("4 ops");
 
     // Reset is available only in the debugger. Cancelling preserves the current
