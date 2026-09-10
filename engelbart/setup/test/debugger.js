@@ -75,7 +75,7 @@ class Debugger extends React.Component {
       picking: false, flowModal: false, detailModal: false, mode: this.loadMode(), frameKey: 1,
       real: this.freshReal() }, this.envState(null));
     // Real mode starts on an empty session; the simulator's tabs wait in the environment's storage.
-    if (this.state.mode === "real") Object.assign(this.state, this.realRecordingState(this.state.real), { view: "requests", inspTab: "input", open: {} });
+    if (this.state.mode === "real") Object.assign(this.state, this.realRecordingState(this.state.real), { view: "agents", inspTab: "input", open: {} });
     this.realClient = window.EGB_REAL ? window.EGB_REAL.client() : null;
     this.frameRef = React.createRef(); this.bodyRef = React.createRef(); this.listRef = React.createRef(); this.flowScrollRef = React.createRef();
     this.pending = []; this.flushTimer = null;
@@ -182,7 +182,7 @@ class Debugger extends React.Component {
   envState(id) {
     const d = id ? this.loadEnvData(id) : null, tabs = d && Array.isArray(d.recordings) && d.recordings.length ? d.recordings : this.loadTabs();
     return { envId: id, recordings: tabs, targetId: d && d.targetId || tabs[0].id, viewing: Math.min(d && d.viewing || 0, tabs.length - 1), notes: d && d.notes || {}, flowPos: d && d.flowPos || {}, flowPan: d && d.flowPan || { x: 0, y: 0 }, flowZoom: d && d.flowZoom || 1, flowHeight: d && d.flowHeight || null,
-      sel: null, flowSel: null, open: {}, connected: false, view: "flow" };
+      sel: null, flowSel: null, open: {}, connected: false, view: "agents" };
   }
   // Leaving the open environment: events the frame reported but has not yet drawn are drawn, then everything it
   // has is saved; the connection bookkeeping is cleared for whatever frame comes next.
@@ -986,7 +986,8 @@ class Debugger extends React.Component {
         { k: "model calls", v: String(t.model), help: "Operations that called a model through LiteLLM" },
         real ? { k: "tokens", v: tokens.toLocaleString(), help: "Input and output tokens the model calls recorded" } : { k: "est. cost", v: t.cost ? this.fmtCost(t.cost) : "$0", help: "Estimated model spend, from token counts" },
         { k: "server time", v: this.fmtMs(t.ms) === "—" ? "0 ms" : this.fmtMs(t.ms), help: real ? "Time the server recorded for each action, summed" : "Simulated time the server spent answering, summed across requests" }],
-      views: [["flow", "Data flow"], ["requests", "Requests" + (t.requests ? " · " + t.requests : "")], ["prompts", "Prompts" + (promptCount ? " · " + promptCount : "")]].map(([k, label]) => ({ key: k, label: label, color: (S.view || "flow") === k ? "#171717" : "#8f8f8f", line: (S.view || "flow") === k ? "#171717" : "transparent", select: () => this.setState({ view: k }) })),
+      views: [["agents", "Agent map"], ["flow", "Recorded data"], ["requests", "Requests" + (t.requests ? " · " + t.requests : "")], ["prompts", "Prompts" + (promptCount ? " · " + promptCount : "")]].map(([k, label]) => ({ key: k, label: label, color: (S.view || "agents") === k ? "#171717" : "#8f8f8f", line: (S.view || "agents") === k ? "#171717" : "transparent", select: () => this.setState({ view: k }) })),
+      isAgentView: (S.view || "agents") === "agents",
       isFlowView: (S.view || "flow") === "flow", isRequestsView: (S.view || "flow") === "requests", isPromptsView: (S.view || "flow") === "prompts",
       promptTabs: promptTabs, promptCalls: promptCalls, promptsEmpty: !promptCount, promptSelLabel: promptTabs.length ? this.PROMPT_LABEL(promptKey) : "",
       promptsEmptyText: real ? (S.real.picked ? "This run recorded no model calls." : "No model calls yet. When the product asks the model, each call lands here under its prompt.") : "No model calls on this step yet. When the product asks the model, each call lands here under its prompt.",
@@ -1302,10 +1303,25 @@ class Debugger extends React.Component {
               h("span", { style: css("display:block;margin-top:5px;font:11px/1.3 " + SANS + ";color:#8f8f8f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis") }, stt.k)))))),
       h("div", { style: css("display:flex;align-items:center;gap:2px;margin-bottom:12px;border-bottom:1px solid #eaeaea") },
         V.views.map(vw => h("button", { key: vw.key, onClick: vw.select, style: css("padding:8px 10px 9px;border:none;background:transparent;font:500 12.5px/1 " + SANS + ";color:" + vw.color + ";border-bottom:2px solid " + vw.line + ";margin-bottom:-1px;white-space:nowrap") }, vw.label))),
+      V.isAgentView ? this.renderAgentMap() : null,
       V.isFlowView && V.lineageUnavailable ? this.renderLineageUnavailable() : null,
       V.isFlowView && !V.lineageUnavailable ? this.renderFlow(V) : null,
       V.isRequestsView ? this.renderRequests(V) : null,
       V.isPromptsView ? this.renderPrompts(V) : null);
+  }
+  renderAgentMap() {
+    if (!window.EGB_AGENT_GRAPH || !window.EGB_AGENT_CATALOG) return h("p", null, "The source map did not load. Reload to try again; recorded requests remain available.");
+    const calls = [];
+    this.viewed().stages.forEach(stage => stage.ops.filter(op => op.kind === "model").forEach(op => {
+      calls.push({ id: op.id, key: this.templateOf(op), purpose: op.meta && op.meta.purpose, status: op.status, label: stage.label,
+        open: this.promptCallVM(stage, op).open });
+    }));
+    const environment = this.isReal() ? this.state.realPrompts : this.state.envId;
+    return h(window.EGB_AGENT_GRAPH, { catalog: window.EGB_AGENT_CATALOG, mode: this.isReal() ? "real" : "sim", calls,
+      onEditPrompt: environment ? key => {
+        this.openConfig("edit", environment);
+        this.setState(state => ({ config: Object.assign({}, state.config, { section: "prompts", promptTab: key }) }));
+      } : null });
   }
   // The Prompts view: a tab per prompt the run sent, and under it every call of that prompt, the message as
   // the model received it and the reply as parsed. The rest of the call is one click away in the inspector.

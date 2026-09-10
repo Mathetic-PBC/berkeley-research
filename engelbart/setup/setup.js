@@ -100,7 +100,7 @@
   function attr(node, name, value) { node.setAttribute(name, value); return node; }
   function str(v) { return v == null ? "" : String(v); }
   function trunc(t, n) { t = str(t); return t.length > n ? t.slice(0, n - 1).trim() + "…" : t; }
-  function snap(pos, n) { return Math.max(0, Math.min(n - 1, Math.ceil(pos * n) - 1)); }
+  function snap(pos, n) { return Math.max(0, Math.min(n - 1, Math.round(pos * n) - 1)); }
 
   // One POST, one JSON answer, one error with the server's words in it.
   function post(url, payload) {
@@ -517,7 +517,7 @@
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
-      pos = Math.max(1, Math.min(n, Math.ceil(pos * n))) / n;
+      pos = (snap(pos, n) + 1) / n;
       paint();
       opts.onCommit(pos);
     }
@@ -863,13 +863,13 @@
 
   function datasetUploadView() {
     var state = datasetState(), resource = st.row.dataset_resource;
-    var section = el("section", "ob-dataset"); attr(section, "aria-label", "Project dataset");
+    var section = el("section", "ob-source-card ob-dataset"); attr(section, "aria-label", "Project dataset");
     var picker = el("input", "ob-hide"); picker.type = "file"; picker.multiple = true;
     attr(picker, "aria-label", "Upload dataset files"); picker.disabled = state.busy;
     on(picker, "change", function () {uploadDataset(selectedDatasetFiles(picker.files)); picker.value = "";});
     var choose = el("button", "ob-drop ob-dataset-pick ob-dataset-drop"); choose.type = "button"; choose.disabled = state.busy;
     attr(choose, "aria-label", "Upload Dataset");
-    choose.appendChild(el("span", "ob-drop-icon", "+"));
+    choose.appendChild(sourceIcon("dataset"));
     var text = el("span", "ob-drop-text");
     text.appendChild(el("span", "ob-drop-title", "Upload Dataset"));
     choose.appendChild(text);
@@ -888,7 +888,7 @@
     section.appendChild(folderPicker);
 
     if (resource && (resource.name !== "Local dataset" || resource.manifest)) {
-      var saved = el("div", "ob-file ob-dataset-saved ob-dataset-drop"); saved.appendChild(fileIcon());
+      var saved = el("div", "ob-file ob-dataset-saved ob-dataset-drop"); saved.appendChild(sourceIcon("dataset"));
       var detail = el("div", "ob-file-text");
       detail.appendChild(el("div", "ob-file-name", resource.name || "Dataset"));
       var count = resource.manifest && resource.manifest.fileCount;
@@ -915,16 +915,16 @@
   }
 
   function articleUploadView() {
-    var section = el("section", "ob-article"); attr(section, "aria-label", "Project article");
+    var section = el("section", "ob-source-card ob-article"); attr(section, "aria-label", "Project article");
     var article = st.ui.article;
     if (article) {
-      var saved = el("div", "ob-file"); saved.appendChild(fileIcon());
+      var saved = el("div", "ob-file"); saved.appendChild(sourceIcon("article"));
       saved.appendChild(el("div", "ob-file-name", article.name || article.url || "Article"));
       var remove = el("button", "ob-link", "Remove"); remove.type = "button";
       on(remove, "click", function () {st.ui.article = null; draw();}); saved.appendChild(remove); section.appendChild(saved);
     } else {
       var choose = el("button", "ob-drop"); choose.type = "button"; attr(choose, "aria-label", "Upload Article");
-      choose.appendChild(el("span", "ob-drop-icon", "+")); choose.appendChild(el("span", "ob-drop-title", "Upload Article"));
+      choose.appendChild(sourceIcon("article")); choose.appendChild(el("span", "ob-drop-title", "Upload Article"));
       on(choose, "click", function () {st.ui.articleOpen = !st.ui.articleOpen; draw();}); section.appendChild(choose);
     }
     return section;
@@ -955,10 +955,11 @@
   function drawPaper(content) {
     var box = stepBox(content, count(4), "What are you building on?");
     var card = el("div", "ob-card ob-sources-card"), stack = el("div", "ob-stack"), choices = el("div", "ob-source-options"), p = st.ui.pfile;
+    var pdf = attr(el("section", "ob-source-card ob-pdf"), "aria-label", "Project PDF");
     if (!p) {
       var drop = attr(el("label", "ob-drop"), "data-over", st.ui.pover ? "1" : "0");
       attr(drop, "role", "button"); attr(drop, "aria-label", "Upload PDF"); drop.tabIndex = 0;
-      drop.appendChild(el("div", "ob-drop-icon", "+"));
+      drop.appendChild(sourceIcon("pdf"));
       var t = el("div", "ob-drop-text");
       t.appendChild(el("div", "ob-drop-title", "Upload PDF"));
       drop.appendChild(t);
@@ -968,7 +969,7 @@
       on(drop, "dragover", function (e) { e.preventDefault(); if (!st.ui.pover) { st.ui.pover = true; drop.setAttribute("data-over", "1"); } });
       on(drop, "dragleave", function () { st.ui.pover = false; drop.setAttribute("data-over", "0"); });
       on(drop, "drop", function (e) { e.preventDefault(); st.ui.pover = false; upload(e.dataTransfer.files[0]); });
-      choices.appendChild(drop);
+      pdf.appendChild(drop);
     } else {
       var row = el("div", "ob-file"); row.appendChild(fileIcon());
       var txt = el("div", "ob-file-text");
@@ -977,9 +978,9 @@
       row.appendChild(txt);
       var replace = el("button", "ob-link", "Replace"); replace.type = "button";
       row.appendChild(on(replace, "click", function () { st.ui.pfile = null; draw(); }));
-      choices.appendChild(row);
+      pdf.appendChild(row);
     }
-    choices.appendChild(datasetUploadView()); choices.appendChild(articleUploadView()); stack.appendChild(choices);
+    choices.appendChild(pdf); choices.appendChild(datasetUploadView()); choices.appendChild(articleUploadView()); stack.appendChild(choices);
     if (st.ui.articleOpen) stack.appendChild(articleEditor());
     [{ key: "plink", label: "Project page" }, { key: "prepo", label: "GitHub" }].forEach(function (r) {
       var wrap = el("div", "ob-urlrow"), open_ = st.ui.popen === r.key, val = st.ui[r.key];
@@ -1041,6 +1042,26 @@
       }).catch(function (e) { st.ui.psending = false; fail(e); });
     }));
     card.appendChild(acts); box.appendChild(card);
+  }
+
+  // Paper, spreadsheet, and open magazine: small source-specific glyphs.
+  function sourceIcon(kind) {
+    var icon;
+    if (kind === "pdf") icon = el("span", "ob-drop-icon", "+");
+    else {
+      icon = el("span", "ob-source-icon ob-source-icon-" + kind);
+      if (kind === "dataset") {
+        for (var i = 0; i < 9; i++) icon.appendChild(el("i"));
+      } else {
+        for (var page = 0; page < 2; page++) {
+          var leaf = el("span", "ob-source-page");
+          for (var line = 0; line < 3; line++) leaf.appendChild(el("i"));
+          icon.appendChild(leaf);
+        }
+      }
+    }
+    attr(icon, "data-source-icon", kind); attr(icon, "aria-hidden", "true");
+    return icon;
   }
 
   // The little page glyph beside an attached PDF.
@@ -1517,23 +1538,13 @@
       attr(entry.pane, "data-preview", side); attr(entry.pane, "data-side", side);
       attr(entry.pane, "aria-hidden", side === "warm" ? "true" : "false");
       if (side === "warm") attr(entry.pane, "inert", ""); else entry.pane.removeAttribute("inert");
-      entry.pane.querySelector(".ob-mk-pick").textContent = side === "left" ? "◀ This one" : "This one ▶";
     });
     m.fits = m.previews.map(function (entry) { return entry.fit; });
-    var p = T.progress(m.t);
-    m.previewCaption.textContent = "";
-    m.previewProgress.style.width = (p.total ? Math.round(100 * p.made / p.total) : 0) + "%";
     fitMocks();
   }
 
   function mockPane(side, id) {
     var pane = attr(el("div", "ob-mk-pane"), "data-side", side);
-    var head = el("div", "ob-mk-head");
-    head.appendChild(el("span", "ob-mk-name", mockName(id)));
-    var open = el("a", "ob-mk-open", "open \u2197");
-    attr(attr(attr(open, "href", mockUrl(id)), "target", "_blank"), "rel", "noopener");
-    head.appendChild(open);
-    pane.appendChild(head);
     // The mock-up's own scripts run on an opaque origin: it can never read the
     // page that frames it, nor the member's session.
     var fit = el("div", "ob-mk-fit");
@@ -1541,13 +1552,14 @@
     attr(frame, "sandbox", "allow-scripts allow-popups allow-forms");
     attr(frame, "referrerpolicy", "no-referrer");
     attr(frame, "title", mockName(id));
+    attr(frame, "tabindex", "-1");
     attr(frame, "width", String(MOCK_W)); attr(frame, "height", String(MOCK_H));
     attr(frame, "src", mockUrl(id));
     fit.appendChild(frame);
     pane.appendChild(fit);
 
     var pick = el("button", "ob-mk-pick"); pick.type = "button";
-    pick.appendChild(el("span", "", side === "left" ? "\u25c0 This one" : "This one \u25b6"));
+    attr(pick, "aria-label", "Choose " + mockName(id));
     on(pick, "click", function () { pickMock(id); });
     pane.appendChild(pick);
     return pane;
@@ -1608,9 +1620,6 @@
       content.appendChild(box); return;
     }
     box.appendChild(el("div", "ob-title", "Which of these two is better?"));
-    m.previewCaption = el("div", "ob-sub"); box.appendChild(m.previewCaption);
-    var bar = el("div", "ob-mk-bar"); m.previewProgress = el("i");
-    bar.appendChild(m.previewProgress); box.appendChild(bar);
     m.previewArena = el("div", "ob-mk-arena"); m.previews = [];
     box.appendChild(m.previewArena);
     // draw() fits the panes synchronously once attached, before the next paint.

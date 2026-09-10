@@ -71,7 +71,7 @@ test("the debugger runs the real setup page against the simulated backend under 
     await expect(page.getByText("POST /api/engelbart-onboarding").first()).toBeVisible();
 
     // The data-flow graph drew the value the press wrote.
-    await page.getByRole("button", { name: "Data flow" }).click();
+    await page.getByRole("button", { name: "Recorded data" }).click();
     await expect(page.locator("[data-node]").first()).toBeVisible();
 
     // All environments… returns to the dashboard: the frame is unmounted, the card says what was recorded.
@@ -206,6 +206,8 @@ test("Real mode runs the setup page against the backend as the member and puts e
     expect(onboardingCalls.slice(before).map((c) => c.action)).toEqual(["open"]);
     expect(onboardingCalls.slice(before).every((c) => c.auth === "Bearer " + MEMBER_TOKEN)).toBe(true);
 
+    // Requests remain available separately from the default source map.
+    await page.getByRole("button", { name: /^Requests/ }).click();
     // Its request is a row at once, labelled as the simulator would label it, and the trace the reply named lands under it.
     await expect(page.getByText("This session")).toBeVisible();
     const openRow = page.locator("[id^=stage-]", { hasText: "onboarding · open" });
@@ -297,7 +299,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(inspector.locator("pre")).toContainText("end_turn");
 
     // A run recorded before the server kept lineage says so; no edge is guessed for it.
-    await page.getByRole("button", { name: "Data flow" }).click();
+    await page.getByRole("button", { name: "Recorded data" }).click();
     await expect(page.getByText("Lineage was not recorded for this run")).toBeVisible();
     await expect(page.locator("[data-node]")).toHaveCount(0);
     await page.getByRole("button", { name: /^Requests/ }).click();
@@ -308,7 +310,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(page.locator("[id^=stage-]", { hasText: "onboarding · step" }).last()).toBeVisible();
     await expect(realFrame.locator(".ob-title", { hasText: "What year are you?" })).toBeVisible();
     // This session's runs recorded what they read and wrote, so the graph draws them: the row load read the session, the step wrote the profile.
-    await page.getByRole("button", { name: "Data flow" }).click();
+    await page.getByRole("button", { name: "Recorded data" }).click();
     await expect(page.locator("[data-node]").first()).toBeVisible();
     await expect(page.getByText("Lineage was not recorded for this run")).toHaveCount(0);
     await page.getByRole("button", { name: /^Requests/ }).click();
@@ -320,6 +322,7 @@ test("Real mode runs the setup page against the backend as the member and puts e
     await expect(page.getByRole("button", { name: "Reset test environment" })).toBeVisible();
     await expect(realFrame.locator(".ob-title", { hasText: "What year are you?" })).toBeVisible();
     await expect.poll(() => onboardingCalls.length).toBeGreaterThan(calls);
+    await page.getByRole("button", { name: /^Requests/ }).click();
     await expect(page.locator("[id^=stage-]", { hasText: "onboarding · open" }).last()).toContainText("4 ops");
 
     // Reset is available only in the debugger. Cancelling preserves the current
