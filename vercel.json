@@ -120,6 +120,10 @@
   ],
   "rewrites": [
     {
+      "source": "/fellowship",
+      "destination": "/fellowship/index.html"
+    },
+    {
       "source": "/ea-ais",
       "destination": "/ea-ais/index.html"
     },
