@@ -1,3 +1,5 @@
+> Current Sources behavior: **Choose Dataset** and **Choose folder** save a local selection (names, relative paths and sizes only). They never upload dataset contents. The installed workspace resolves the local folder through the existing native picker. The cloud upload API described below remains for legacy attachments, not the default Sources UI. Selecting again replaces any stalled upload with a local selection. Hosted Analysis uses manifest context only when files stay local.
+
 # Project sources and dataset upload
 
 The hosted Sources step offers Upload PDF, Upload Dataset, and Upload Article side by side. At least one source is required; any combination is accepted. Dataset accepts files or folders (picker or recursive directory drop). Articles accept plain text, Markdown, HTML files up to 200 KB, or a public article link. Project page and GitHub links remain optional. Completed attachments survive reloads. They are included automatically alongside the paper and independently of any discovered resource selected later.

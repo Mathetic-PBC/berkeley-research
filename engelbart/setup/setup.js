@@ -836,55 +836,41 @@
     for (var entry of entries) await walk(entry, "");
     return files;
   }
-  async function uploadDataset(entries) {
+  function selectLocalDataset(entries) {
     var state = datasetState();
     if (state.busy || !entries.length) return;
     var root = entries[0].path.split("/")[0];
     var folder = entries.every(function(e) {return e.path.indexOf(root + "/") === 0;});
-    state.busy = true; state.error = ""; state.text = "Starting upload…"; draw();
-    try {
-      var begun = await api({action:"dataset", op:"begin", name:folder ? root : entries[0].file.name,
-        files:entries.map(function(e) {return {path:folder ? e.path.slice(root.length + 1) : e.path, size:e.file.size};})});
-      rememberDataset(begun);
-      var pending = st.row.dataset_upload;
-      for (var i = 0; i < entries.length; i++) {
-        state.text = "Uploading " + (i + 1) + " of " + entries.length; draw();
-        var signed = await api({action:"dataset",op:"sign",id:pending.id,index:i});
-        var headers = {"Content-Type":"application/octet-stream", "x-upsert":"false"};
-        if (signed.anonKey) {headers.apikey = signed.anonKey; headers.Authorization = "Bearer " + signed.anonKey;}
-        var sent = await fetch(signed.uploadUrl, {method:"PUT", headers:headers, body:entries[i].file});
-        if (!sent.ok) throw new Error("Upload failed for " + entries[i].path + ". Choose the files again to retry.");
-        rememberDataset(await api({action:"dataset",op:"confirm",id:pending.id,index:i}));
-      }
-      rememberDataset(await api({action:"dataset",op:"finish",id:pending.id}));
-    } catch (error) {state.error = error.message;}
-    state.busy = false; state.text = ""; draw();
+    // Only names and sizes cross the hosted boundary. The installed workspace
+    // resolves the local folder; do not send file contents to Storage here.
+    return datasetChange({op:"local_picker", name:folder ? root : entries[0].file.name,
+      files:entries.map(function(e) {return {path:folder ? e.path.slice(root.length + 1) : e.path, size:e.file.size};})});
   }
 
   function datasetUploadView() {
     var state = datasetState(), resource = st.row.dataset_resource;
     var section = el("section", "ob-source-card ob-dataset"); attr(section, "aria-label", "Project dataset");
     var picker = el("input", "ob-hide"); picker.type = "file"; picker.multiple = true;
-    attr(picker, "aria-label", "Upload dataset files"); picker.disabled = state.busy;
-    on(picker, "change", function () {uploadDataset(selectedDatasetFiles(picker.files)); picker.value = "";});
+    attr(picker, "aria-label", "Choose dataset files"); picker.disabled = state.busy;
+    on(picker, "change", function () {selectLocalDataset(selectedDatasetFiles(picker.files)); picker.value = "";});
     var choose = el("button", "ob-drop ob-dataset-pick ob-dataset-drop"); choose.type = "button"; choose.disabled = state.busy;
-    attr(choose, "aria-label", "Upload Dataset");
+    attr(choose, "aria-label", "Choose Dataset");
     choose.appendChild(sourceIcon("dataset"));
     var text = el("span", "ob-drop-text");
-    text.appendChild(el("span", "ob-drop-title", "Upload Dataset"));
+    text.appendChild(el("span", "ob-drop-title", "Choose Dataset"));
     choose.appendChild(text);
     // Open synchronously from the gesture, just like the Paper file input.
     on(choose, "click", function () {picker.click();});
     on(choose, "dragover", function(e) {e.preventDefault();});
     function dropDataset(e) {
       e.preventDefault(); if (state.busy) return;
-      droppedDatasetFiles(e.dataTransfer).then(uploadDataset).catch(function(error) {state.error=error.message;draw();});
+      droppedDatasetFiles(e.dataTransfer).then(selectLocalDataset).catch(function(error) {state.error=error.message;draw();});
     }
     on(choose, "drop", dropDataset);
     section.appendChild(picker);
-    var folderPicker = el("input", "ob-hide"); folderPicker.type = "file"; folderPicker.multiple = true;
-    attr(folderPicker, "webkitdirectory", ""); attr(folderPicker, "aria-label", "Upload dataset folder");
-    on(folderPicker, "change", function () {uploadDataset(selectedDatasetFiles(folderPicker.files)); folderPicker.value = "";});
+    var folderPicker = el("input", "ob-hide"); folderPicker.type = "file"; folderPicker.multiple = true; folderPicker.disabled = state.busy;
+    attr(folderPicker, "webkitdirectory", ""); attr(folderPicker, "aria-label", "Choose dataset folder");
+    on(folderPicker, "change", function () {selectLocalDataset(selectedDatasetFiles(folderPicker.files)); folderPicker.value = "";});
     section.appendChild(folderPicker);
 
     if (resource && (resource.name !== "Local dataset" || resource.manifest)) {
@@ -908,7 +894,7 @@
       on(remove, "click", function () {datasetChange({op:"remove"});}); section.appendChild(remove);
     }
     if (state.busy || state.error || st.row.dataset_upload) {
-      var message = el("div", "ob-hint", state.error || state.text || "Choose the files again to finish the upload.");
+      var message = el("div", "ob-hint", state.error || state.text || "Choose the files or folder again to save a local selection.");
       attr(message, "role", state.error ? "alert" : "status"); section.appendChild(message);
     }
     return section;
@@ -2067,7 +2053,7 @@
     if (n < 2 || n >= 4) box.appendChild(el("div", "ob-hint", n < 2 ? "At least two todos." : "Four is the cap — keep the first piece small."));
     function clean() { return todos.map(function (t) { return str(t).trim(); }).filter(Boolean); }
     function off() { var c = clean(); return c.length < 2 || c.length > 4 || !str(st.ui.projName).trim() || !!r.dataset_upload || datasetState().busy; }
-    if (r.dataset_upload || datasetState().busy) box.appendChild(el("div", "ob-hint", "Finish or remove the dataset upload in Sources before creating this project."));
+    if (r.dataset_upload || datasetState().busy) box.appendChild(el("div", "ob-hint", "Replace or remove the incomplete dataset selection in Sources before creating this project."));
     var name = el("div", "ob-namerow");
     var input = el("input"); input.value = st.ui.projName || ""; input.placeholder = "project name…"; input.spellcheck = false;
     on(input, "input", function () { st.ui.projName = input.value; create.disabled = off(); }); name.appendChild(input);

@@ -80,9 +80,9 @@ test("Paper step accepts dataset folders and retains the selection on reload", a
     await expect(dataset).toContainText('Research dataset');
     expect(stack.row.dataset_resource.manifest.fileCount).toBe(2);
     expect(stack.row.dataset_resource.manifest.files.map(f=>f.path)).toContain('nested/測定.csv');
-    expect(stack.datasetFiles.size).toBeGreaterThan(0);
-    await expect(dataset.locator('.ob-dataset-saved')).toContainText('2 files · Uploaded');
-    await expect(page.getByRole('button',{name:'Upload Dataset',exact:true})).not.toBeVisible();
+    expect(stack.datasetFiles.size).toBe(0);
+    await expect(dataset.locator('.ob-dataset-saved')).toContainText('2 files · Selection saved');
+    await expect(page.getByRole('button',{name:'Choose Dataset',exact:true})).not.toBeVisible();
     const replaceEvent=page.waitForEvent('filechooser');
     await page.getByRole('button',{name:'Replace dataset',exact:true}).click();await replaceEvent;
     await expect(dataset.locator('.ob-dataset-saved')).toContainText('Research dataset');
@@ -96,7 +96,7 @@ test("Paper step accepts dataset folders and retains the selection on reload", a
       document.querySelector('.ob-dataset-drop').dispatchEvent(event);
     });
     await expect(dataset).toContainText('Dropped data');
-    expect(stack.datasetFiles.size).toBeGreaterThan(0);
+    expect(stack.datasetFiles.size).toBe(0);
   } finally {await stack.stop();fs.rmSync(root,{recursive:true,force:true});}
 });
 
@@ -105,8 +105,8 @@ test('dataset plus opens a folder chooser without saving a selection on click or
  try {
   await installBrowserSession(page);await page.goto(stack.url+'/engelbart/setup/?test=true');
   await page.locator('.ob-row').filter({hasText:'Sources'}).click();
-  const picker=page.getByRole('button',{name:'Upload Dataset',exact:true});
-  await expect(picker.locator('.ob-drop-title')).toHaveText('Upload Dataset');
+  const picker=page.getByRole('button',{name:'Choose Dataset',exact:true});
+  await expect(picker.locator('.ob-drop-title')).toHaveText('Choose Dataset');
   const before=JSON.stringify(stack.row.dataset_resource);
   const event=page.waitForEvent('filechooser');await picker.click();await event;
   expect(JSON.stringify(stack.row.dataset_resource)).toBe(before);
@@ -138,7 +138,7 @@ test('setup loader uses the shared dots at the viewport center',async({page})=>{
  } finally {await stack.stop();}
 });
 
-test('compact source cards, nearest slider snapping, and dataset-only upload preserve actual bytes',async({page})=>{
+test('compact source cards, nearest slider snapping, and dataset-only local selection sends no file contents',async({page})=>{
  const stack=new SimulationStack();await stack.start();
  Object.assign(stack.row,{step:4,paper_id:null,paper_title:'',dataset_resource:null,source_article:null});
  try {
@@ -157,14 +157,20 @@ test('compact source cards, nearest slider snapping, and dataset-only upload pre
    await expect.poll(()=>page.locator('.ob-thumb').evaluate(node=>parseFloat(node.style.left))).toBe(parseFloat(percent));
   }
   await page.screenshot({path:test.info().outputPath('compact-source-cards.png')});
+  const operations=[];
+  page.on('request',r=>{if(r.url().includes('/api/engelbart-onboarding')){const b=r.postDataJSON();if(b.action==='dataset')operations.push(b.op);}});
+  // Recover a stalled upload left behind by the regressed release.
+  stack.row.dataset_upload={id:'interrupted',revision:0,manifest:{files:[]}};
   const data='metric,value\nlatency,17\n';
-  await page.getByLabel('Upload dataset files',{exact:true}).setInputFiles({name:'metrics.csv',mimeType:'text/csv',buffer:Buffer.from(data)});
-  await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Uploaded');
-  expect([...stack.datasetFiles.values()][0].toString()).toBe(data);
+  await page.getByLabel('Choose dataset files',{exact:true}).setInputFiles({name:'metrics.csv',mimeType:'text/csv',buffer:Buffer.from(data)});
+  await expect(page.getByRole('region',{name:'Project dataset'})).toContainText('Selection saved');
+  expect(stack.datasetFiles.size).toBe(0);
   await expect(next).toBeEnabled();await next.click();
   await expect(page.getByText('macOS',{exact:true})).toBeVisible();
-  expect(stack.row.paper_id).toBeNull();expect(stack.row.dataset_resource.source.provider).toBe('supabase');
+  expect(stack.row.paper_id).toBeNull();expect(stack.row.dataset_resource.source.provider).toBe('local_picker');
   expect(stack.row.paper_familiarity).toBe(1);
+  expect(operations).toEqual(['local_picker']);
+  expect(stack.row.dataset_upload).toBeNull();
  } finally {await page.close();await stack.stop();}
 });
 

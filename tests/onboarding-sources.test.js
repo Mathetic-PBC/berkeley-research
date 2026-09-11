@@ -38,3 +38,10 @@ test('private sampling caps reads even when Storage ignores Range',async()=>{
  }});
  assert.equal(sample.length,16384);assert.equal(request.headers.Range,'bytes=0-16383');assert.equal(cancelled,true);
 });
+test('local dataset-only analysis uses metadata without reading or uploading files',async()=>{
+ const row={dataset_resource:{name:'TutorTrace',source:{provider:'local_picker'},manifest:{files:[{path:'nested/events.parquet',format:'parquet',size:199*1024*1024}]}}};
+ const out=await Sources.materials({id:'user'},row,{fetchImpl:async()=>assert.fail('Local selection must not fetch bytes'),datasetStorage:{sample:async()=>assert.fail('Local selection must not read Storage')}});
+ assert.match(out.pdfText,/nested\/events.parquet/);
+ assert.match(out.pdfText,/Dataset bytes are not available/);
+ assert.equal(out.pdfBase64,undefined);
+});
