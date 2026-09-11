@@ -61,6 +61,6 @@ h1 { margin: 0; font-weight: 500; font-size: clamp(64px, 8vw, 128px); line-heigh
   html { scroll-behavior: auto; }
 }
 @media (max-aspect-ratio: 1/1) {
-  .hero { align-items: end; padding-bottom: clamp(96px, 14svh, 140px); }
+  .hero { padding-top: 96px; padding-bottom: 96px; }
   .hero-media { background-image: url("/fellowship/media/poster-mobile.jpg"); }
 }
