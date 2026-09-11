@@ -1,0 +1,144 @@
+{
+  "title": "Mathetic Fellowship \u2014 Tools for Thought",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "shots": [
+    {
+      "name": "Douglas Engelbart \u2014 the 1968 demo",
+      "file": "engelbart-remastered.mp4",
+      "start": 120.0,
+      "duration": 2.0,
+      "crop": [
+        1504,
+        846,
+        30,
+        120
+      ],
+      "contrast": 1.05,
+      "gamma": 1.0
+    },
+    {
+      "name": "The mouse in use",
+      "file": "engelbart-remastered.mp4",
+      "start": 1900.0,
+      "duration": 1.6,
+      "crop": [
+        1504,
+        846,
+        30,
+        140
+      ],
+      "contrast": 1.09,
+      "gamma": 1.0
+    },
+    {
+      "name": "Barbara Baird using the Alto at PARC",
+      "file": "alto-original-baird.mov",
+      "start": 0,
+      "duration": 2.2,
+      "crop": [
+        704,
+        396,
+        8,
+        8
+      ],
+      "contrast": 1.06,
+      "gamma": 1.08,
+      "deinterlace": true
+    },
+    {
+      "name": "Drawing with the Alto",
+      "file": "alto-original-drawing.mov",
+      "start": 0,
+      "duration": 1.8,
+      "crop": [
+        680,
+        382,
+        20,
+        64
+      ],
+      "contrast": 1.12,
+      "gamma": 1.0,
+      "deinterlace": true
+    },
+    {
+      "name": "Steve Jobs introducing Macintosh",
+      "file": "macintosh-restored.mp4",
+      "start": 29.0,
+      "duration": 1.8,
+      "crop": [
+        952,
+        536,
+        4,
+        42
+      ],
+      "contrast": 1.13,
+      "gamma": 1.08,
+      "deinterlace": true
+    },
+    {
+      "name": "The Macintosh demonstration",
+      "file": "macintosh-restored.mp4",
+      "start": 75.0,
+      "duration": 2.0,
+      "crop": [
+        952,
+        536,
+        4,
+        126
+      ],
+      "contrast": 1.13,
+      "gamma": 1.04,
+      "deinterlace": true
+    },
+    {
+      "name": "Seymour Papert at MIT",
+      "file": "papert-channel5.mp4",
+      "start": 11.0,
+      "duration": 1.6,
+      "crop": [
+        312,
+        176,
+        4,
+        48
+      ],
+      "contrast": 1.09,
+      "gamma": 1.0,
+      "denoise": "0.8:0.8:1.2:1.2",
+      "sharpen": 0.25
+    },
+    {
+      "name": "Children programming with Logo",
+      "file": "papert-channel5.mp4",
+      "start": 48.0,
+      "duration": 2.0,
+      "crop": [
+        312,
+        176,
+        4,
+        14
+      ],
+      "contrast": 1.08,
+      "gamma": 1.08,
+      "denoise": "0.8:0.8:1.2:1.2",
+      "sharpen": 0.25
+    },
+    {
+      "name": "A child watches the physical turtle draw",
+      "file": "papert-channel5.mp4",
+      "start": 62.4,
+      "duration": 3.0,
+      "crop": [
+        312,
+        176,
+        4,
+        26
+      ],
+      "contrast": 1.1,
+      "gamma": 0.97,
+      "denoise": "0.8:0.8:1.2:1.2",
+      "sharpen": 0.25
+    }
+  ]
+}

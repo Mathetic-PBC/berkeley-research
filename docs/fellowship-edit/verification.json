@@ -1,0 +1,51 @@
+{
+  "outputs": [
+    {
+      "file": "fellowship-montage.mp4",
+      "duration_seconds": 18,
+      "decoded_frames": 540,
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "audio_tracks": 0,
+      "size_bytes": 11088600,
+      "maximum_chroma_error": 1,
+      "minimum_frame_mean_luma": 59.27,
+      "full_decode": "passed"
+    },
+    {
+      "file": "fellowship-montage.webm",
+      "duration_seconds": 18,
+      "decoded_frames": 540,
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "audio_tracks": 0,
+      "size_bytes": 4869083,
+      "maximum_chroma_error": 1,
+      "minimum_frame_mean_luma": 59.26,
+      "full_decode": "passed"
+    },
+    {
+      "file": "fellowship-montage-master.mov",
+      "duration_seconds": 18,
+      "decoded_frames": 540,
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "audio_tracks": 0,
+      "size_bytes": 243985319,
+      "maximum_chroma_error": 0,
+      "minimum_frame_mean_luma": 59.24,
+      "full_decode": "passed"
+    }
+  ],
+  "mp4_faststart": true,
+  "source_sha256": {
+    "alto-original-baird.mov": "b9c17c3ed1ed3655f884e1a350b02a1e1e2004c7f621596fce86bd116591675e",
+    "alto-original-drawing.mov": "c2c89b5b94b641cda25d239d2f4a2db17cb80f2c339b2e83f6732fb9050d67b9",
+    "engelbart-remastered.mp4": "2b8448c40073f36b77dab12d33bc546592126ffc8141a816921de5f107d98d58",
+    "macintosh-restored.mp4": "b7edf700180fb14d8883a57290fc9510e002412d0b94914bc3c2b3904b068dad",
+    "papert-channel5.mp4": "a7442008c1d5dfcadafe9707ae8fafb6844576d069291eb98614856372be3f68"
+  }
+}
