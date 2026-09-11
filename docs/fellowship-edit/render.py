@@ -11,9 +11,14 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1], help="Local Fellowship editing package")
-ROOT = parser.parse_args().root.resolve()
+parser.add_argument("--spec", type=Path, default=Path(__file__).with_name("sequence.json"), help="Shot manifest")
+ARGS = parser.parse_args()
+ROOT = ARGS.root.resolve()
 EDIT = ROOT / "edit"
-SPEC = json.loads(Path(__file__).with_name("sequence.json").read_text())
+SPEC = json.loads(ARGS.spec.read_text())
+NAME = SPEC.get("output_name", "fellowship-montage")
+POSTER = SPEC.get("poster_name", "fellowship-poster.jpg")
+VARIANT = SPEC.get("variant", "desktop")
 W, H, FPS = SPEC["width"], SPEC["height"], SPEC["fps"]
 
 
@@ -22,7 +27,7 @@ def run(*args):
 
 
 def main():
-    clips = EDIT / "rendered"
+    clips = EDIT / ("rendered-" + VARIANT)
     clips.mkdir(exist_ok=True)
     for i, shot in enumerate(SPEC["shots"]):
         source = ROOT / "sources" / shot["file"]
@@ -55,20 +60,20 @@ def main():
 
     concat = clips / "concat.txt"
     concat.write_text("".join(f"file '{i:02}.mp4'\n" for i in range(len(SPEC["shots"]))))
-    joined = EDIT / "assembled.mp4"
+    joined = EDIT / ("assembled-" + VARIANT + ".mp4")
     run("-f", "concat", "-safe", "0", "-i", concat, "-c", "copy", "-an", joined)
 
     run("-i", joined, "-an", "-vf", "lutyuv=u=128:v=128", "-c:v", "libx264", "-preset", "slow", "-crf", "19",
         "-profile:v", "high", "-level:v", "4.0", "-pix_fmt", "yuv420p",
         "-movflags", "+faststart", "-metadata", "title=" + SPEC["title"],
-        ROOT / "fellowship-montage.mp4")
+        ROOT / (NAME + ".mp4"))
     run("-i", joined, "-an", "-vf", "lutyuv=u=128:v=128", "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "27",
         "-row-mt", "1", "-deadline", "good", "-cpu-used", "3",
-        ROOT / "fellowship-montage.webm")
+        ROOT / (NAME + ".webm"))
     run("-i", joined, "-an", "-c:v", "prores_ks", "-profile:v", "2",
-        "-pix_fmt", "yuv422p10le", ROOT / "fellowship-montage-master.mov")
-    run("-ss", "0.5", "-i", ROOT / "fellowship-montage.mp4", "-frames:v", "1",
-        "-q:v", "2", ROOT / "fellowship-poster.jpg")
+        "-pix_fmt", "yuv422p10le", ROOT / (NAME + "-master.mov"))
+    run("-ss", "0.5", "-i", ROOT / (NAME + ".mp4"), "-frames:v", "1",
+        "-q:v", "2", ROOT / POSTER)
     print("Finished: 18-second MP4, WebM, editing master, and poster.", flush=True)
 
 

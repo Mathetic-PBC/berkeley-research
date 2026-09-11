@@ -1,0 +1,50 @@
+{
+  "outputs": [
+    {
+      "file": "fellowship-montage-mobile.mp4",
+      "duration_seconds": 18,
+      "decoded_frames": 540,
+      "width": 720,
+      "height": 1280,
+      "fps": 30,
+      "audio_tracks": 0,
+      "size_bytes": 3691135,
+      "maximum_chroma_error": 1,
+      "minimum_frame_mean_luma": 66.38,
+      "full_decode": "passed"
+    },
+    {
+      "file": "fellowship-montage-mobile.webm",
+      "duration_seconds": 18,
+      "decoded_frames": 540,
+      "width": 720,
+      "height": 1280,
+      "fps": 30,
+      "audio_tracks": 0,
+      "size_bytes": 1719304,
+      "maximum_chroma_error": 1,
+      "minimum_frame_mean_luma": 66.36,
+      "full_decode": "passed"
+    },
+    {
+      "file": "fellowship-montage-mobile-master.mov",
+      "duration_seconds": 18,
+      "decoded_frames": 540,
+      "width": 720,
+      "height": 1280,
+      "fps": 30,
+      "audio_tracks": 0,
+      "size_bytes": 111499221,
+      "maximum_chroma_error": 0,
+      "minimum_frame_mean_luma": 66.35,
+      "full_decode": "passed"
+    }
+  ],
+  "mp4_faststart": true,
+  "source_sha256": {
+    "alto-demo-1978.mp4": "712f119c64a437e10b962b5fbc3f6fcfbce9ac6c7afb3e2abcc176577a48ab81",
+    "engelbart-remastered.mp4": "2b8448c40073f36b77dab12d33bc546592126ffc8141a816921de5f107d98d58",
+    "macintosh-restored.mp4": "b7edf700180fb14d8883a57290fc9510e002412d0b94914bc3c2b3904b068dad",
+    "papert-channel5.mp4": "a7442008c1d5dfcadafe9707ae8fafb6844576d069291eb98614856372be3f68"
+  }
+}

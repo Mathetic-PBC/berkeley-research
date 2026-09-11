@@ -53,3 +53,23 @@ Copyright remains with the original rights holders. These links document provena
 ## 1080p revision
 
 The current export is 1920 × 1080 at 30 fps. Engelbart uses a remastered source; Alto uses extracts from the original AVI. Papert remains limited by MIT’s 320 × 240 source and receives mild temporal denoising and edge sharpening. MP4 uses H.264 CRF 19; WebM uses VP9 CRF 27. No generative upscaling or invented image detail is used. The 720p release is preserved in `edit/original-720p/`.
+
+## Separate portrait edition
+
+`fellowship-montage-mobile` is an 18-second, 720 × 1280 portrait edit with individually chosen subject crops. It emphasizes faces and recognizable machines; it is not an automatic center crop of the desktop edit. Mobile Alto shots use `sources/alto-demo-1978.mp4` (712 × 480), the [MP4 derivative](https://archive.org/download/Xerox_Palo_Alto_Demo_August_1978/Xerox_Palo_Alto_Demo_August_1978.mp4) from the same archive item.
+
+| Montage time | Image | Source time |
+|---|---|---|
+| 00:00–00:02.4 | Engelbart | Remastered reel 02:00–02:02.4 |
+| 00:02.4–00:03.6 | Mouse in use | Remastered reel 31:40–31:41.2 |
+| 00:03.6–00:05.8 | Bob Taylor at PARC | Alto demo 00:11–00:13.2 |
+| 00:05.8–00:07 | Alto workstation | Alto demo 00:26.5–00:27.7 |
+| 00:07–00:09.8 | Jobs introducing Macintosh | Macintosh 00:28.5–00:31.3 |
+| 00:09.8–00:11.6 | Macintosh | Macintosh 01:15–01:16.8 |
+| 00:11.6–00:14 | Papert | MIT Channel 5 00:11–00:13.4 |
+| 00:14–00:16 | Child learning with Logo | MIT Channel 5 00:48–00:50 |
+| 00:16–00:18 | Physical Logo turtle | MIT Channel 5 01:03.5–01:05.5 |
+
+Portrait viewports use this edit and its own poster. Landscape viewports use the 1080p widescreen edit. Changing orientation reloads the appropriate source. Both editions are silent and loop without visible controls.
+
+Rebuild the portrait edition from the local editing package with `python3 edit/render.py --spec edit/sequence-mobile.json`; verify with `python3 edit/verify.py --variant mobile`. Source hashes and full-decode results are retained in the corresponding verification reports.

@@ -8,7 +8,11 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1], help="Local Fellowship editing package")
-ROOT = parser.parse_args().root.resolve()
+parser.add_argument("--variant", choices=["desktop", "mobile"], default="desktop")
+ARGS = parser.parse_args()
+ROOT = ARGS.root.resolve()
+WIDTH, HEIGHT = (720, 1280) if ARGS.variant == "mobile" else (1920, 1080)
+NAME = "fellowship-montage-mobile" if ARGS.variant == "mobile" else "fellowship-montage"
 
 
 def check(path):
@@ -17,7 +21,7 @@ def check(path):
     ]))
     streams = data["streams"]
     assert len(streams) == 1 and streams[0]["codec_type"] == "video", "Unexpected audio/data track"
-    assert (streams[0]["width"], streams[0]["height"]) == (1920, 1080)
+    assert (streams[0]["width"], streams[0]["height"]) == (WIDTH, HEIGHT)
     assert streams[0]["r_frame_rate"] == "30/1"
     assert abs(float(data["format"]["duration"]) - 18) < 0.04
     subprocess.run(["ffmpeg", "-v", "error", "-xerror", "-i", str(path), "-f", "null", "-"], check=True)
@@ -42,24 +46,24 @@ def check(path):
     assert min_luma > 25, f"Possible black frame or slate: mean luma {min_luma}"
 
     return {"file": path.name, "duration_seconds": 18, "decoded_frames": 540,
-            "width": 1920, "height": 1080, "fps": 30, "audio_tracks": 0,
+            "width": WIDTH, "height": HEIGHT, "fps": 30, "audio_tracks": 0,
             "size_bytes": path.stat().st_size, "maximum_chroma_error": max_chroma_error,
             "minimum_frame_mean_luma": round(min_luma, 2), "full_decode": "passed"}
 
 
 def main():
     outputs = [check(ROOT / name) for name in (
-        "fellowship-montage.mp4", "fellowship-montage.webm", "fellowship-montage-master.mov"
+        NAME + ".mp4", NAME + ".webm", NAME + "-master.mov"
     )]
-    mp4 = (ROOT / "fellowship-montage.mp4").read_bytes()
+    mp4 = (ROOT / (NAME + ".mp4")).read_bytes()
     assert 0 < mp4.index(b"moov") < mp4.index(b"mdat"), "MP4 is not faststart"
-    spec = json.loads((ROOT / "edit/sequence.json").read_text())
+    spec = json.loads((ROOT / "edit" / ("sequence-mobile.json" if ARGS.variant == "mobile" else "sequence.json")).read_text())
     sources = {}
     for name in sorted({s["file"] for s in spec["shots"]}):
         with (ROOT / "sources" / name).open("rb") as stream:
             sources[name] = hashlib.file_digest(stream, "sha256").hexdigest()
     report = {"outputs": outputs, "mp4_faststart": True, "source_sha256": sources}
-    (ROOT / "review/verification.json").write_text(json.dumps(report, indent=2) + "\n")
+    (ROOT / "review" / ("verification-mobile.json" if ARGS.variant == "mobile" else "verification.json")).write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 
 
