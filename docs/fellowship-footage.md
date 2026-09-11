@@ -1,13 +1,13 @@
 # Footage credits
 
-The published montage is in `fellowship/media/` (MP4, WebM, and poster). The source-file paths below refer to the original local editing package, `Desktop/Mathetic, PBC/Fellowship`, where the source footage, ProRes master, render script, and shot manifest are retained. They are not paths in this repository.
+The published 1080p montage is in `fellowship/media/`. Source paths below refer to the local editing package at `Desktop/Mathetic, PBC/Fellowship`. Reproduction scripts and the shot manifest are retained in `docs/fellowship-edit/`; run `python3 docs/fellowship-edit/render.py --root "/path/to/Fellowship"` to rebuild the local package.
 
 Retrieved 11 September 2026. Timecodes below refer to the downloaded source files, not other uploads of the same events. All footage is archival; no generated or reenacted footage was added.
 
 | Montage time | Image | Source time |
 |---|---|---|
-| 00:00–00:02 | Douglas Engelbart, 1968 demonstration | 00:39.0–00:41.0 |
-| 00:02–00:03.6 | Engelbart's mouse in use | 09:31.0–09:32.6 |
+| 00:00–00:02 | Douglas Engelbart, 1968 demonstration | 02:00.0–02:02.0 |
+| 00:02–00:03.6 | Engelbart's mouse in use | 31:40.0–31:41.6 |
 | 00:03.6–00:05.8 | Barbara Baird demonstrating the Xerox Alto | 03:14.5–03:16.7 |
 | 00:05.8–00:07.6 | Drawing on the Alto | 17:00.0–17:01.8 |
 | 00:07.6–00:09.4 | Steve Jobs introducing Macintosh | 00:29.0–00:30.8 |
@@ -20,16 +20,17 @@ Retrieved 11 September 2026. Timecodes below refer to the downloaded source file
 
 - Event: *A Research Center for Augmenting Human Intellect*, 9 December 1968, often called the Mother of All Demos.
 - [Doug Engelbart Institute's demo archive](https://www.dougengelbart.org/mousesite/1968Demo.html)
-- [Internet Archive highlights recording](https://archive.org/details/XD1946_08SRI-Highlightsof68Demo)
-- [Downloaded media](https://archive.org/download/XD1946_08SRI-Highlightsof68Demo/XD1946_08SRI-Highlightsof68Demo_512kb.mp4)
-- Local file: `sources/engelbart-highlights.mp4` (320 × 240).
+- [Doug Engelbart Institute: remastered reel 1](https://www.youtube.com/watch?v=UhpTiWyVa6k). Stanford Libraries Special Collections remastered the film in 2022.
+- Local file: `sources/engelbart-remastered.mp4` (1550 × 1080, YouTube format 137); metadata retained alongside it.
+- Replaces the earlier 320 × 240 highlights copy; timecodes above now refer to the remastered reel.
 
 ## Xerox PARC
 
 - *Bob Taylor, Barbara Baird: Xerox Alto Demonstration — August 1978.*
 - [Archive catalog and recording](https://archive.org/details/Xerox_Palo_Alto_Demo_August_1978)
-- [Downloaded media](https://archive.org/download/Xerox_Palo_Alto_Demo_August_1978/Xerox_Palo_Alto_Demo_August_1978.mp4)
-- Local file: `sources/alto-demo-1978.mp4` (712 × 480).
+- [Original AVI](https://archive.org/download/Xerox_Palo_Alto_Demo_August_1978/Xerox_Palo_Alto_Demo_August_1978.avi) (720 × 486).
+- Local loss-minimizing ProRes extracts: `sources/alto-original-baird.mov` and `sources/alto-original-drawing.mov`, starting at 03:14.5 and 17:00.0 in the original respectively. The table uses original AVI timecodes; the shot manifest uses 0.0 for these local excerpts.
+- Replaces the 712 × 480 compressed MP4 derivative.
 - This is a research demonstration, not the 1979 Xerox office commercial or footage of Jobs visiting PARC.
 
 ## Macintosh
@@ -48,3 +49,27 @@ Retrieved 11 September 2026. Timecodes below refer to the downloaded source file
 - No precise filming date is asserted; the catalog page does not specify one.
 
 Copyright remains with the original rights holders. These links document provenance; public availability is not a reuse license, and licensing clearance was not performed.
+
+## 1080p revision
+
+The current export is 1920 × 1080 at 30 fps. Engelbart uses a remastered source; Alto uses extracts from the original AVI. Papert remains limited by MIT’s 320 × 240 source and receives mild temporal denoising and edge sharpening. MP4 uses H.264 CRF 19; WebM uses VP9 CRF 27. No generative upscaling or invented image detail is used. The 720p release is preserved in `edit/original-720p/`.
+
+## Separate portrait edition
+
+`fellowship-montage-mobile` is an 18-second, 720 × 1280 portrait edit with individually chosen subject crops. It emphasizes faces and recognizable machines; it is not an automatic center crop of the desktop edit. Mobile Alto shots use `sources/alto-demo-1978.mp4` (712 × 480), the [MP4 derivative](https://archive.org/download/Xerox_Palo_Alto_Demo_August_1978/Xerox_Palo_Alto_Demo_August_1978.mp4) from the same archive item.
+
+| Montage time | Image | Source time |
+|---|---|---|
+| 00:00–00:02.4 | Engelbart | Remastered reel 02:00–02:02.4 |
+| 00:02.4–00:03.6 | Mouse in use | Remastered reel 31:40–31:41.2 |
+| 00:03.6–00:05.8 | Bob Taylor at PARC | Alto demo 00:11–00:13.2 |
+| 00:05.8–00:07 | Alto workstation | Alto demo 00:26.5–00:27.7 |
+| 00:07–00:09.8 | Jobs introducing Macintosh | Macintosh 00:28.5–00:31.3 |
+| 00:09.8–00:11.6 | Macintosh | Macintosh 01:15–01:16.8 |
+| 00:11.6–00:14 | Papert | MIT Channel 5 00:11–00:13.4 |
+| 00:14–00:16 | Child learning with Logo | MIT Channel 5 00:48–00:50 |
+| 00:16–00:18 | Physical Logo turtle | MIT Channel 5 01:03.5–01:05.5 |
+
+Portrait viewports use this edit and its own poster. Landscape viewports use the 1080p widescreen edit. Changing orientation reloads the appropriate source. Both editions are silent and loop without visible controls.
+
+Rebuild the portrait edition from the local editing package with `python3 edit/render.py --spec edit/sequence-mobile.json`; verify with `python3 edit/verify.py --variant mobile`. Source hashes and full-decode results are retained in the corresponding verification reports.

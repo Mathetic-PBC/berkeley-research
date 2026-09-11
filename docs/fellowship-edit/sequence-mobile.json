@@ -1,0 +1,147 @@
+{
+  "title": "Mathetic Fellowship \u2014 Tools for Thought",
+  "width": 720,
+  "height": 1280,
+  "fps": 30,
+  "shots": [
+    {
+      "name": "Douglas Engelbart \u2014 the 1968 demo",
+      "file": "engelbart-remastered.mp4",
+      "start": 120,
+      "duration": 2.4,
+      "crop": [
+        608,
+        1080,
+        942,
+        0
+      ],
+      "contrast": 1.05,
+      "gamma": 1.0
+    },
+    {
+      "name": "The mouse in use",
+      "file": "engelbart-remastered.mp4",
+      "start": 1900,
+      "duration": 1.2,
+      "crop": [
+        608,
+        1080,
+        864,
+        0
+      ],
+      "contrast": 1.09,
+      "gamma": 1.0
+    },
+    {
+      "name": "Bob Taylor introducing the Alto at PARC",
+      "file": "alto-demo-1978.mp4",
+      "start": 11,
+      "duration": 2.2,
+      "crop": [
+        268,
+        478,
+        170,
+        0
+      ],
+      "contrast": 1.06,
+      "gamma": 1.08,
+      "deinterlace": true
+    },
+    {
+      "name": "The Alto workstation at PARC",
+      "file": "alto-demo-1978.mp4",
+      "start": 26.5,
+      "duration": 1.2,
+      "crop": [
+        268,
+        478,
+        138,
+        0
+      ],
+      "contrast": 1.06,
+      "gamma": 1.0,
+      "deinterlace": true
+    },
+    {
+      "name": "Steve Jobs introducing Macintosh",
+      "file": "macintosh-restored.mp4",
+      "start": 28.5,
+      "duration": 2.8,
+      "crop": [
+        404,
+        718,
+        270,
+        0
+      ],
+      "contrast": 1.13,
+      "gamma": 1.08,
+      "deinterlace": true
+    },
+    {
+      "name": "The Macintosh demonstration",
+      "file": "macintosh-restored.mp4",
+      "start": 75,
+      "duration": 1.8,
+      "crop": [
+        404,
+        718,
+        330,
+        0
+      ],
+      "contrast": 1.13,
+      "gamma": 1.04,
+      "deinterlace": true
+    },
+    {
+      "name": "Seymour Papert at MIT",
+      "file": "papert-channel5.mp4",
+      "start": 11,
+      "duration": 2.4,
+      "crop": [
+        134,
+        238,
+        102,
+        0
+      ],
+      "contrast": 1.09,
+      "gamma": 1.0,
+      "denoise": "0.8:0.8:1.2:1.2",
+      "sharpen": 0.25
+    },
+    {
+      "name": "A child learning with Logo",
+      "file": "papert-channel5.mp4",
+      "start": 48,
+      "duration": 2,
+      "crop": [
+        134,
+        238,
+        142,
+        0
+      ],
+      "contrast": 1.08,
+      "gamma": 1.08,
+      "denoise": "0.8:0.8:1.2:1.2",
+      "sharpen": 0.25
+    },
+    {
+      "name": "The physical Logo turtle drawing",
+      "file": "papert-channel5.mp4",
+      "start": 63.5,
+      "duration": 2,
+      "crop": [
+        134,
+        238,
+        54,
+        0
+      ],
+      "contrast": 1.1,
+      "gamma": 0.97,
+      "denoise": "0.8:0.8:1.2:1.2",
+      "sharpen": 0.25
+    }
+  ],
+  "variant": "mobile",
+  "output_name": "fellowship-montage-mobile",
+  "poster_name": "fellowship-poster-mobile.jpg"
+}

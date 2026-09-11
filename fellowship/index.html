@@ -9,7 +9,7 @@
   <meta property="og:description" content="Concerned with increasing our capacity to learn, think, create, and discover. A one-month research fellowship for Berkeley students.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://berkeley.mathetic.com/fellowship">
-  <meta property="og:image" content="https://berkeley.mathetic.com/fellowship/media/poster.jpg">
+  <meta property="og:image" content="https://berkeley.mathetic.com/fellowship/media/poster-1080.jpg">
   <link rel="canonical" href="https://berkeley.mathetic.com/fellowship">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,9 +22,11 @@
   <main>
     <section class="hero" aria-labelledby="fellowship-title">
       <div class="hero-media" aria-hidden="true">
-        <video id="hero-video" autoplay muted loop playsinline preload="metadata" poster="/fellowship/media/poster.jpg" tabindex="-1" disablepictureinpicture>
-          <source src="/fellowship/media/montage.webm" type="video/webm">
-          <source src="/fellowship/media/montage.mp4" type="video/mp4">
+        <video id="hero-video" autoplay muted loop playsinline preload="metadata" poster="/fellowship/media/poster-1080.jpg" tabindex="-1" disablepictureinpicture>
+          <source src="/fellowship/media/montage-mobile.webm" type="video/webm" media="(max-aspect-ratio: 1/1)">
+          <source src="/fellowship/media/montage-mobile.mp4" type="video/mp4" media="(max-aspect-ratio: 1/1)">
+          <source src="/fellowship/media/montage-1080.webm" type="video/webm">
+          <source src="/fellowship/media/montage-1080.mp4" type="video/mp4">
         </video>
       </div>
       <div class="hero-copy">
@@ -34,7 +36,6 @@
       <a class="scroll-cue" href="#about" aria-label="Read about the fellowship">
         <svg width="24" height="32" viewBox="0 0 24 32" fill="none" aria-hidden="true"><path d="M12 3v23m-7-7 7 7 7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
-      <button class="motion-toggle" type="button" aria-controls="hero-video" hidden>Pause video</button>
     </section>
     <section class="letter" id="about" aria-label="About the fellowship" tabindex="-1">
       <div class="letter-inner">
