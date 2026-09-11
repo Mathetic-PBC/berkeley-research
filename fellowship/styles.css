@@ -6,8 +6,8 @@
   --serif: "Newsreader", Georgia, serif;
 }
 * { box-sizing: border-box; }
-html { margin: 0; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: smooth; }
-body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--serif); -webkit-font-smoothing: antialiased; }
+html { margin: 0; background: #000; overscroll-behavior-y: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: smooth; }
+body { margin: 0; background: #000; overscroll-behavior-y: none; color: var(--ink); font-family: var(--serif); -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-underline-offset: 0.18em; text-decoration-thickness: 1px; }
 a:hover { color: var(--accent); }
 a:focus-visible, button:focus-visible { outline: 2px solid currentColor; outline-offset: 6px; }
@@ -38,7 +38,7 @@ h1 { margin: 0; font-weight: 500; font-size: clamp(64px, 8vw, 128px); line-heigh
 .part-of-speech { font-style: normal; }
 .scroll-cue { position: absolute; bottom: 30px; left: calc(50% - 24px); display: grid; place-items: center; width: 48px; height: 48px; color: var(--paper); }
 .scroll-cue:hover { color: #fff; }
-.letter { padding: clamp(64px, 9vw, 132px) max(26px, env(safe-area-inset-right)) calc(clamp(72px, 10vw, 144px) + env(safe-area-inset-bottom)) max(26px, env(safe-area-inset-left)); }
+.letter { background: var(--paper); padding: clamp(64px, 9vw, 132px) max(26px, env(safe-area-inset-right)) calc(clamp(72px, 10vw, 144px) + env(safe-area-inset-bottom)) max(26px, env(safe-area-inset-left)); }
 .letter-inner { max-width: 680px; margin: 0 auto; font-size: 21px; font-weight: 400; line-height: 1.7; }
 .letter p { margin: 0 0 30px; text-wrap: pretty; }
 .letter .apply { margin: 48px 0 0; text-align: center; font-size: 28px; }
