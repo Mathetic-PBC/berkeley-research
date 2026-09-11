@@ -180,6 +180,11 @@
     render();
   }
   async function showDashboard(session) {
+    // Only this fixed local destination is accepted; no open redirect from next.
+    if (new URLSearchParams(window.location.search).get("next") === "/engelbart/setup/test") {
+      window.location.replace("/engelbart/setup/test");
+      return;
+    }
     var enabled = Boolean(session.mfaEnabled);
     byId("admin-loading").classList.add("hidden");
     byId("admin-login-panel").classList.add("hidden");
