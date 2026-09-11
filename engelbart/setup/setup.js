@@ -1779,7 +1779,6 @@
   // Offered when the model has said they are ready.
   function drawPlanOffer(box) {
     var card = el("div", "ob-bs-card ob-bs-offer");
-    card.appendChild(el("div", "ob-cap", "ready when you are"));
     card.appendChild(el("div", "ob-question", "Next, a few questions about the paper’s concepts."));
     var acts = attr(el("div", "ob-actions"), "data-between", "1");
     acts.appendChild(cta("Continue", false, function () { save(8, {}).then(function () { go(8); }).catch(fail); }));

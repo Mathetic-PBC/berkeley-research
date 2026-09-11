@@ -85,7 +85,12 @@ test("credit policy never pins a key to named models", () => {
 test("budgets and rate limits fail closed outside bounded values", () => {
   assert.equal(positiveMoney("25.009", "Budget"), 25.01);
   assert.throws(() => positiveMoney(0, "Budget"), /between/);
-  assert.throws(() => positiveMoney(1001, "Budget"), /between/);
+  assert.equal(positiveMoney(1001, "Budget"), 1001);
+  assert.equal(positiveMoney("5000.25", "Budget"), 5000.25);
+  assert.equal(positiveMoney("9999999999.99", "Budget"), 9999999999.99);
+  for (const value of [0.001, -1, "", "bad", Infinity, NaN, 10000000000]) {
+    assert.throws(() => positiveMoney(value, "Budget"), { statusCode: 400 });
+  }
   assert.equal(optionalLimit("", "RPM"), null);
   assert.equal(optionalLimit("60", "RPM"), 60);
   assert.throws(() => optionalLimit("1.5", "RPM"), /positive integer/);
@@ -456,4 +461,41 @@ test("the Anthropic bypass key never becomes part of a member's credentials", as
   assert.equal(result.apiKey, "sk-member-key");
   assert.equal(result.baseUrl, "https://proxy.example.com");
   assert.equal(JSON.stringify(result).includes("sk-ant-own"), false);
+});
+
+
+test("admins can save a pool and default allowance above $1,000", async () => {
+  let request;
+  await Credits.updateDefaults({ poolBudgetUsd: "10000", defaultBudgetUsd: "2500.25" }, {
+    env: SUPABASE_ENV,
+    async fetchImpl(url, init) {
+      request = { url, body: JSON.parse(init.body) };
+      return { ok: true, status: 200, async text() { return "{}"; } };
+    },
+  });
+  assert.match(request.url, /rpc\/engelbart_update_credit_settings$/);
+  assert.equal(request.body.p_pool_budget_usd, 10000);
+  assert.equal(request.body.p_default_budget_usd, 2500.25);
+  await assert.rejects(Credits.updateDefaults({ poolBudgetUsd: 2000, defaultBudgetUsd: 2500 }),
+    /cannot exceed the pool budget/);
+});
+
+test("raising a member above $1,000 updates the allocation and both proxy caps", async () => {
+  const row = readyRow();
+  const writes = [];
+  await Credits.updateAccount(row.user_id, { budgetUsd: "2500.25" }, {
+    env: PROXY_ENV,
+    async fetchImpl(url, init = {}) {
+      if (!init.body) return { ok: true, status: 200, async text() { return JSON.stringify([row]); } };
+      writes.push({ url, body: JSON.parse(init.body) });
+      return { ok: true, status: 200, async text() { return JSON.stringify({ ...row, budget_usd: 2500.25 }); } };
+    },
+  });
+  assert.equal(writes.length, 3);
+  assert.match(writes[0].url, /rpc\/engelbart_update_account_policy$/);
+  assert.equal(writes[0].body.p_budget_usd, 2500.25);
+  assert.match(writes[1].url, /key\/update$/);
+  assert.equal(writes[1].body.max_budget, 2500.25);
+  assert.match(writes[2].url, /user\/update$/);
+  assert.equal(writes[2].body.max_budget, 2500.25);
 });
